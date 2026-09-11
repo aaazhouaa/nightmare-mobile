@@ -34,6 +34,8 @@ val keystoreProps = Properties().apply {
 android {
     namespace = "com.abrah.nightmare"
     compileSdk = 35
+    // ⭐ aarch64 沙箱适配：AGP 8.7.3 默认 buildTools 34.0.0 未安装，对齐本地 35.0.0
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.abrah.nightmare"
@@ -53,6 +55,9 @@ android {
         // stays a plain incrementing integer; Android requires that.
         versionCode = 115
         versionName = "1.4.0"
+        // ⭐ aarch64 沙箱适配：taixu 自带的 NDK r29 是原生 aarch64 工具链
+        // （官方 NDK 只有 x86_64 host，无法在本机执行）。
+        ndkVersion = "29.0.14206865"
         ndk { abiFilters += "arm64-v8a" }
 
         // The plugin runtime, built from source. ⚠ arm64 only, like everything
@@ -72,7 +77,9 @@ android {
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+            // ⭐ aarch64 沙箱适配：3.22.1 的 SDK 发行版只有 x86_64 二进制无法执行，
+            // 改用系统 cmake 3.28.3（已 symlink 到 SDK cmake/3.28.3）。
+            version = "3.28.3"
         }
     }
 

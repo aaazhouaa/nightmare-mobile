@@ -32,6 +32,7 @@ import com.abrah.nightmare.BatchValues
 import com.abrah.nightmare.Graph
 import com.abrah.nightmare.NodeType
 import com.abrah.nightmare.ui.LogTextStyle
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /**
  * ⭐⭐ **Build a sweep, and see what it costs before it starts.**
@@ -175,6 +176,7 @@ fun BatchSheet(
         },
         confirmButton = {
             Button(
+                colors = nightmareButtonColors(),
                 onClick = { onRun(spec) },
                 enabled = !spec.isEmpty,
             ) {

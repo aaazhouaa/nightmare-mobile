@@ -64,6 +64,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.abrah.nightmare.canvas.Result
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /**
  * ⭐⭐ Pictures the user kept, each with the graph that made it.
@@ -534,7 +535,7 @@ fun ResultViewer(
             // `FullscreenImage`: `onTap = { if (scale <= 1.01f) onDismiss() }`).
             // Two fullscreen viewers in one app must not be left with two
             // different ways out.
-            Button(onClick = { onOpenFlow(current) }) {
+            Button(colors = nightmareButtonColors(), onClick = { onOpenFlow(current) }) {
                 Text(stringResource(R.string.open_flow))
             }
         }
@@ -852,6 +853,7 @@ private fun ResultCardHeader(
                 )
             }
             Button(
+                colors = nightmareButtonColors(),
                 onClick = onOpenFlow,
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
             ) {

@@ -39,6 +39,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.canvas.Recipe
 import com.abrah.nightmare.canvas.SavedWorkflow
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /**
  * Recommended graphs, and the user's own.
@@ -288,6 +289,7 @@ private fun NameDialog(
         },
         confirmButton = {
             Button(
+                colors = nightmareButtonColors(),
                 onClick = { onConfirm(name) },
                 enabled = name.isNotBlank() && name.trim() != initial,
             ) { Text(confirm) }

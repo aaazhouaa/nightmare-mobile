@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -68,13 +69,72 @@ data class NodeStatus(
  * ⚠ Node CATEGORY is the only thing that earns a hue (docs/UI.md §1). Spending
  * colour anywhere else here would make the one signal that matters compete with
  * decoration.
+ *
+ * The canvas follows the app theme: [DarkCanvasPalette] in dark mode,
+ * [LightCanvasPalette] in light mode. [ui.NightmareTheme] calls [apply] on
+ * recomposition, so every reader (including DrawScope code, which cannot
+ * reach a CompositionLocal) sees the current palette without signature churn.
  */
+@Immutable
+data class CanvasPalette(
+    val background: Color, val grid: Color,
+    val nodeBody: Color, val nodeStroke: Color,
+    val selectedStroke: Color, val selectedBody: Color, val selectedGlow: Color,
+    val shadow: Color,
+    val title: Color, val label: Color,
+    val edge: Color, val edgeLive: Color,
+    val ran: Color, val cached: Color, val failed: Color,
+    val category: Map<String, Color>, val defaultCategory: Color,
+    val portType: Map<String, Color>, val defaultPortType: Color,
+)
+
+/** Dark canvas: bg #121212, card #1E1E1E, text #E4E4E7 -- the theme spec. */
+val DarkCanvasPalette = CanvasPalette(
+    background = Color(0xFF121212), grid = Color(0xFF1A1A1A),
+    nodeBody = Color(0xFF1E1E1E), nodeStroke = Color(0xFF2E2E32),
+    selectedStroke = Color(0xFF9B6BFF), selectedBody = Color(0xFF2A2A2E),
+    selectedGlow = Color(0xFF9B6BFF),
+    shadow = Color(0xFF000000),
+    title = Color(0xFFE4E4E7), label = Color(0xFFA1A1AA),
+    edge = Color(0xFF4A4A4E), edgeLive = Color(0xFF9B6BFF),
+    ran = Color(0xFF6BFF9B), cached = Color(0xFF6BA8FF), failed = Color(0xFFFF6B6B),
+    category = mapOf(
+        "sampling" to Color(0xFFB07BFF), "latent" to Color(0xFF7BC7FF),
+        "image" to Color(0xFF7BFFB0), "mask" to Color(0xFFFFD37B),
+    ), defaultCategory = Color(0xFF8A8A9A),
+    portType = mapOf(
+        "LATENT" to Color(0xFF7BC7FF), "IMAGE" to Color(0xFF7BFFB0),
+        "COND" to Color(0xFFFFB07B),
+    ), defaultPortType = Color(0xFF8A8A9A),
+)
+
+/** Light canvas: bg #F7F8FA, card #FFFFFF, text #1D1D1D. Status and category
+ *  hues darken to keep contrast on a light ground. */
+val LightCanvasPalette = CanvasPalette(
+    background = Color(0xFFF7F8FA), grid = Color(0xFFE9EAEE),
+    nodeBody = Color(0xFFFFFFFF), nodeStroke = Color(0xFFE4E4E8),
+    selectedStroke = Color(0xFF8A5CF6), selectedBody = Color(0xFFF1EDFD),
+    selectedGlow = Color(0xFF8A5CF6),
+    shadow = Color(0xFFD8D9DE),
+    title = Color(0xFF1D1D1D), label = Color(0xFF6B6B70),
+    edge = Color(0xFFC4C5CA), edgeLive = Color(0xFF8A5CF6),
+    ran = Color(0xFF1B9E4B), cached = Color(0xFF1B6BB8), failed = Color(0xFFC62828),
+    category = mapOf(
+        "sampling" to Color(0xFF8B5CF6), "latent" to Color(0xFF2563EB),
+        "image" to Color(0xFF16A34A), "mask" to Color(0xFFD97706),
+    ), defaultCategory = Color(0xFF6B7280),
+    portType = mapOf(
+        "LATENT" to Color(0xFF2563EB), "IMAGE" to Color(0xFF16A34A),
+        "COND" to Color(0xFFD97706),
+    ), defaultPortType = Color(0xFF6B7280),
+)
+
 object CanvasColors {
-    val background = Color(0xFF0B0B10)
-    val grid = Color(0xFF16161F)
-    val nodeBody = Color(0xFF1A1A24)
-    val nodeStroke = Color(0xFF2A2A38)
-    val selectedStroke = Color(0xFF9B6BFF)
+    var background = Color(0xFF121212); private set
+    var grid = Color(0xFF1A1A1A); private set
+    var nodeBody = Color(0xFF1E1E1E); private set
+    var nodeStroke = Color(0xFF2E2E32); private set
+    var selectedStroke = Color(0xFF9B6BFF); private set
 
     /**
      * ⭐ A selected node is drawn RAISED, and these are the two halves of it: a
@@ -85,34 +145,44 @@ object CanvasColors {
      * halo is the SAME purple as the selection stroke it surrounds, so the
      * canvas still spends exactly one colour on state and one on category.
      */
-    val selectedBody = Color(0xFF26263A)
-    val selectedGlow = Color(0xFF9B6BFF)
+    var selectedBody = Color(0xFF2A2A2E); private set
+    var selectedGlow = Color(0xFF9B6BFF); private set
 
     /** ⚠ Under a raised node. Only ever drawn against [background]. */
-    val shadow = Color(0xFF000000)
-    val title = Color(0xFFEDEDF2)
-    val label = Color(0xFF9A9AA8)
-    val edge = Color(0xFF4A4A5C)
-    val edgeLive = Color(0xFF9B6BFF)
-    val ran = Color(0xFF6BFF9B)
-    val cached = Color(0xFF6BA8FF)
-    val failed = Color(0xFFFF6B6B)
+    var shadow = Color(0xFF000000); private set
+    var title = Color(0xFFE4E4E7); private set
+    var label = Color(0xFFA1A1AA); private set
+    var edge = Color(0xFF4A4A4E); private set
+    var edgeLive = Color(0xFF9B6BFF); private set
+    var ran = Color(0xFF6BFF9B); private set
+    var cached = Color(0xFF6BA8FF); private set
+    var failed = Color(0xFFFF6B6B); private set
+
+    private var categoryMap: Map<String, Color> = DarkCanvasPalette.category
+    private var defaultCategory = DarkCanvasPalette.defaultCategory
+    private var portTypeMap: Map<String, Color> = DarkCanvasPalette.portType
+    private var defaultPortType = DarkCanvasPalette.defaultPortType
+
+    /** Swap every canvas colour at once. Called from the theme, not per frame. */
+    fun apply(p: CanvasPalette) {
+        background = p.background; grid = p.grid
+        nodeBody = p.nodeBody; nodeStroke = p.nodeStroke
+        selectedStroke = p.selectedStroke; selectedBody = p.selectedBody
+        selectedGlow = p.selectedGlow
+        shadow = p.shadow
+        title = p.title; label = p.label
+        edge = p.edge; edgeLive = p.edgeLive
+        ran = p.ran; cached = p.cached; failed = p.failed
+        categoryMap = p.category; defaultCategory = p.defaultCategory
+        portTypeMap = p.portType; defaultPortType = p.defaultPortType
+    }
 
     /** Deterministic per category, so a shared screenshot means the same thing everywhere. */
-    fun forCategory(category: String?): Color = when (category) {
-        "sampling" -> Color(0xFFB07BFF)
-        "latent" -> Color(0xFF7BC7FF)
-        "image" -> Color(0xFF7BFFB0)
-        "mask" -> Color(0xFFFFD37B)
-        else -> Color(0xFF8A8A9A)
-    }
+    fun forCategory(category: String?): Color =
+        categoryMap[category] ?: defaultCategory
 
-    fun forType(portType: String): Color = when (portType) {
-        "LATENT" -> Color(0xFF7BC7FF)
-        "IMAGE" -> Color(0xFF7BFFB0)
-        "COND" -> Color(0xFFFFB07B)
-        else -> Color(0xFF8A8A9A)
-    }
+    fun forType(portType: String): Color =
+        portTypeMap[portType] ?: defaultPortType
 }
 
 /**

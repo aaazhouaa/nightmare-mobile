@@ -17,6 +17,8 @@
     <string name="nav_flows">Flows</string>
     <string name="nav_results">Results</string>
     <string name="cd_settings">Settings</string>
+    <string name="cd_theme_to_dark">Switch to dark theme</string>
+    <string name="cd_theme_to_light">Switch to light theme</string>
     <string name="cd_device_info">This device\'s NPU: HTP arch and VTCM</string>
     <string name="canvas_unsaved_flow">unsaved flow</string>
     <string name="canvas_backend_idle">%1$s (idle)</string>
@@ -369,8 +371,11 @@
     <string name="r2_main_idle">%1$s (idle)</string>
     <string name="r2_main_sampling">sampling  %1$d / %2$d</string>
     <string name="r2_main_open_flow_body">The flow on the canvas has unsaved edits. Opening this one replaces it, and the edits are gone.</string>
-    <string name="r2_main_stub_resize">tier0: resize</string>
-    <string name="r2_main_stub_clipseg">tier1: clipseg</string>
+    <string name="r2_main_stub_resize">Resize (not wired)</string>
+    <string name="r2_main_stub_clipseg">ClipSeg (not wired)</string>
+    <string name="r2_main_stub_step_quickjs">QuickJS</string>
+    <string name="r2_main_stub_step_ort">ONNX Runtime (CPU)</string>
+    <string name="r2_main_not_wired">%1$s — not wired yet (%2$s)</string>
 
     <!-- ===== Round 2: canvas ===== -->
     <string name="r2_canvas_zoom">zoom</string>

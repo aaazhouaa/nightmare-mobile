@@ -75,6 +75,8 @@ import com.abrah.nightmare.Widget
 import com.abrah.nightmare.SizeDemand
 import com.abrah.nightmare.requiredOutputSize
 import com.abrah.nightmare.ui.LogTextStyle
+import com.abrah.nightmare.ui.nightmareSliderColors
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /**
  * The knobs of one node, as a bottom sheet.
@@ -826,6 +828,7 @@ private fun SliderRow(widget: Widget, current: String, onSet: (String) -> Unit) 
             style = MaterialTheme.typography.bodyMedium,
         )
         Slider(
+            colors = nightmareSliderColors(),
             value = shown,
             onValueChange = {
                 onSet(if (isInt) it.roundToInt().toString() else fixed(it, decimals))
@@ -980,6 +983,7 @@ private fun MaskToolbar(
         // edge nobody can see is not a number anyone can carry between the two.
         Text(stringResource(R.string.mask_brush_px, (radius * 2 * 512).roundToInt()), style = LogTextStyle)
         Slider(
+            colors = nightmareSliderColors(),
             value = radius,
             onValueChange = { radius = it },
             valueRange = BRUSH_MIN..BRUSH_MAX,
@@ -1167,6 +1171,7 @@ private fun BatchDialog(
                     else -> {
                         Text(stringResource(R.string.inspector_sweep_from, fixed(from, dp)), style = MaterialTheme.typography.bodyMedium)
                         Slider(
+                            colors = nightmareSliderColors(),
                             value = from,
                             onValueChange = {
                                 from = snapToStep(it, sweep)
@@ -1180,6 +1185,7 @@ private fun BatchDialog(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Slider(
+                            colors = nightmareSliderColors(),
                             value = to,
                             onValueChange = { to = snapToStep(it, sweep).coerceAtLeast(from) },
                             valueRange = sweep.min.toFloat()..sweep.max.toFloat(),
@@ -1189,6 +1195,7 @@ private fun BatchDialog(
                         // never go finer than the knob itself moves.
                         Text(stringResource(R.string.inspector_sweep_step, fixed(step, dp)), style = MaterialTheme.typography.bodyMedium)
                         Slider(
+                            colors = nightmareSliderColors(),
                             // ⚠ Shows the FITTED value, so the handle sits where
                             // the sweep actually is rather than where the drag
                             // left it — a slider that disagrees with its own
@@ -1347,6 +1354,7 @@ private fun ImagePicker(current: String, onPicked: (String) -> Unit, onClear: ()
         // spends the sheet's widest row restating it. Asked for from the phone.
         if (current.isBlank()) {
             Button(
+                colors = nightmareButtonColors(),
                 onClick = pick,
                 shape = RoundedCornerShape(12.dp),
             ) { Text(stringResource(R.string.inspector_choose_image)) }

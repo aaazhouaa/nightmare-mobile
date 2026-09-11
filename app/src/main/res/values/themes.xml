@@ -7,5 +7,8 @@
         <item name="android:windowBackground">@color/surface</item>
         <item name="android:statusBarColor">@color/surface</item>
         <item name="android:navigationBarColor">@color/surface</item>
+        <!-- Compose lists still stretch on API 31+ without this; keeps the
+             window itself from bouncing when a nested scroll leaks out. -->
+        <item name="android:overScrollMode">never</item>
     </style>
 </resources>

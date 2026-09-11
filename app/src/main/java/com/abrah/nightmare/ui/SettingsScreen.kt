@@ -2,7 +2,6 @@ package com.abrah.nightmare.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -11,7 +10,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -20,14 +18,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
 import com.abrah.nightmare.R
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.abrah.nightmare.Prefs
 
 /** Which page of Settings is showing. */
 enum class SettingsTab(val label: Int) {
-    THEME(R.string.settings_theme),
     COMMUNITY(R.string.settings_community),
     DIAGNOSTICS(R.string.settings_diagnostics),
 }
@@ -51,8 +46,6 @@ fun SettingsScreen(
     tab: SettingsTab,
     onTab: (SettingsTab) -> Unit,
     onClose: () -> Unit,
-    theme: Prefs.Theme,
-    onTheme: (Prefs.Theme) -> Unit,
     /** ⭐ The harness, handed in whole: this screen does not know what an op is. */
     diagnostics: @Composable () -> Unit,
     modifier: Modifier = Modifier,
@@ -89,56 +82,10 @@ fun SettingsScreen(
             }
         }
         when (tab) {
-            SettingsTab.THEME -> ThemePage(theme, onTheme)
             SettingsTab.COMMUNITY -> CommunityPage()
             // ⚠ The harness is passed in rather than built here so this file
             // stays free of the view model.
             SettingsTab.DIAGNOSTICS -> diagnostics()
-        }
-    }
-}
-
-@Composable
-private fun ThemePage(theme: Prefs.Theme, onTheme: (Prefs.Theme) -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(top = 10.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        // ⚠⚠ THREE choices, not a dark-mode switch. "Follow the system" cannot
-        // be expressed as on/off, and a bare switch would pin the app to
-        // whatever the phone was when it was first opened with no way back.
-        // `Prefs.Theme` has the same note.
-        for (t in Prefs.Theme.entries) {
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                RadioButton(selected = theme == t, onClick = { onTheme(t) })
-                Column {
-                    Text(
-                        stringResource(
-                            when (t) {
-                                Prefs.Theme.SYSTEM -> R.string.theme_system
-                                Prefs.Theme.DARK -> R.string.theme_dark
-                                Prefs.Theme.LIGHT -> R.string.theme_light
-                            }
-                        ),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    if (t == Prefs.Theme.LIGHT) {
-                        // ⚠ Said out loud rather than discovered. The canvas is
-                        // drawn from its own palette (`CanvasColors`) and was
-                        // designed dark; light is honest about being the less
-                        // finished of the two rather than pretending otherwise.
-                        Text(
-                            stringResource(R.string.theme_canvas_note),
-                            style = LogTextStyle,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
         }
     }
 }

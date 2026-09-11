@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
@@ -68,6 +67,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.abrah.nightmare.NodeType
 import com.abrah.nightmare.ui.LogTextStyle
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /**
  * The canvas, with the run bar over it.
@@ -125,8 +125,9 @@ fun CanvasScreen(
     onModels: () -> Unit = {},
     onResults: () -> Unit = {},
     onWorkflows: () -> Unit = {},
-    /** ⭐ Open the device sheet — HTP arch and VTCM. */
-    onDeviceInfo: () -> Unit = {},
+    /** True while the UI is in dark theme — the glyph shows the *other* mode. */
+    darkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
     /**
      * Save the canvas under this name.
      *
@@ -279,29 +280,30 @@ fun CanvasScreen(
                 .padding(horizontal = 4.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            // ⭐ Save the canvas. ⚠ FIRST in this row, i.e. leftmost, because
-            // it is the only one of the three that acts on the graph rather
-            // than opening something about the app — and it is the one reached
-            // most often, so it sits furthest from the screen edge where a
-            // thumb is steadiest.
+            // ⭐ Theme toggle, LEFT of Save. Light shows the moon (go dark);
+            // dark shows the sun (go light). The assets live in res/drawable.
+            IconButton(onClick = onToggleTheme) {
+                Icon(
+                    painter = androidx.compose.ui.res.painterResource(
+                        if (darkTheme) R.drawable.ic_theme_sun else R.drawable.ic_theme_moon,
+                    ),
+                    contentDescription = stringResource(
+                        if (darkTheme) R.string.cd_theme_to_light else R.string.cd_theme_to_dark,
+                    ),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    // ⚠ Optical size, not the 24dp viewport: the sun/moon paths
+                    // fill more of the box than SaveIcon, so they read larger
+                    // at the same dp. Cap below Save's 24dp default.
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            // ⭐ Save the canvas. Left of the gear: it acts on the graph rather
+            // than opening something about the app, so it sits further from the
+            // screen edge where a thumb is steadiest.
             IconButton(onClick = { saving = true }) {
                 Icon(
                     com.abrah.nightmare.ui.SaveIcon,
                     contentDescription = stringResource(R.string.save_workflow),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            // ⭐ What this phone's NPU actually is. ⚠ Beside the wrench because
-            // it answers the question the wrench's log raises -- "why did that
-            // fail on MY phone" -- and the arch/VTCM pair is the answer to most
-            // of them.
-            // ⚠ See `docs/UI.md` §7.2: an inset is not padding. This row sits
-            // at the top-RIGHT, so it needs clearance from that edge too — the
-            // gear was landing hard against it.
-            IconButton(onClick = onDeviceInfo) {
-                Icon(
-                    Icons.Filled.Info,
-                    contentDescription = stringResource(R.string.cd_device_info),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -310,6 +312,10 @@ fun CanvasScreen(
             // of three unlabelled glyphs on the app's first screen, and the
             // least likely of the three to be what anyone wanted. The harness
             // is still there, behind Settings > Diagnostics.
+            //
+            // The device-info glyph used to sit between Save and this gear; it
+            // moved next to the "模型" title (LibraryScreen), because that is
+            // the page that asks "will this checkpoint load on MY phone".
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.Filled.Settings,
@@ -603,12 +609,14 @@ private fun TopBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            OutlinedButton(
+            Button(
+                colors = nightmareButtonColors(),
                 onClick = onModels,
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
             ) { Text(stringResource(R.string.nav_models), fontSize = 12.sp) }
-            OutlinedButton(
+            Button(
+                colors = nightmareButtonColors(),
                 onClick = onWorkflows,
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
@@ -616,7 +624,8 @@ private fun TopBar(
             // ⭐ Results, reachable from the canvas. ⚠ It was a TAB with no
             // door: you could only get to it by opening Models or Flows first
             // and then noticing a third tab, which nobody did.
-            OutlinedButton(
+            Button(
+                colors = nightmareButtonColors(),
                 onClick = onResults,
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
@@ -750,6 +759,7 @@ private fun SaveWorkflowDialog(
             // nothing. A button that is enabled and silently no-ops is worse
             // than one that is visibly unavailable with the reason above it.
             Button(
+                colors = nightmareButtonColors(),
                 onClick = { onSave(name) },
                 enabled = name.isNotBlank() && why == null,
             ) { Text(stringResource(R.string.save)) }
@@ -880,6 +890,7 @@ private fun RunBar(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Button(
+                colors = nightmareButtonColors(),
                 onClick = onRun,
                 enabled = !busy,
                 shape = RoundedCornerShape(12.dp),
@@ -889,7 +900,11 @@ private fun RunBar(
             // bar already says what is armed and Run already sweeps when it is
             // — a button that duplicated that was a third place to look.
             // Removed at the user's request, 2026-09-10.
-            OutlinedButton(onClick = onAdd, shape = RoundedCornerShape(12.dp)) {
+            Button(
+                colors = nightmareButtonColors(),
+                onClick = onAdd,
+                shape = RoundedCornerShape(12.dp),
+            ) {
                 Text(stringResource(R.string.add_node), fontSize = 12.sp)
             }
             Text(

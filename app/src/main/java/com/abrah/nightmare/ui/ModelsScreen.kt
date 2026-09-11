@@ -38,6 +38,7 @@ import com.abrah.nightmare.ModelInstaller
 import com.abrah.nightmare.UpscalerBuild
 import com.abrah.nightmare.UpscalerSpec
 import com.abrah.nightmare.ModelSpec
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /**
  * What the model list needs to draw one row.
@@ -165,11 +166,11 @@ fun ModelsScreen(
         val hasUpscalers = upscalers.isNotEmpty()
         SwipeTabs(
             labels = families.map { it.label } + if (hasUpscalers) listOf(stringResource(R.string.upscalers)) else emptyList(),
-            modifier = Modifier.padding(top = 8.dp),
+            modifier = Modifier.padding(top = 8.dp).fillMaxSize(),
         ) { page ->
             if (hasUpscalers && page == families.size) {
                 LazyColumn(
-                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    Modifier.fillMaxSize().padding(top = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     item {
@@ -203,7 +204,7 @@ fun ModelsScreen(
             val shown = rows.filter { it.spec.family == family }
                 .sortedByDescending { (if (it.selected) 2 else 0) + (if (it.installed) 1 else 0) }
             LazyColumn(
-                Modifier.fillMaxWidth().padding(top = 10.dp),
+                Modifier.fillMaxSize().padding(top = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 // ⚠⚠ Says the size out loud, PER FAMILY, and inside the page so
@@ -369,7 +370,7 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Button(onClick = { name = ""; naming = true }, enabled = !busy) { Text(stringResource(R.string.flows_import)) }
+            Button(colors = nightmareButtonColors(), onClick = { name = ""; naming = true }, enabled = !busy) { Text(stringResource(R.string.flows_import)) }
         }
     }
 
@@ -409,6 +410,7 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
             },
             confirmButton = {
                 Button(
+                    colors = nightmareButtonColors(),
                     onClick = { naming = false; onImport(trimmed) },
                     enabled = ok,
                 ) { Text(stringResource(R.string.models_pick_zip)) }
@@ -547,7 +549,7 @@ private fun ModelAction(
         ) { Text(stringResource(R.string.in_use)) }
         row.installed -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = { onDelete(row.spec) }, enabled = !busy) { Text(stringResource(R.string.delete)) }
-            Button(onClick = { onSelect(row.spec) }, enabled = !busy) { Text(stringResource(R.string.use)) }
+            Button(colors = nightmareButtonColors(), onClick = { onSelect(row.spec) }, enabled = !busy) { Text(stringResource(R.string.use)) }
         }
         // ⚠⚠ An INCOMPLETE import: the only action is to remove it. There is no
         // Download that could complete it -- we have no URL for the user's own
@@ -563,7 +565,7 @@ private fun ModelAction(
         // rather than being offered and failing after a multi-gigabyte
         // download. The row's own line already names the arch it needs.
         row.build == null -> OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
-        else -> Button(onClick = { onInstall(row.spec) }, enabled = !busy) { Text(stringResource(R.string.download)) }
+        else -> Button(colors = nightmareButtonColors(), onClick = { onInstall(row.spec) }, enabled = !busy) { Text(stringResource(R.string.download)) }
     }
 }
 
@@ -637,6 +639,7 @@ private fun UpscalerCard(
                     row.build == null ->
                         OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
                     else -> Button(
+                        colors = nightmareButtonColors(),
                         onClick = { onInstall(row.spec) },
                         enabled = !busy,
                     ) { Text(stringResource(R.string.download)) }

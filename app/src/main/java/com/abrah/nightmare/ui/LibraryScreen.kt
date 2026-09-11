@@ -63,12 +63,25 @@ fun LibraryScreen(
     flows: @Composable () -> Unit,
     results: @Composable () -> Unit = {},
     modifier: Modifier = Modifier,
+    /**
+     * ⭐ Device-info glyph, shown next to the "模型" title only. Empty on the
+     * other tabs so Flows/Results do not grow a control that is not about them.
+     */
+    onDeviceInfo: (() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxSize().statusBarsPadding().padding(16.dp)) {
         // ⚠ The title follows the tab rather than saying "Library": the ✕ closes
         // to the canvas either way, and a name the user did not choose is one
         // more word between them and the list.
-        ScreenHeader(stringResource(tab.label), onClose = onClose)
+        ScreenHeader(
+            stringResource(tab.label),
+            onClose = onClose,
+            afterTitle = {
+                if (tab == LibraryTab.MODELS && onDeviceInfo != null) {
+                    DeviceInfoButton(onClick = onDeviceInfo)
+                }
+            },
+        )
         TabRow(
             selectedTabIndex = tab.ordinal,
             containerColor = MaterialTheme.colorScheme.background,
@@ -125,7 +138,7 @@ fun SwipeTabs(
     val state = rememberPagerState(pageCount = { labels.size })
     val scope = rememberCoroutineScope()
 
-    Column(modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxSize()) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -170,6 +183,15 @@ fun SwipeTabs(
                 }
             }
         }
-        HorizontalPager(state = state, modifier = Modifier.fillMaxWidth()) { i -> page(i) }
+        // ⚠⚠ Height is the leftover column, NOT wrap-content of the current
+        // page. Wrap-content remeasures as the incoming page comes on; a
+        // shorter family (or one whose lazy list has not composed yet) first
+        // shrinks the pager, then snaps back -- the "content drops then pops"
+        // on Models family swipe. Weight pins the slot so both pages share
+        // one height, and each LazyColumn fills it.
+        HorizontalPager(
+            state = state,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+        ) { i -> page(i) }
     }
 }

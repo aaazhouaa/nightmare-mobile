@@ -78,7 +78,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** ⚠ Which Settings tab, hoisted exactly as [libraryTab] is — the two
      *  screens are siblings and must behave the same way. */
-    var settingsTab by mutableStateOf(com.abrah.nightmare.ui.SettingsTab.THEME)
+    var settingsTab by mutableStateOf(com.abrah.nightmare.ui.SettingsTab.COMMUNITY)
         private set
 
     fun switchSettingsTab(t: com.abrah.nightmare.ui.SettingsTab) { settingsTab = t }
@@ -185,6 +185,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun closeLibrary() {
         showModels = false
         showWorkflows = false
+        showDeviceInfo = false
     }
 
     val libraryOpen: Boolean get() = showModels || showWorkflows
@@ -579,6 +580,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     fun switchLibraryTab(t: com.abrah.nightmare.ui.LibraryTab) {
         libraryTab = t
+        if (t != com.abrah.nightmare.ui.LibraryTab.MODELS) showDeviceInfo = false
         // ⚠ Each tab refreshes what it draws from DISK on the way in, for the
         // same reason [refreshModels] does: a cache here would need invalidating
         // from install, delete, save and rename alike, and the one that got
@@ -2358,7 +2360,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * nothing looks identical to one whose op failed, and this project has
      * already lost time to checks that reported the opposite of the truth.
      */
-    fun notWired(op: String, step: String) = say("$op -- not wired yet ($step)", bad = true)
+    fun notWired(op: String, step: String) = say(
+        getApplication<Application>().getString(R.string.r2_main_not_wired, op, step),
+        bad = true,
+    )
 
     private companion object {
         /** The one workflow the app keeps. Named because there will be more. */

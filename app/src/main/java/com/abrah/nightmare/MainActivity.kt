@@ -24,11 +24,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -57,6 +55,7 @@ import com.abrah.nightmare.ui.DeviceSheet
 import com.abrah.nightmare.ui.LibraryScreen
 import com.abrah.nightmare.ui.ModelsScreen
 import com.abrah.nightmare.ui.WorkflowsScreen
+import com.abrah.nightmare.ui.nightmareButtonColors
 
 /** What the header shows: the build that produced this APK. */
 val HARNESS_VERSION: String =
@@ -223,6 +222,7 @@ fun HarnessScreen(
             tab = vm.libraryTab,
             onTab = vm::switchLibraryTab,
             onClose = { vm.closeLibrary() },
+            onDeviceInfo = { vm.setDeviceInfoVisible(true) },
             models = {
                 // ⭐ The zip picker for an imported checkpoint.
                 //
@@ -324,6 +324,12 @@ fun HarnessScreen(
         // ⭐ A kept picture full screen, over the library. ⚠ Inside the
         // library branch, because that is where it is opened from and back
         // must return to the list rather than to the canvas.
+        // ⚠ Over the library, not the canvas: the ⓘ that opens this now lives
+        // next to the "模型" title, so the sheet must compose in this branch
+        // (the canvas path returns from the library and would never show it).
+        if (vm.showDeviceInfo) {
+            DeviceSheet(vm.deviceCaps, onDismiss = { vm.setDeviceInfoVisible(false) })
+        }
         vm.viewingResult?.let { _ ->
             if (vm.viewingSet.isNotEmpty()) {
                 BackHandler { vm.closeResult() }
@@ -346,6 +352,14 @@ fun HarnessScreen(
     }
 
     if (vm.showCanvas) {
+        // ⚠ Composed here, not inside the click lambda: `isSystemInDarkTheme()`
+        // is itself @Composable. The toggle writes LIGHT/DARK explicitly so a
+        // tap always changes the palette even if the pref was still SYSTEM.
+        val canvasDark = when (vm.theme) {
+            Prefs.Theme.DARK -> true
+            Prefs.Theme.LIGHT -> false
+            Prefs.Theme.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
+        }
         // ⭐⭐ Every picture the graph can make without the NPU, kept current
         // as the user works -- the chosen photo on `load_image`, the framed one
         // on `crop`. ⚠ The trigger lives in `HarnessViewModel.updateCanvas`
@@ -401,7 +415,10 @@ fun HarnessScreen(
             onModels = { vm.setModelsVisible(true) },
             onWorkflows = { vm.setWorkflowsVisible(true) },
             onResults = { vm.setResultsVisible(true) },
-            onDeviceInfo = { vm.setDeviceInfoVisible(true) },
+            darkTheme = canvasDark,
+            onToggleTheme = {
+                vm.chooseTheme(if (canvasDark) Prefs.Theme.LIGHT else Prefs.Theme.DARK)
+            },
             imageFor = vm::imageFor,
             // ⚠⚠ Not `onGesture` for these: a whole state captured at composition
             // time and written back late REVERTS the graph. See
@@ -418,15 +435,9 @@ fun HarnessScreen(
             onSave = vm::saveWorkflowAs,
             savedAs = vm.currentWorkflowName,
         )
-        // ⚠ A dialog, so it draws OVER the canvas rather than replacing it: the
-        // question it answers ("why did that fail on my phone") is asked while
-        // looking at the thing that failed.
-        if (vm.showDeviceInfo) {
-            DeviceSheet(vm.deviceCaps, onDismiss = { vm.setDeviceInfoVisible(false) })
-        }
-        // ⭐ The sweep builder. ⚠ A dialog over the canvas for the same reason
-        // the device sheet is one: it is answering a question about the graph
-        // you are looking at.
+        // ⭐ The sweep builder. ⚠ A dialog over the canvas: it is answering a
+        // question about the graph you are looking at. The device sheet used
+        // to live here; it moved with its ⓘ onto the Models page.
         if (vm.batch != null) {
             com.abrah.nightmare.canvas.BatchSheet(
                 graph = vm.canvas.workflow.graph,
@@ -449,8 +460,6 @@ fun HarnessScreen(
         tab = vm.settingsTab,
         onTab = vm::switchSettingsTab,
         onClose = { vm.setCanvasVisible(true) },
-        theme = vm.theme,
-        onTheme = vm::chooseTheme,
         diagnostics = { HarnessPane(vm) },
     )
 }
@@ -707,14 +716,15 @@ private fun OpButtons(
         Op(stringResource(R.string.r2_main_models), busy, Modifier.fillMaxWidth(), onOpenModels)
         // Still honest stubs. Each names the step that will wire it, so the
         // screen doubles as the plan.
-        Stub(stringResource(R.string.r2_main_stub_resize), "QuickJS", busy, onNotWired)
-        Stub(stringResource(R.string.r2_main_stub_clipseg), "ORT CPU", busy, onNotWired)
+        Stub(stringResource(R.string.r2_main_stub_resize), stringResource(R.string.r2_main_stub_step_quickjs), busy, onNotWired)
+        Stub(stringResource(R.string.r2_main_stub_clipseg), stringResource(R.string.r2_main_stub_step_ort), busy, onNotWired)
     }
 }
 
 @Composable
 private fun Op(label: String, busy: Boolean, modifier: Modifier, onClick: () -> Unit) {
     Button(
+        colors = nightmareButtonColors(),
         onClick = onClick,
         enabled = !busy,
         modifier = modifier,
@@ -730,15 +740,14 @@ private fun Stub(
     busy: Boolean,
     onNotWired: (String, String) -> Unit,
 ) {
-    OutlinedButton(
+    Button(
+        colors = nightmareButtonColors(),
         onClick = { onNotWired(op, step) },
         enabled = !busy,
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
-        colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-        ),
-    ) { Text(op) }
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 12.dp),
+    ) { Text(op, fontSize = 13.sp) }
 }
 
 @Composable

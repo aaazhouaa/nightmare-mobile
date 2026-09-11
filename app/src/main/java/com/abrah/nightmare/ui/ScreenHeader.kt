@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -39,6 +40,8 @@ fun ScreenHeader(
     title: String,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Shown just after the title — Models puts the device-info glyph here. */
+    afterTitle: @Composable () -> Unit = {},
     /** Shown just before the ✕ — the harness puts its version here. */
     trailing: @Composable () -> Unit = {},
 ) {
@@ -54,11 +57,14 @@ fun ScreenHeader(
         // pinned them that way: a golden proves the pixels have not CHANGED,
         // never that they were right (docs/UI.md §5). Only the harness escaped,
         // because its header alone named a colour.
-        Text(
-            title,
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title,
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            afterTitle()
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             trailing()
             IconButton(onClick = onClose) {
@@ -71,5 +77,17 @@ fun ScreenHeader(
                 )
             }
         }
+    }
+}
+
+/** The ⓘ that opens the device sheet (HTP arch / VTCM). One glyph, two homes. */
+@Composable
+fun DeviceInfoButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    IconButton(onClick = onClick, modifier = modifier) {
+        Icon(
+            Icons.Filled.Info,
+            contentDescription = stringResource(R.string.cd_device_info),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

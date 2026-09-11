@@ -147,6 +147,11 @@ fun GraphCanvas(
 
 ) {
     val measurer = rememberTextMeasurer()
+    // ⚠ Resolved ONCE here, in composable context: the drawing below runs in a
+    // DrawScope, which cannot read resources. An unknown port (a plugin's)
+    // keeps its raw name, and an unknown node type keeps its id.
+    val portLabels = portLabelMap()
+    val nodeNames = types.keys.associateWith { nodeDisplayName(it) }
     Box(modifier.background(CanvasColors.background)) {
         Canvas(Modifier.fillMaxSize()) {
             // ⚠ Geometry in device pixels, fonts in sp. See Viewport.forDevice.
@@ -197,7 +202,7 @@ fun GraphCanvas(
             // exactly how a "pop out" stops reading as one.
             for (box in boxes.sortedBy { if (it.id in selected) 1 else 0 }) {
                 drawNode(box, vp, viewport.scale, measurer, box.id in selected,
-                    status[box.id], imageFor)
+                    status[box.id], imageFor, portLabels, nodeNames)
             }
 
             // ⭐⭐ The picked wire's controls, LAST, so they sit over every node
@@ -241,6 +246,10 @@ private fun DrawScope.drawNode(
     selected: Boolean,
     status: NodeStatus?,
     imageFor: (String) -> ImageBitmap?,
+    /** Port name -> display label, resolved in composable context. */
+    portLabels: Map<String, String>,
+    /** Qualified node type -> display name, resolved in composable context. */
+    nodeNames: Map<String, String>,
 ) {
     val tl = viewport.toScreen(box.topLeft)
     val w = box.width * viewport.scale
@@ -384,15 +393,22 @@ private fun DrawScope.drawNode(
         color = CanvasColors.title,
         fontSize = (14f * textZoom).sp,
         fontWeight = FontWeight.Medium,
-        fontFamily = FontFamily.SansSerif,
+        fontFamily = FontFamily.Default,
     )
     // ⚠ Measured, not guessed from the font size. A baseline computed from
     // `fontSize` put the title half outside the stripe. ⚠ Ellipsised to the
     // node's own width, which is what makes a floored font safe: below the floor
     // the type no longer shrinks with the node, so without this a long id would
     // run out over the canvas.
+    // ⚠ The DISPLAY name, not the raw id: a header that reads "clip_encode"
+    // is a word the palette never taught the user. The id's COUNTER survives,
+    // though — `clip_encode_8` is the only thing that tells eight same-type
+    // nodes apart — so the suffix after the type's base name is appended:
+    // 文本编码(clip)_8. A renamed or foreign id that does not fit the
+    // `<base>_<n>` shape falls back to the id itself.
+    val counter = nodeCounterSuffix(box.node.id, box.node.type)
     val title = measurer.measure(
-        box.node.id, titleStyle,
+        (nodeNames[box.node.type]?.let { it + counter }) ?: box.node.id, titleStyle,
         overflow = TextOverflow.Ellipsis,
         maxLines = 1,
         constraints = Constraints(maxWidth = room),
@@ -407,11 +423,15 @@ private fun DrawScope.drawNode(
     // survives: a node's id is what you are looking for, and its type is
     // readable from the stripe colour and the ports.
     val subtitle = measurer.measure(
-        box.node.type.nodeLabel,
+        // ⚠ The DISPLAY name, same source as the palette row: the palette
+        // speaks Chinese now, so a monospace "clip_encode" here is a word the
+        // user was never taught. An unknown type (a plugin's) keeps its raw
+        // short label.
+        nodeNames[box.node.type] ?: box.node.type.nodeLabel,
         TextStyle(
             color = CanvasColors.label,
             fontSize = (10f * textZoom).sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = FontFamily.Default,
         ),
         overflow = TextOverflow.Ellipsis,
         maxLines = 1,
@@ -429,12 +449,12 @@ private fun DrawScope.drawNode(
     val portRoom = Sizes.PORT_SPACING * viewport.scale
     box.inputs.forEachIndexed { i, port ->
         drawPort(viewport.toScreen(box.inputPort(i)), port.type, viewport.scale)
-        drawPortLabel(measurer, viewport.toScreen(box.inputPort(i)), port.name,
+        drawPortLabel(measurer, viewport.toScreen(box.inputPort(i)), portLabels[port.name] ?: port.name,
             viewport.scale, textZoom, true, w, portRoom)
     }
     box.outputs.forEachIndexed { i, port ->
         drawPort(viewport.toScreen(box.outputPort(i)), port.type, viewport.scale)
-        drawPortLabel(measurer, viewport.toScreen(box.outputPort(i)), port.name,
+        drawPortLabel(measurer, viewport.toScreen(box.outputPort(i)), portLabels[port.name] ?: port.name,
             viewport.scale, textZoom, false, w, portRoom)
     }
 
@@ -448,7 +468,7 @@ private fun DrawScope.drawNode(
         val style = TextStyle(
             color = CanvasColors.failed,
             fontSize = (10f * textZoom).sp,
-            fontFamily = FontFamily.Monospace,
+            fontFamily = FontFamily.Default,
         )
         // ⚠⚠ A positive constraint, always. `drawText(measurer, string, …)`
         // derives its own from the canvas and asks for a negative width for
@@ -531,7 +551,7 @@ private fun DrawScope.drawPortLabel(
     val style = TextStyle(
         color = CanvasColors.label,
         fontSize = (10f * zoom).sp,
-        fontFamily = FontFamily.Monospace,
+        fontFamily = FontFamily.Default,
     )
     // ⚠ Half the node less the inset the label already sits at: the two
     // sides' labels share the width and must not meet in the middle.

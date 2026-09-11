@@ -399,7 +399,7 @@ data class CanvasState(
         // `connectionError` beside the other rules. Without it the executor
         // finds the loop at run time -- after the user pressed Run and waited.
         if (workflow.graph.wouldCycle(output.nodeId, input.nodeId)) {
-            return "that would make a loop"
+            return "这样会形成循环"
         }
         // ⭐⭐ …and neither can the SIZE check, for the same reason and one
         // more: it needs the node types too. `vae_encode` refuses anything but

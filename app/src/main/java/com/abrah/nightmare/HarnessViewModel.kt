@@ -549,7 +549,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         get() {
             val spec = ModelCatalog.byId(SelectedModel.id) ?: return SelectedModel.id
             val here = spec.installed(getApplication())
-            return if (here) spec.label else "${spec.label} (not installed)"
+            return if (here) spec.label
+            else getApplication<Application>().getString(R.string.model_not_installed, spec.label)
         }
 
     // ---- models ----------------------------------------------------------
@@ -1183,7 +1184,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             // ⚠ Toasted too: every OUTCOME of a save is announced the same
             // way, or the one that fails is the one nobody hears about.
             say("that picture is no longer in memory -- Run again to remake it", bad = true)
-            toast("That picture is no longer in memory — Run again")
+            toast(getApplication<Application>().getString(R.string.vm_picture_gone))
             return
         }
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -1191,10 +1192,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             val where = runCatching { ImageSaver.savePng(ctx, png, name) }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 where.fold(
-                    onSuccess = { say("saved to $it"); toast("Saved to the gallery") },
+                    onSuccess = { say("saved to $it"); toast(getApplication<Application>().getString(R.string.vm_saved_gallery)) },
                     onFailure = {
                         say("could not save -- ${it.message}", bad = true)
-                        toast("Could not save: " + it.message)
+                        toast(getApplication<Application>().getString(R.string.vm_save_failed, it.message ?: "null"))
                     },
                 )
             }
@@ -1528,9 +1529,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun shareResultImage(id: String) {
         val png = results.fullBytes(id)
-        if (png == null) { toast("That picture is missing"); return }
+        if (png == null) { toast(getApplication<Application>().getString(R.string.vm_picture_missing)); return }
         runCatching { Share.image(getApplication(), png, "nightmare-" + id) }
-            .onFailure { toast("Could not share: " + it.message) }
+            .onFailure { toast(getApplication<Application>().getString(R.string.vm_share_failed, it.message ?: "null")) }
     }
 
     /**
@@ -1543,27 +1544,27 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun shareResultFlow(id: String) {
         val loaded = results.flow(id)
-        if (loaded == null) { toast("That flow could not be read"); return }
+        if (loaded == null) { toast(getApplication<Application>().getString(R.string.vm_flow_unreadable)); return }
         runCatching {
             Share.workflow(
                 getApplication(),
                 loaded.workflow.toJson(nodeTypes, loaded.view),
                 resultFlowName(id),
             )
-        }.onFailure { toast("Could not share: " + it.message) }
+        }.onFailure { toast(getApplication<Application>().getString(R.string.vm_share_failed, it.message ?: "null")) }
     }
 
     /** ⭐ Share a SAVED workflow from the Flows tab. */
     fun shareSavedWorkflow(name: String) {
         val loaded = runCatching { store.load(name) }.getOrNull()
-        if (loaded == null) { toast("\"" + name + "\" could not be read"); return }
+        if (loaded == null) { toast(getApplication<Application>().getString(R.string.vm_named_unreadable, name)); return }
         runCatching {
             Share.workflow(
                 getApplication(),
                 loaded.workflow.toJson(nodeTypes, loaded.view),
                 name,
             )
-        }.onFailure { toast("Could not share: " + it.message) }
+        }.onFailure { toast(getApplication<Application>().getString(R.string.vm_share_failed, it.message ?: "null")) }
     }
 
     /**
@@ -1576,11 +1577,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun shareNodeImage(imageId: String) {
         val png = ops.images.png(imageId)
         if (png == null) {
-            toast("That picture is no longer in memory — Run again")
+            toast(getApplication<Application>().getString(R.string.vm_picture_gone))
             return
         }
         runCatching { Share.image(getApplication(), png, "nightmare-" + imageId.take(12)) }
-            .onFailure { toast("Could not share: " + it.message) }
+            .onFailure { toast(getApplication<Application>().getString(R.string.vm_share_failed, it.message ?: "null")) }
     }
 
     fun saveResultsToGallery(ids: Collection<String>) {
@@ -1600,10 +1601,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 if (ok > 0) {
-                    toast("Saved " + ok + " to the gallery")
+                    toast(getApplication<Application>().getString(R.string.vm_saved_n, ok.toString()))
                     say("saved " + ok + " to the gallery")
                 } else {
-                    toast("Could not save: " + (lastError ?: "nothing to save"))
+                    toast(getApplication<Application>().getString(
+                        R.string.vm_save_failed,
+                        lastError ?: getApplication<Application>().getString(R.string.vm_nothing_to_save),
+                    ))
                     say("could not save -- " + lastError, bad = true)
                 }
             }
@@ -2112,9 +2116,17 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 onStart = { id, _ -> runLog = runLog.copy(now = id, step = null) },
                 onNode = { n ->
                     canvasStatus[n.id] = NodeStatus(outcome = n.outcome, detail = n.detail)
+                    val app = getApplication<Application>()
                     runLog = runLog.copy(
                         lines = runLog.lines +
-                            com.abrah.nightmare.canvas.runLineOf(n.id, n.outcome, n.ms, n.detail),
+                            com.abrah.nightmare.canvas.runLineOf(
+                                n.id, n.outcome, n.detail,
+                                ranLabel = app.getString(com.abrah.nightmare.R.string.r2_run_ran,
+                                    com.abrah.nightmare.canvas.formatMs(n.ms)),
+                                cachedLabel = app.getString(com.abrah.nightmare.R.string.r2_run_cached),
+                                failedLabel = app.getString(com.abrah.nightmare.R.string.r2_run_failed, n.detail),
+                                blockedLabel = app.getString(com.abrah.nightmare.R.string.r2_run_blocked, n.detail),
+                            ),
                         now = null, step = null,
                     )
                 },
@@ -2215,9 +2227,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // cannot drift on the one path a user actually takes.
         if (!ops.ensureBackend()) {
             runError = if (ModelCatalog.byId(SelectedModel.id)?.installed(getApplication()) != true) {
-                "no model installed -- open Models and download one"
+                getApplication<Application>().getString(R.string.err_no_model)
             } else {
-                "the backend would not start -- see the harness log"
+                getApplication<Application>().getString(R.string.err_backend_start)
             }
             return@run
         }
@@ -2233,9 +2245,17 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // ⚠ The progress entry is cleared as the node settles, or a
                 // finished node keeps a half-full bar under its result.
                 canvasStatus[n.id] = NodeStatus(outcome = n.outcome, detail = n.detail)
+                val app = getApplication<Application>()
                 runLog = runLog.copy(
                     lines = runLog.lines +
-                        com.abrah.nightmare.canvas.runLineOf(n.id, n.outcome, n.ms, n.detail),
+                        com.abrah.nightmare.canvas.runLineOf(
+                            n.id, n.outcome, n.detail,
+                            ranLabel = app.getString(com.abrah.nightmare.R.string.r2_run_ran,
+                                com.abrah.nightmare.canvas.formatMs(n.ms)),
+                            cachedLabel = app.getString(com.abrah.nightmare.R.string.r2_run_cached),
+                            failedLabel = app.getString(com.abrah.nightmare.R.string.r2_run_failed, n.detail),
+                            blockedLabel = app.getString(com.abrah.nightmare.R.string.r2_run_blocked, n.detail),
+                        ),
                     // ⚠ Cleared with the node that owned it, or the panel keeps
                     // counting the previous node's steps under the next one's
                     // name.

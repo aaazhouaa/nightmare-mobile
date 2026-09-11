@@ -232,9 +232,9 @@ fun RunLogPanel(
                     // success. Reported from the phone twice. ⇒ An edit that
                     // cannot find its anchor must FAIL, not carry on.
                     when {
-                        seedSweep != null -> "Batching " + seedSweep + " seeds"
-                        st.value != null -> "seed locked: ${st.value}"
-                        else -> "seed: random"
+                        seedSweep != null -> stringResource(R.string.r2_run_batching_seeds, seedSweep)
+                        st.value != null -> stringResource(R.string.r2_run_seed_locked, st.value)
+                        else -> stringResource(R.string.r2_run_seed_random)
                     },
                     style = LogTextStyle,
                     color = if (st.value != null) {
@@ -254,7 +254,7 @@ fun RunLogPanel(
                     IconButton(onClick = onReleaseSeedSweep, modifier = Modifier.size(28.dp)) {
                         Icon(
                             Icons.Filled.Close,
-                            contentDescription = "release the seed sweep",
+                            contentDescription = stringResource(R.string.cd_release_seed_sweep),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(15.dp),
                         )
@@ -272,9 +272,9 @@ fun RunLogPanel(
                         if (st.value != null) Icons.Filled.Lock
                         else com.abrah.nightmare.ui.LockOpenIcon,
                         contentDescription = if (st.value != null) {
-                            "release the seed, so every Run makes a new picture"
+                            stringResource(R.string.cd_unlock_seed)
                         } else {
-                            "lock the last seed, so every Run makes the same picture"
+                            stringResource(R.string.cd_lock_seed)
                         },
                         tint = if (st.value != null) {
                             MaterialTheme.colorScheme.primary
@@ -323,7 +323,7 @@ fun RunLogPanel(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "Batching " + a.count + " " + a.param +
+                            stringResource(R.string.r2_run_batching_param, a.count, a.param) +
                                 (if (a.values.isEmpty()) "" else ": " + a.values.joinToString(", ")),
                             style = LogTextStyle,
                             color = MaterialTheme.colorScheme.primary,
@@ -337,7 +337,7 @@ fun RunLogPanel(
                         ) {
                             Icon(
                                 Icons.Filled.Close,
-                                contentDescription = "release the " + a.param + " batch",
+                                contentDescription = stringResource(R.string.cd_release_batch, a.param),
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(14.dp),
                             )
@@ -410,7 +410,7 @@ fun RunLogPanel(
                     state.now != null -> "${state.now}…"
                     // ⚠ Named as finished rather than left showing the last
                     // node, or a completed run reads as one still in progress.
-                    else -> "done"
+                    else -> stringResource(R.string.r2_run_done)
                 },
                 style = LogTextStyle,
                 fontSize = 12.sp,
@@ -439,15 +439,21 @@ fun RunLogPanel(
                 // the phone, 2026-09-10.
                 if (!state.running && state.lines.isNotEmpty()) {
                     val clipboard = LocalClipboardManager.current
+                    // ⚠ Read in composition, not inside onClick: stringResource
+                    // is composable-only and the click handler is not one.
+                    val runningLabel = stringResource(R.string.r2_run_running)
+                    val doneLabel = stringResource(R.string.r2_run_done)
                     IconButton(
                         onClick = {
-                            clipboard.setText(AnnotatedString(logText(state, elapsed)))
+                            clipboard.setText(
+                                AnnotatedString(logText(state, elapsed, runningLabel, doneLabel))
+                            )
                         },
                         modifier = Modifier.size(24.dp),
                     ) {
                         Icon(
                             com.abrah.nightmare.ui.CopyIcon,
-                            contentDescription = "copy the run log",
+                            contentDescription = stringResource(R.string.cd_copy_log),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp),
                         )
@@ -464,7 +470,7 @@ fun RunLogPanel(
                 ) {
                     Icon(
                         Icons.Filled.Close,
-                        contentDescription = "hide the run log",
+                        contentDescription = stringResource(R.string.cd_hide_log),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(16.dp),
                     )
@@ -551,8 +557,14 @@ fun RunLogPanel(
  * run, and it lives in the status row rather than in a line — so a copy of the
  * lines alone would leave it out of every report.
  */
-private fun logText(state: RunLogState, elapsedMs: Long): String = buildString {
-    append(if (state.running) "running" else "done")
+private fun logText(
+    state: RunLogState,
+    elapsedMs: Long,
+    // ⚠ Labels are read in composition and passed in — see the copy button.
+    runningLabel: String,
+    doneLabel: String,
+): String = buildString {
+    append(if (state.running) runningLabel else doneLabel)
     appendLine("  " + formatMs(elapsedMs))
     state.lines.forEach { appendLine(it.id + "  " + it.text) }
 }
@@ -581,8 +593,26 @@ private const val AUTOSCROLL_SLACK = 24
  */
 private const val MAX_LINES = 40
 
-/** How a finished node reads in the log. */
-fun runLineOf(id: String, outcome: Outcome, ms: Long, detail: String): RunLine = RunLine(
+/**
+ * How a finished node reads in the log.
+ *
+ * ⚠⚠ The four labels are passed in rather than looked up here: this is not a
+ * composable and has no Context, so the caller — a panel in composition, or the
+ * view model via `getApplication<Application>().getString(...)` — reads the
+ * strings and hands them over. [ranLabel] already carries the formatted time
+ * (`stringResource(R.string.r2_run_ran, formatMs(ms))`); the failed/blocked
+ * labels already carry [detail]. [brief] still owns the RAN/CACHED detail
+ * suffix, exactly as before.
+ */
+fun runLineOf(
+    id: String,
+    outcome: Outcome,
+    detail: String,
+    ranLabel: String,
+    cachedLabel: String,
+    failedLabel: String,
+    blockedLabel: String,
+): RunLine = RunLine(
     id = id,
     text = when (outcome) {
         // ⚠⚠ The DETAIL is shown, not dropped. It used to be kept only for a
@@ -593,13 +623,13 @@ fun runLineOf(id: String, outcome: Outcome, ms: Long, detail: String): RunLine =
         // A whole session went into "switching model degrades the output" while
         // the run bar was reporting, truthfully and uselessly, that everything
         // ran. `frame ran 1.2s · 3024x4032` would have ended it in one glance.
-        Outcome.RAN -> "ran ${formatMs(ms)}" + brief(detail)
+        Outcome.RAN -> ranLabel + brief(detail)
         // ⚠ Especially here. "cached" alone hides WHAT was reused, and a
         // wrongly-reused value is exactly the failure that looks like a bad
         // model rather than a stale cache.
-        Outcome.CACHED -> "cached" + brief(detail)
-        Outcome.FAILED -> "failed — $detail"
-        Outcome.BLOCKED -> "blocked — $detail"
+        Outcome.CACHED -> cachedLabel + brief(detail)
+        Outcome.FAILED -> failedLabel
+        Outcome.BLOCKED -> blockedLabel
     },
     bad = outcome == Outcome.FAILED || outcome == Outcome.BLOCKED,
 )

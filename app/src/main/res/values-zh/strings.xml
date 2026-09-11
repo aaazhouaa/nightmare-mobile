@@ -101,4 +101,299 @@
     <string name="mask_brush_px">笔刷  %1$d 像素</string>
     <string name="mask_paint_hint">涂抹你想重绘的区域 · 双指缩放</string>
     <string name="mask_covered">已覆盖 %1$d%% · 红色区域会被重绘</string>
+
+    <!-- 2026-09-11：从 .kt 硬编码提取的 UI 文案中文翻译，key 与英文版一一对应。 -->
+    <!-- 主界面：打开已保存流程对话框。 -->
+    <string name="main_open_flow_confirm">打开 \"%1$s\"？</string>
+    <string name="main_open_anyway">仍要打开</string>
+    <string name="main_keep_editing">继续编辑</string>
+    <string name="cd_latest_output">最新的 vae_decode 输出</string>
+
+    <!-- 节点服务通知（非 Composable：用 context 解析）。 -->
+    <string name="notify_title">Nightmare 后台任务</string>
+    <string name="notify_text">正在执行节点操作</string>
+
+    <!-- 画布界面。 -->
+    <string name="all">全部</string>
+    <string name="cd_delete_selected">删除选中的节点</string>
+    <string name="cd_clear_selection">清除选择</string>
+    <string name="cd_picture_fullscreen">图片，全屏</string>
+    <string name="cd_share_picture">分享此图片</string>
+    <string name="cd_clear_output">清除此输出</string>
+    <string name="canvas_clear_picture_title">清除这张图片？</string>
+    <string name="canvas_clear">清除</string>
+
+    <!-- 节点检查器。 -->
+    <string name="cd_save_gallery">保存到相册</string>
+    <string name="cd_keep_with_flow">保留此图及其流程</string>
+    <string name="cd_clear_picture">清除这张图片</string>
+    <string name="cd_node_image">此节点的图片</string>
+    <string name="inspector_delete_node">删除节点</string>
+    <string name="inspector_delete_node_title">删除 \"%1$s\"？</string>
+    <string name="r2_ins_batching">批量扫描 %1$d 个值: %2$s</string>
+    <string name="r2_ins_locked">%1$s（已锁定）</string>
+    <string name="r2_ins_inputs">输入: %1$s</string>
+    <string name="r2_ins_delete_wires">与其相连的所有连线也会一并删除，且无法撤销。</string>
+    <string name="inspector_sweep">扫描 %1$s</string>
+    <string name="inspector_sweep_from">起点  %1$s</string>
+    <string name="inspector_sweep_step">步长  %1$s</string>
+    <string name="inspector_release">释放</string>
+    <string name="inspector_choose_image">选择一张图片</string>
+    <string name="cd_choose_other_picture">换一张图片</string>
+    <string name="cd_remove_node_picture">从节点移除此图片</string>
+    <string name="cd_copy_seed">复制种子</string>
+    <string name="cd_keep_seed">保留此种子供下次运行</string>
+
+    <!-- 节点面板。 -->
+    <string name="palette_add_node">添加节点</string>
+    <string name="palette_cat_sampling">采样</string>
+    <string name="palette_cat_latent">潜空间</string>
+    <string name="palette_cat_image">图像</string>
+    <string name="palette_cat_conditioning">条件编码</string>
+    <string name="palette_cat_misc">插件</string>
+    <string name="palette_ports">%1$d 入 · %2$d 出</string>
+
+    <string name="node_sd_sample">采样</string>
+    <string name="node_sd_vae_decode">VAE 解码</string>
+    <string name="node_sd_vae_encode">VAE 编码</string>
+    <string name="node_sd_clip_encode">文本编码(clip)</string>
+    <string name="node_sd_latent_blend">潜空间混合</string>
+    <string name="node_image_load">加载图像</string>
+    <string name="node_image_output">输出图像</string>
+    <string name="node_image_crop">裁剪</string>
+    <string name="node_image_mask">蒙版</string>
+    <string name="node_image_upscale">放大器</string>
+
+    <string name="param_steps">步数</string>
+    <string name="param_cfg">引导强度 (CFG)</string>
+    <string name="param_seed">种子</string>
+    <string name="param_denoise">重绘幅度</string>
+    <string name="param_scheduler">采样器</string>
+    <string name="param_model">模型</string>
+    <string name="param_width">宽度</string>
+    <string name="param_height">高度</string>
+    <string name="param_prompt">提示词</string>
+    <string name="param_negative">负面提示词</string>
+    <string name="param_uri">图片</string>
+    <string name="param_save">保存到相册</string>
+    <string name="param_name">文件名</string>
+    <string name="param_x">取景 X</string>
+    <string name="param_y">取景 Y</string>
+    <string name="param_w">取景宽</string>
+    <string name="param_h">取景高</string>
+    <string name="param_out_w">输出宽度</string>
+    <string name="param_out_h">输出高度</string>
+    <string name="param_aspect">宽高比</string>
+    <string name="param_pad">留白填充</string>
+    <string name="param_ops">涂抹笔迹</string>
+    <string name="param_grow">蒙版外扩</string>
+    <string name="param_feather">蒙版羽化</string>
+    <string name="param_upscaler">放大器</string>
+
+    <string name="wtype_string">文本</string>
+    <string name="wtype_int">整数</string>
+    <string name="wtype_float">小数</string>
+    <string name="wtype_bool">开关</string>
+
+    <string name="opt_source">原图比例</string>
+    <string name="opt_black">黑边填充</string>
+    <string name="opt_blur">模糊填充</string>
+
+    <string name="port_cond">条件</string>
+    <string name="port_latent">潜空间</string>
+    <string name="port_image">图像</string>
+    <string name="port_mask">蒙版</string>
+    <string name="port_base">底图</string>
+    <string name="port_repaint">重绘</string>
+
+    <string name="tab_models">模型</string>
+    <string name="tab_flows">工作流</string>
+    <string name="tab_results">结果</string>
+    <string name="err_no_model">未安装任何模型——请打开模型页下载一个</string>
+    <string name="err_backend_start">后端未能启动——请查看运行日志</string>
+    <string name="err_model_not_installed">%1$s 未安装——缺少 %2$s</string>
+    <string name="model_not_installed">%1$s（未安装）</string>
+    <string name="starting_backend">正在启动后端，准备首次渲染…</string>
+    <string name="flows_saved_title">已保存</string>
+    <string name="flows_empty">还没有保存的工作流——先在画布上搭好节点图，再在画布上按保存。</string>
+    <string name="canvas_delete_body">与它们相连的所有连线也会一并删除，且无法撤销。</string>
+    <string name="r2_main_op_encode_text">文本编码</string>
+    <string name="r2_main_op_vae_decode">VAE 解码</string>
+
+    <!-- 运行日志。 -->
+    <string name="cd_release_seed_sweep">释放种子扫描</string>
+    <string name="cd_release_batch">释放%1$s批量</string>
+
+    <!-- 蒙版编辑器。 -->
+    <string name="cd_masked_picture">正在蒙版的图片</string>
+
+    <!-- 设备信息。 -->
+    <string name="device_this_device">本机</string>
+
+    <!-- 模型界面。 -->
+    <string name="models_keep">保留</string>
+    <string name="models_name_it">命名</string>
+    <string name="models_name_label">模型名称</string>
+    <string name="models_pick_zip">选择 zip 包</string>
+
+    <!-- 结果界面。 -->
+    <string name="cd_save_selected">将选中图片保存到相册</string>
+    <string name="cd_forget_selected">删除选中的图片</string>
+    <string name="results_forget_batch_title">删除这一批？</string>
+    <string name="results_forget_n">删除 %1$s</string>
+    <string name="results_forget_pictures_title">删除 %1$s 张图片？</string>
+    <string name="results_forget_one_title">删除这一张？</string>
+    <string name="results_forget">删除</string>
+    <string name="cd_what_made">生成此图的流程</string>
+    <string name="cd_share_source_flow">分享生成它的流程</string>
+
+    <!-- 屏幕标题栏 / 流程列表。 -->
+    <string name="cd_close_back">关闭 %1$s——返回画布</string>
+    <string name="cd_rename">重命名 %1$s</string>
+    <string name="cd_share_named">分享 %1$s</string>
+    <string name="cd_delete_named">删除 %1$s</string>
+    <string name="workflows_rename_title">重命名 %1$s</string>
+    <string name="delete_named">删除 %1$s？</string>
+    <string name="cannot_undo">此操作无法撤销。</string>
+
+    <!-- 2026-09-11 第二轮：条件表达式文案 + ViewModel toast。 -->
+    <string name="canvas_delete_node_title">删除这个节点？</string>
+    <string name="canvas_delete_n_nodes">删除 %1$s 个节点？</string>
+    <string name="cd_saved_gallery">已保存到相册</string>
+    <string name="cd_kept_in_results">已存入结果</string>
+    <string name="cd_sweep_param">扫描此参数</string>
+    <string name="cd_sweeping">正在扫描 %1$s</string>
+    <string name="inspector_arm">设定</string>
+    <string name="inspector_sweep_to">至  %1$s</string>
+    <string name="results_kept_picture">保留的图片</string>
+
+    <!-- HarnessViewModel toast（非 Composable：经 application 解析）。 -->
+    <string name="vm_picture_gone">那张图片已不在内存中——请重新运行</string>
+    <string name="vm_saved_gallery">已保存到相册</string>
+    <string name="vm_save_failed">保存失败：%1$s</string>
+    <string name="vm_picture_missing">那张图片不存在</string>
+    <string name="vm_share_failed">分享失败：%1$s</string>
+    <string name="vm_flow_unreadable">无法读取该流程</string>
+    <string name="vm_nothing_to_save">没有可保存的内容</string>
+    <string name="vm_named_unreadable">无法读取 \"%1$s\"</string>
+    <string name="vm_saved_n">已保存 %1$s 张到相册</string>
+
+    <!-- ===== 二轮：设备信息页 ===== -->
+    <string name="r2_device_chip">芯片</string>
+    <string name="r2_device_htp_arch">HTP 架构</string>
+    <string name="r2_device_source">来源</string>
+    <string name="r2_device_source_measured">从 HTP 实测</string>
+    <string name="r2_device_source_assumed">按芯片名推断</string>
+    <string name="r2_device_unknown">未知</string>
+    <string name="r2_device_no_qnn">⚠ 此构建未内置 v%1$d 的 QNN 库，NPU 无法启动。已内置：%2$s。</string>
+    <string name="r2_device_runnable">可运行的模型</string>
+    <string name="r2_device_runnable_frac">%2$d 个中可运行 %1$d 个</string>
+    <string name="r2_device_sd15_build">SD 1.5 构建</string>
+    <string name="r2_device_supported">支持</string>
+    <string name="r2_device_sdxl_needs">需要 v75+ 架构与 8 MB VTCM——没有其他构建可用</string>
+    <string name="r2_device_not_measured">首次启动后端时会实测；在此之前为查表结果，未收录的芯片按最老支持档位推断。</string>
+
+    <!-- ===== 二轮：模型页 ===== -->
+    <string name="r2_models_hint_sd15">每个约 1 GB，请使用 Wi-Fi 下载。</string>
+    <string name="r2_models_hint_sdxl">每个约 3.5 GB；解压期间需要约 7.5 GB 可用空间。请使用 Wi-Fi 下载。</string>
+    <string name="r2_models_delete_frees">将释放 %1$d MB 空间。</string>
+    <string name="r2_models_upscaler_restore">恢复需要重新下载 %1$d MB。在重新安装之前，使用该放大器的 Upscale 节点会运行失败。</string>
+    <string name="r2_models_custom_restore">这是你导入的模型，恢复它需要重新导入 zip 包。</string>
+    <string name="r2_models_redownload">恢复它需要重新下载 %1$d MB。</string>
+    <string name="r2_models_in_use_note">它正在使用中，删除后将改选其他模型。</string>
+    <string name="r2_models_import_title">导入 checkpoint</string>
+    <string name="r2_models_import_desc">在电脑上转换好的 QNN 模型文件 zip 包。SD 1.5 或 SDXL 均可——会自动识别。</string>
+    <string name="r2_models_name_reserved">这是内置模型的名称，请换一个。</string>
+    <string name="r2_models_name_invalid">不能包含斜杠、冒号或前导点号。</string>
+    <string name="r2_models_name_note">该名称将作为文件夹名，并作为 id 写入所有使用它的工作流。</string>
+    <string name="r2_models_status_in_use">使用中  %1$d MB</string>
+    <string name="r2_models_incomplete">不完整——缺少 %1$s</string>
+
+    <!-- ===== 二轮：收藏页 ===== -->
+    <string name="r2_results_empty">还没有收藏。\n\n运行一次，点开图片，按下星标收藏。生成它的流程图也会一并保存，之后可以重新打开整个流程——而不只是看图。</string>
+    <string name="r2_results_summary">已收藏 %1$d 张 · %2$d MB · 重新打开流程会替换画布上当前的内容</string>
+    <string name="r2_results_forget_batch_body">全部 %1$d 张图片及其生成流程都将删除，此操作无法撤销。\n\n已保存到系统相册的副本不受影响。</string>
+    <string name="r2_results_forget_sel_body">所选图片及其生成流程都将删除，此操作无法撤销。\n\n已保存到系统相册的副本不受影响。</string>
+    <string name="r2_results_forget_one_body">该图片及其生成流程都将删除，此操作无法撤销。\n\n已保存到系统相册的副本不受影响。</string>
+    <string name="r2_results_cd_kept">收藏的图片</string>
+    <string name="r2_results_seed">种子 %1$d</string>
+
+    <!-- ===== 二轮：主屏 ===== -->
+    <string name="r2_main_running">运行中</string>
+    <string name="r2_main_not_reachable">无法连接</string>
+    <string name="r2_main_checking">检查中</string>
+    <string name="r2_main_backend_row">后端  %1$s  :%2$d</string>
+    <string name="r2_main_model_row">模型     %1$s</string>
+    <string name="r2_main_restart">重启后端</string>
+    <string name="r2_main_start">启动后端</string>
+    <string name="r2_main_stop">停止</string>
+    <string name="r2_main_health">健康检查</string>
+    <string name="r2_main_sample_graph">采样 → 解码（完整流程图）</string>
+    <string name="r2_main_cache_check">执行器：4 轮缓存检查</string>
+    <string name="r2_main_open_canvas">打开画布</string>
+    <string name="r2_main_models">模型</string>
+    <string name="r2_main_unsaved_flow">未保存的流程</string>
+    <string name="r2_main_holding">已加载 %1$s</string>
+    <string name="r2_main_idle">%1$s（空闲）</string>
+    <string name="r2_main_sampling">采样  %1$d / %2$d</string>
+    <string name="r2_main_open_flow_body">画布上的流程有未保存的修改。打开新流程会替换它，修改将丢失。</string>
+    <string name="r2_main_stub_resize">tier0：缩放</string>
+    <string name="r2_main_stub_clipseg">tier1：ClipSeg</string>
+
+    <!-- ===== 二轮：画布 ===== -->
+    <string name="r2_canvas_zoom">缩放</string>
+    <string name="r2_canvas_pan">画布移动</string>
+    <string name="r2_canvas_is_locked">%1$s 已锁定</string>
+    <string name="r2_canvas_lock">锁定%1$s</string>
+    <string name="r2_canvas_double_tap_fit">双击适应屏幕</string>
+    <string name="r2_canvas_tap_close">点按关闭</string>
+    <string name="r2_canvas_clear_saved">节点将恢复为空。图片已保存到系统相册，那份副本会保留。</string>
+    <string name="r2_canvas_clear_unsaved">节点将恢复为空。该图片尚未保存到系统相册，且除非锁定种子，再次运行会生成不同的图片。</string>
+
+    <!-- ===== 二轮：节点检查器 ===== -->
+    <string name="r2_ins_small_picture">当前图片为 %1$s，小于要求的 %2$s——黑边是补白而不是裁剪，直接放大只会让画面变糊。</string>
+    <string name="r2_ins_crop_hint_out">拖动移动 · 双指缩放 · 输出 %1$s</string>
+    <string name="r2_ins_crop_hint_own">拖动移动 · 双指缩放 · 取景框即输出，按原始尺寸</string>
+    <string name="r2_ins_mask_no_source">还没有可绘制的图片——把图片接进这个节点，解析出来后就会显示在这里。</string>
+    <string name="r2_ins_crop_no_pick">还没有图片——请在相连的“载入图片”节点上选择一张。</string>
+    <string name="r2_ins_crop_no_wire">把图片接进这个节点即可取景。</string>
+    <string name="r2_ins_unknown_type">未知节点类型——插件已加载了吗？</string>
+    <string name="r2_ins_no_widgets">该节点没有可调参数</string>
+    <string name="r2_ins_pick_up_to">最多选 %1$d 个</string>
+
+    <!-- ===== 二轮：运行日志 ===== -->
+    <string name="r2_run_batching_seeds">批量扫描 %1$d 个种子</string>
+    <string name="r2_run_seed_locked">种子已锁定：%1$s</string>
+    <string name="r2_run_seed_random">种子：随机</string>
+    <string name="r2_run_batching_param">批量扫描 %1$d 个 %2$s</string>
+    <string name="r2_run_done">完成</string>
+    <string name="r2_run_running">运行中</string>
+    <string name="r2_run_ran">已运行 %1$s</string>
+    <string name="r2_run_cached">缓存命中</string>
+    <string name="r2_run_failed">失败——%1$s</string>
+    <string name="r2_run_blocked">已阻塞——%1$s</string>
+
+    <!-- ===== 二轮：批量扫描 ===== -->
+    <string name="r2_batch_not_range">不是列表也不是范围——试试 1, 2, 3 或 1..20 步长 2</string>
+    <string name="r2_batch_one_value">单个值无法扫描——至少选 %1$d 个</string>
+    <string name="r2_batch_pick_min">至少选 %1$d 个</string>
+    <string name="r2_batch_too_many">共 %1$d 个值——每个参数最多 %2$d 个</string>
+    <string name="r2_batch_widen_step">，请加大步长</string>
+    <string name="r2_batch_max_axes">最多同时扫描 %1$d 个参数——请先释放一个</string>
+
+    <!-- ===== 二轮：放大器显示名与安装进度 ===== -->
+    <string name="r2_upscaler_anime_label">Anime 4x</string>
+    <string name="r2_upscaler_anime_about">RealESRGAN x4plus anime 6B——适合插画与动漫。用在照片上会压平皮肤与布料纹理。</string>
+    <string name="r2_upscaler_realistic_label">Realistic 4x</string>
+    <string name="r2_upscaler_realistic_about">4x UltraSharp V2 Lite——适合照片与写实渲染。</string>
+    <string name="r2_progress_downloading">正在下载 %1$s</string>
+    <string name="r2_progress_extracting">正在解压 %1$s</string>
+
+    <!-- ===== 二轮：推荐工作流 ===== -->
+    <string name="r2_recipe_txt2img_label">文生图</string>
+    <string name="r2_recipe_txt2img_about">输入提示词，输出图片。从这里开始。</string>
+    <string name="r2_recipe_img2img_label">图生图</string>
+    <string name="r2_recipe_img2img_about">从相册选一张照片：取景后按你选择的强度重新想象它。</string>
+    <string name="r2_recipe_inpaint_label">局部重绘——涂抹区域重新生成</string>
+    <string name="r2_recipe_inpaint_about">涂抹照片的一部分，仅该部分会被重新生成。点按蒙版节点开始涂抹。</string>
 </resources>

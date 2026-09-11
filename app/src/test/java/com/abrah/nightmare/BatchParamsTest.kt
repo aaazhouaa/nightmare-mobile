@@ -82,11 +82,11 @@ class BatchParamsTest {
     fun theCapsAreRefusedWithAReason() {
         val tooMany = BatchParams.refusalFor("cfg", "1..11", alreadyArmed = 0)
         assertNotNull(tooMany)
-        assertTrue(tooMany!!.contains("${BatchParams.MAX_PER_AXIS}"))
+        assertTrue(BatchParams.refusalTextEn(tooMany!!).contains("${BatchParams.MAX_PER_AXIS}"))
 
         val thirdAxis = BatchParams.refusalFor("cfg", "1..3", alreadyArmed = 2)
         assertNotNull(thirdAxis)
-        assertTrue(thirdAxis!!.contains("release"))
+        assertTrue(BatchParams.refusalTextEn(thirdAxis!!).contains("release"))
 
         assertNull(BatchParams.refusalFor("cfg", "1..3", alreadyArmed = 0))
         // ⚠ Blank is "not armed", not "invalid" — clearing a knob is how you
@@ -145,7 +145,7 @@ class BatchParamsTest {
         assertEquals(emptyList<String>(), BatchParams.valuesOf("scheduler", "dpm"))
         val why = BatchParams.refusalFor("cfg", "7.5", alreadyArmed = 0)
         assertNotNull(why)
-        assertTrue(why!!.contains("not a sweep"))
+        assertTrue(BatchParams.refusalTextEn(why!!).contains("not a sweep"))
         // ⚠ …and two still is one.
         assertEquals(2, BatchParams.valuesOf("cfg", "7.5, 8").size)
     }

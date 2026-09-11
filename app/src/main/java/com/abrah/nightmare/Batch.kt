@@ -89,8 +89,7 @@ data class BatchSpec(val axes: List<BatchAxis> = emptyList()) {
         /** Why this axis cannot be swept, or null. */
         fun refusalFor(param: String): String? =
             if (param in REFUSED) {
-                "\"$param\" is bound when the backend launches, so changing it " +
-                    "costs a restart per run. Pick another parameter."
+                "“$param” 在后端启动时绑定，修改它每次运行都要重启后端。请换一个参数。"
             } else null
     }
 }

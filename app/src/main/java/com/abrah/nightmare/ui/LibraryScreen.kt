@@ -1,6 +1,9 @@
 package com.abrah.nightmare.ui
 
 import androidx.compose.foundation.layout.Column
+import androidx.annotation.StringRes
+import androidx.compose.ui.res.stringResource
+import com.abrah.nightmare.R
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -29,9 +32,12 @@ import kotlinx.coroutines.launch
 /**
  * ⚠ RESULTS is last because it is where you go AFTER making something, and
  * the other two are where you go before.
+ *
+ * ⚠ The label is a RESOURCE ID, not a string: the tab row and the header both
+ * render it, and a hardcoded word would pin the screen to one language.
  */
-enum class LibraryTab(val label: String) {
-    MODELS("Models"), FLOWS("Flows"), RESULTS("Results")
+enum class LibraryTab(@StringRes val label: Int) {
+    MODELS(R.string.tab_models), FLOWS(R.string.tab_flows), RESULTS(R.string.tab_results)
 }
 
 /**
@@ -62,7 +68,7 @@ fun LibraryScreen(
         // ⚠ The title follows the tab rather than saying "Library": the ✕ closes
         // to the canvas either way, and a name the user did not choose is one
         // more word between them and the list.
-        ScreenHeader(tab.label, onClose = onClose)
+        ScreenHeader(stringResource(tab.label), onClose = onClose)
         TabRow(
             selectedTabIndex = tab.ordinal,
             containerColor = MaterialTheme.colorScheme.background,
@@ -74,7 +80,7 @@ fun LibraryScreen(
                     onClick = { onTab(t) },
                     text = {
                         Text(
-                            t.label,
+                            stringResource(t.label),
                             fontWeight = if (t == tab) FontWeight.SemiBold else FontWeight.Normal,
                         )
                     },

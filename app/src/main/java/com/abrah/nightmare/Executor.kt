@@ -506,7 +506,7 @@ object SampleNode : NodeType {
         // instead of returning the cached picture unchanged.
         Widget(
             "seed", "int", "0",
-            hint = "0 = a new picture every Run. Type the seed shown on the node to get that one back.",
+            hint = "0 = 每次运行都生成新图。输入节点上显示的种子值即可复现那一张。",
         ),
         // ⚠ Only read when `latent` is connected. 1.0 renoises completely,
         // which is txt2img with extra steps -- the backend defaults to 0.6 for
@@ -525,7 +525,7 @@ object SampleNode : NodeType {
         Widget(
             "scheduler", "string", SelectedModel.spec.scheduler,
             options = ModelCatalog.SCHEDULERS,
-            hint = "the sampler; a distilled model usually needs the one its author published",
+            hint = "采样器；蒸馏模型通常需要用其作者发布的配套采样器",
         ),
         // ⚠ model / width / height are the CONTEXT KEY (§4), not ordinary
         // knobs: changing either costs a backend relaunch, and v1 pins one key
@@ -746,9 +746,9 @@ object TextEncodeNode : NodeType {
     override val widgets = listOf(
         Widget(
             "prompt", "string", "",
-            hint = "what to draw -- the sampler reads it through the cond wire",
+            hint = "要画的内容——采样器通过 cond 连线读取它",
         ),
-        Widget("negative", "string", "", hint = "what to keep out of the picture"),
+        Widget("negative", "string", "", hint = "要从画面中排除的内容"),
     )
 
     override fun contextKey(node: Node): ContextKey? = null
@@ -788,8 +788,7 @@ object VaeEncodeNode : NodeType {
         // this one would re-encode the source image every Run for no benefit.
         Widget(
             "seed", "int", "42",
-            hint = "encoding noise, not the picture seed -- leave it fixed. " +
-                "The Sampler's seed is the one that changes the image.",
+            hint = "这是编码噪声的种子，而非图片种子——保持固定即可。改变图像的是采样器的种子。",
         ),
     )
 
@@ -947,7 +946,7 @@ object CropNode : NodeType {
     const val MAX_OUT = 8192
 
     override val widgets = listOf(
-        Widget("x", "float", "0.0", 0.0, 1.0, hint = "drag the frame on the picture above"),
+        Widget("x", "float", "0.0", 0.0, 1.0, hint = "在上方图片上拖动取景框"),
         Widget("y", "float", "0.0", 0.0, 1.0),
         Widget("w", "float", "1.0", 0.0, 1.0),
         Widget("h", "float", "1.0", 0.0, 1.0),
@@ -956,7 +955,7 @@ object CropNode : NodeType {
         // size, so the number a user sees is the number that will be produced.
         Widget(
             "out_w", "int", "0", 0.0, MAX_OUT.toDouble(),
-            hint = "0 = the framed region at its own size",
+            hint = "0 = 取景区域按原始尺寸输出",
         ),
         Widget("out_h", "int", "0", 0.0, MAX_OUT.toDouble()),
         // ⚠ Only meaningful while nothing downstream demands a size; when one
@@ -966,11 +965,11 @@ object CropNode : NodeType {
         Widget(
             "aspect", "string", "source",
             options = listOf("source", "1:1", "4:3", "3:4", "16:9", "9:16"),
-            hint = "the shape of the frame, while nothing downstream fixes it",
+            hint = "取景框的形状（当下游没有固定它时生效）",
         ),
         Widget(
             PAD, "string", PAD_BLACK, options = listOf(PAD_BLACK, PAD_BLUR),
-            hint = "only used when the picture is too small to fill the frame",
+            hint = "仅在图片太小无法填满取景框时使用",
         ),
     )
 
@@ -1098,14 +1097,14 @@ object MaskNode : NodeType {
         // ⚠ Hidden from typing in practice but still a real param, because it is
         // what a saved workflow stores -- the same reason `crop` keeps its four
         // number fields beside the framing view.
-        Widget(OPS, "string", "", hint = "paint on the picture above"),
+        Widget(OPS, "string", "", hint = "在上方图片上涂抹"),
         // ⚠ Grow defaults to ZERO here where DreamUI defaults to 10/512: its
         // default exists for segmenter regions that trace an object's true edge
         // and need slack. Every op here is a brush stroke that is already the
         // size the finger asked for, so growing it is a second invisible
         // brush-size control fighting the real one.
-        Widget("grow", "float", "0.0", 0.0, 0.2, hint = "spread the mask outward"),
-        Widget("feather", "float", "0.02", 0.0, 0.2, hint = "soften the mask edge"),
+        Widget("grow", "float", "0.0", 0.0, 0.2, hint = "将蒙版向外扩张"),
+        Widget("feather", "float", "0.02", 0.0, 0.2, hint = "柔化蒙版边缘"),
         // ⚠ Not locked HERE: the inspector locks `out_w`/`out_h` with the
         // consumer'''s own reason the moment this node feeds something that
         // demands a size, exactly as it does for `crop`.
@@ -1289,7 +1288,7 @@ object UpscaleNode : NodeType {
             UPSCALER, "string",
             UpscalerCatalog.ALL.first().id,
             options = UpscalerCatalog.ALL.map { it.id },
-            hint = "which upscaler weights to use -- install them under Models",
+            hint = "使用哪个放大器权重——请先在模型页安装",
         ),
     )
 
@@ -1317,9 +1316,9 @@ object UpscaleNode : NodeType {
         val id = node.params[UPSCALER].orEmpty()
         val path = UpscalerCatalog.pathFor(android, id)
             ?: throw IllegalArgumentException(
-                "node \"${node.id}\": upscaler \"" +
+                "节点 \"${node.id}\"：放大器 \"" +
                     (UpscalerCatalog.byId(id)?.label ?: id) +
-                    "\" is not installed -- open Models and download it"
+                    "\" 未安装——请到模型页下载"
             )
         // ⚠ RAW RGB, not a PNG: /upscale takes 3*w*h uncompressed bytes.
         val rgb = rgbBytes(src)

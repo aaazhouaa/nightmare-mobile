@@ -167,8 +167,13 @@ object BatchParams {
      * ⚠⚠ Said in the popup rather than at Run. A sweep that is refused after
      * the button is pressed has already made the user wait to be told something
      * that was knowable while they were typing.
+     *
+     * ⚠ Returns a STRUCTURED reason rather than display text: this file stays
+     * Compose-free and Android-free, so the wording is supplied by the UI layer
+     * ([BatchRefusal] → stringResource); [refusalTextEn] keeps the original
+     * English for tests and logs.
      */
-    fun refusalFor(param: String, spec: String, alreadyArmed: Int): String? {
+    fun refusalFor(param: String, spec: String, alreadyArmed: Int): BatchRefusal? {
         // ⚠⚠ RAW, uncapped. [valuesOf] returns an empty list past the cap, so
         // computing the refusal from it would report "not a list or a range"
         // for eleven perfectly readable values — hiding the one number the
@@ -181,19 +186,57 @@ object BatchParams {
         return when {
             spec.isBlank() -> null
             values.isEmpty() && isRange(param) ->
-                "not a list or a range — try 1, 2, 3 or 1..20 by 2"
-            values.size == 1 -> "one value is not a sweep — pick at least $MIN_PER_AXIS"
-            values.isEmpty() -> "pick at least $MIN_PER_AXIS"
+                BatchRefusal.NotARange
+            values.size == 1 -> BatchRefusal.OneValue(MIN_PER_AXIS)
+            values.isEmpty() -> BatchRefusal.TooFew(MIN_PER_AXIS)
             values.size > MAX_PER_AXIS ->
-                "${values.size} values — at most $MAX_PER_AXIS per knob" +
-                    (if (isRange(param)) ", so widen the step" else "")
+                BatchRefusal.TooMany(values.size, MAX_PER_AXIS, isRange(param))
             alreadyArmed >= MAX_AXES ->
-                "$MAX_AXES knobs can be swept at once — release one first"
+                BatchRefusal.MaxAxes(MAX_AXES)
             else -> null
         }
+    }
+
+    /** The original English wording, kept for tests, logs and golden output. */
+    fun refusalTextEn(r: BatchRefusal): String = when (r) {
+        BatchRefusal.NotARange ->
+            "not a list or a range — try 1, 2, 3 or 1..20 by 2"
+        is BatchRefusal.OneValue ->
+            "one value is not a sweep — pick at least ${r.min}"
+        is BatchRefusal.TooFew ->
+            "pick at least ${r.min}"
+        is BatchRefusal.TooMany ->
+            "${r.count} values — at most ${r.max} per knob" +
+                (if (r.widen) ", so widen the step" else "")
+        is BatchRefusal.MaxAxes ->
+            "${r.max} knobs can be swept at once — release one first"
     }
 
     /** ⚠ Every armed axis multiplied out. 0 when nothing is armed. */
     fun runCount(graph: Graph): Int =
         axesOf(graph).fold(0) { acc, a -> if (acc == 0) a.values.size else acc * a.values.size }
+}
+
+/**
+ * Structured sweep-refusal reasons, produced by [BatchParams.refusalFor].
+ *
+ * ⚠ Deliberately carries DATA, not wording: BatchParams stays Compose-free and
+ * Android-free (see its header), so each UI renders these in its own language —
+ * Compose via stringResource, tests via [BatchParams.refusalTextEn].
+ */
+sealed class BatchRefusal {
+    /** Not a comma list and not a range the grammar understands. */
+    object NotARange : BatchRefusal()
+
+    /** Exactly one value, which sweeps nothing. */
+    data class OneValue(val min: Int) : BatchRefusal()
+
+    /** Parsed to nothing at all. */
+    data class TooFew(val min: Int) : BatchRefusal()
+
+    /** Past the per-knob cap; [widen] suggests a coarser step for ranges. */
+    data class TooMany(val count: Int, val max: Int, val widen: Boolean) : BatchRefusal()
+
+    /** More knobs armed at once than the run can multiply out. */
+    data class MaxAxes(val max: Int) : BatchRefusal()
 }

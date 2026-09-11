@@ -230,12 +230,11 @@ fun ModelsScreen(
                 item {
                     Text(
                         when (family) {
-                            Family.SD15 -> "About 1 GB each. Use Wi-Fi."
+                            Family.SD15 -> stringResource(R.string.r2_models_hint_sd15)
                             // ⚠ The free-space figure is the one that surprises:
                             // the archive and its unpacked copy are both on disk
                             // at once, so a 3.5 GB download needs ~7.5 GB free.
-                            else -> "About 3.5 GB each, and ~7.5 GB free while " +
-                                "it unpacks. Use Wi-Fi."
+                            else -> stringResource(R.string.r2_models_hint_sdxl)
                         },
                         style = LogTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -254,15 +253,13 @@ fun ModelsScreen(
         val row = upscalers.firstOrNull { it.spec.id == spec.id }
         AlertDialog(
             onDismissRequest = { deletingUpscaler = null },
-            title = { Text("Delete ${spec.label}?") },
+            title = { Text(stringResource(R.string.delete_named, upscalerLabel(spec.id, spec.label))) },
             text = {
                 Text(
-                    "Frees ${mb(row?.onDisk ?: 0L)} MB. Getting it back is a " +
-                        "${mb(row?.build?.bytes ?: 0L)} MB download. " +
+                    stringResource(R.string.r2_models_delete_frees, mb(row?.onDisk ?: 0L)) +
                         // ⚠ Says what else changes, as the checkpoint dialog
                         // does — here it is a FLOW that breaks, not a selection.
-                        "Any flow with an Upscale node set to it will fail until " +
-                        "you install it again."
+                        stringResource(R.string.r2_models_upscaler_restore, mb(row?.build?.bytes ?: 0L))
                 )
             },
             confirmButton = {
@@ -272,7 +269,7 @@ fun ModelsScreen(
                 }) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { deletingUpscaler = null }) { Text("Keep") }
+                TextButton(onClick = { deletingUpscaler = null }) { Text(stringResource(R.string.models_keep)) }
             },
         )
     }
@@ -285,11 +282,11 @@ fun ModelsScreen(
         val row = rows.firstOrNull { it.spec.id == spec.id }
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Delete ${spec.label}?") },
+            title = { Text(stringResource(R.string.delete_named, spec.label)) },
             text = {
                 Text(
                     buildString {
-                        append("Frees ${mb(row?.onDisk ?: 0L)} MB. ")
+                        append(stringResource(R.string.r2_models_delete_frees, mb(row?.onDisk ?: 0L)))
                         // ⚠⚠ A custom model has NO archive -- there is no URL
                         // that could produce it again. Quoting a download size
                         // used to `spec.best.bytes` on an empty build list,
@@ -299,14 +296,14 @@ fun ModelsScreen(
                         // have it.
                         val bytes = row?.build?.bytes ?: spec.best?.bytes
                         if (spec.isCustom || bytes == null) {
-                            append("You imported it, so getting it back means importing the zip again.")
+                            append(stringResource(R.string.r2_models_custom_restore))
                         } else {
-                            append("Getting it back is a ${mb(bytes)} MB download.")
+                            append(stringResource(R.string.r2_models_redownload, mb(bytes)))
                         }
                         // ⚠ Says what ELSE changes. The selection moving is not
                         // something a user would predict from "delete".
                         if (row?.selected == true) {
-                            append("\n\nIt is the model in use, so another will be selected.")
+                            append("\n\n" + stringResource(R.string.r2_models_in_use_note))
                         }
                     },
                     style = LogTextStyle,
@@ -358,7 +355,7 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
         ) {
             Column(Modifier.weight(1f)) {
                 Text(
-                    "Import a checkpoint",
+                    stringResource(R.string.r2_models_import_title),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.primary,
                 )
@@ -367,13 +364,12 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
                     // a user picking a `.safetensors` and reading "not a
                     // checkpoint" without knowing why. Conversion is a PC step
                     // and there is no runtime compiler on the NPU.
-                    "A zip of QNN model files, converted on a PC. " +
-                        "SD 1.5 or SDXL — it works out which.",
+                    stringResource(R.string.r2_models_import_desc),
                     style = LogTextStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Button(onClick = { name = ""; naming = true }, enabled = !busy) { Text("Import") }
+            Button(onClick = { name = ""; naming = true }, enabled = !busy) { Text(stringResource(R.string.flows_import)) }
         }
     }
 
@@ -383,24 +379,23 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
         val ok = com.abrah.nightmare.CustomModels.isValidName(trimmed) && !reserved
         AlertDialog(
             onDismissRequest = { naming = false },
-            title = { Text("Name it") },
+            title = { Text(stringResource(R.string.models_name_it)) },
             text = {
                 Column {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
                         singleLine = true,
-                        label = { Text("model name") },
+                        label = { Text(stringResource(R.string.models_name_label)) },
                     )
                     Text(
                         when {
-                            reserved -> "That is a built-in model's name; pick another."
-                            trimmed.isNotEmpty() && !ok -> "No slashes, colons or leading dots."
+                            reserved -> stringResource(R.string.r2_models_name_reserved)
+                            trimmed.isNotEmpty() && !ok -> stringResource(R.string.r2_models_name_invalid)
                             // ⚠ Warns BEFORE the picker, not after the copy: an
                             // import is gigabytes, and finding out afterwards
                             // that the name is permanent is finding out too late.
-                            else -> "This becomes the folder name and the id saved " +
-                                "into every workflow that uses it."
+                            else -> stringResource(R.string.r2_models_name_note)
                         },
                         style = LogTextStyle,
                         color = if (reserved) {
@@ -416,7 +411,7 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
                 Button(
                     onClick = { naming = false; onImport(trimmed) },
                     enabled = ok,
-                ) { Text("Pick a zip") }
+                ) { Text(stringResource(R.string.models_pick_zip)) }
             },
             dismissButton = { TextButton(onClick = { naming = false }) { Text(stringResource(R.string.cancel)) } },
         )
@@ -456,8 +451,8 @@ private fun ModelCard(
                     )
                     Text(
                         when {
-                            row.progress != null -> row.progress.phase
-                            row.installed && row.selected -> "in use  ${mb(row.onDisk)} MB"
+                            row.progress != null -> progressPhase(row.progress.phase)
+                            row.installed && row.selected -> stringResource(R.string.r2_models_status_in_use, mb(row.onDisk))
                             row.installed -> stringResource(R.string.installed_mb, mb(row.onDisk))
                             // ⚠⚠ A custom model is never "not installed" and
                             // never "unsupported": its files are already on the
@@ -471,7 +466,7 @@ private fun ModelCard(
                             // is a claim we cannot make: nothing in a QNN context
                             // directory says which HTP it was compiled for.
                             row.spec.isCustom ->
-                                "incomplete -- missing ${row.missing.joinToString()}"
+                                stringResource(R.string.r2_models_incomplete, row.missing.joinToString())
                             // ⚠⚠ The size of the build THIS DEVICE would get,
                             // not of the preferred one: they differ by up to
                             // 60 MB between tiers, and quoting the wrong one is
@@ -610,7 +605,7 @@ private fun UpscalerCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(row.spec.label, style = MaterialTheme.typography.titleMedium)
+                    Text(upscalerLabel(row.spec.id, row.spec.label), style = MaterialTheme.typography.titleMedium)
                     // ⚠ Same three-line shape as a checkpoint: what it is, what
                     // it costs, and what it is for.
                     Text(
@@ -623,7 +618,7 @@ private fun UpscalerCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        row.spec.about +
+                        upscalerAbout(row.spec.id, row.spec.about) +
                             (row.build?.let { "  ${it.tier}" } ?: ""),
                         style = LogTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -663,3 +658,35 @@ private fun UpscalerCard(
 }
 
 private fun mb(bytes: Long): Long = bytes shr 20
+
+/**
+ * Display wording for the two built-in upscalers, resolved here rather than in
+ * [com.abrah.nightmare.Upscalers] so the catalogue stays a data table; unknown
+ * ids (imported packs) fall back to the stored label untouched.
+ */
+@Composable
+private fun upscalerLabel(id: String, fallback: String): String = when (id) {
+    "upscaler_anime" -> stringResource(R.string.r2_upscaler_anime_label)
+    "upscaler_realistic" -> stringResource(R.string.r2_upscaler_realistic_label)
+    else -> fallback
+}
+
+@Composable
+private fun upscalerAbout(id: String, fallback: String): String = when (id) {
+    "upscaler_anime" -> stringResource(R.string.r2_upscaler_anime_about)
+    "upscaler_realistic" -> stringResource(R.string.r2_upscaler_realistic_about)
+    else -> fallback
+}
+
+/**
+ * Installer progress phases are built in the non-UI installer layer
+ * ("downloading X" / "extracting X"); reworded here for display.
+ */
+@Composable
+private fun progressPhase(phase: String): String = when {
+    phase.startsWith("downloading ") ->
+        stringResource(R.string.r2_progress_downloading, phase.removePrefix("downloading "))
+    phase.startsWith("extracting ") ->
+        stringResource(R.string.r2_progress_extracting, phase.removePrefix("extracting "))
+    else -> phase
+}

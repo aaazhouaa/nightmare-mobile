@@ -444,7 +444,7 @@ class CanvasStateTest {
         val start = bs.first { it.id == "b" }.outputPort(0)
         val end = bs.first { it.id == "a" }.inputPort(0)
         val next = st.press(start, latentTypes).release(end, latentTypes)
-        assertEquals("that would make a loop", next.message)
+        assertEquals("这样会形成循环", next.message)
         assertNull(next.workflow.graph.byId["a"]!!.inputs["latent"])
     }
 
@@ -729,7 +729,7 @@ class CanvasStateTest {
 
         val after = dragging.release(to, types)
         assertTrue("the wire must not have landed", after.workflow.graph.byId["enc"]!!.inputs.isEmpty())
-        assertTrue("should name the fix: ${after.message}", after.message!!.contains("Crop"))
+        assertTrue("should name the fix: ${after.message}", after.message!!.contains("裁剪"))
     }
 
     // --- the view a workflow reopens at --------------------------------------

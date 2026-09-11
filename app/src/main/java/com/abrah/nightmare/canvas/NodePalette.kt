@@ -23,10 +23,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.abrah.nightmare.NodeType
+import com.abrah.nightmare.R
 import com.abrah.nightmare.ui.LogTextStyle
 
 /**
@@ -61,15 +63,16 @@ fun NodePalette(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            Text("add a node", fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+            Text(stringResource(R.string.palette_add_node), fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
 
             // ⚠ Sorted, and grouped by category. An unordered map means the
             // palette reshuffles between runs, and muscle memory is most of
-            // what makes a node editor fast.
+            // what makes a node editor fast. Sorting stays on the raw key so
+            // the order is stable across locales.
             val byCategory = types.values.sortedBy { it.name }.groupBy { it.category }
             for (category in byCategory.keys.sorted()) {
                 Text(
-                    category,
+                    categoryLabel(category),
                     style = LogTextStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 10.dp),
@@ -103,21 +106,39 @@ private fun PaletteRow(type: NodeType, onPick: (NodeType) -> Unit) {
                 .background(CanvasColors.forCategory(type.category))
         )
         Column(Modifier.weight(1f)) {
-            Text(type.name.nodeLabel, fontWeight = FontWeight.Medium)
-            // ⚠ The qualified name, so two packs shipping a `Resize` are
-            // distinguishable in the one place the user picks between them.
-            if (type.name.contains(':')) {
-                Text(
-                    type.name.substringBeforeLast(':'),
-                    style = LogTextStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(nodeDisplayName(type.name), fontWeight = FontWeight.Medium)
+            // The qualified name: two packs shipping a `Resize` are
+            // distinguishable in the one place the user picks between them,
+            // and a built-in shows its full executor name (e.g. `sd.sample`)
+            // so it can be matched against the canvas subtitle.
+            Text(
+                if (type.name.contains(':')) type.name.substringBeforeLast(':') else type.name,
+                style = LogTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
         Text(
-            "${type.inputs.size} in · ${type.outputs.size} out",
+            stringResource(R.string.palette_ports, type.inputs.size, type.outputs.size),
             style = LogTextStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }
+
+/** The palette's category heading, localised; unknown keys pass through. */
+@Composable
+private fun categoryLabel(category: String): String = when (category) {
+    "sampling" -> stringResource(R.string.palette_cat_sampling)
+    "latent" -> stringResource(R.string.palette_cat_latent)
+    "image" -> stringResource(R.string.palette_cat_image)
+    "conditioning" -> stringResource(R.string.palette_cat_conditioning)
+    "misc" -> stringResource(R.string.palette_cat_misc)
+    else -> category
+}
+
+/**
+ * The human name of a node type, localised. Built-ins are keyed by their
+ * short label (`sd.sample` → `sample`); plugin nodes have no entry here and
+ * fall back to their own label unchanged.
+ */
+// nodeDisplayName has moved to UiLabels.kt, shared with the canvas header.

@@ -127,8 +127,8 @@ class OpService : Service() {
             )
         }
         val n: Notification = Notification.Builder(this, CHANNEL)
-            .setContentTitle("Nightmare harness")
-            .setContentText("running an op")
+            .setContentTitle(getString(R.string.notify_title))
+            .setContentText(getString(R.string.notify_text))
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

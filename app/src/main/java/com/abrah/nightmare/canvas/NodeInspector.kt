@@ -236,7 +236,14 @@ internal fun NodeInspectorBody(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            Text(nodeId, fontWeight = FontWeight.SemiBold, fontSize = 20.sp)
+            // ⚠ The DISPLAY name + counter, the same string the canvas header
+            // draws: this sheet slides up over the node it edits, so both must
+            // name it alike. The type line below keeps the raw qualified name
+            // for matching against logs and the palette.
+            Text(
+                nodeDisplayName(node.type) + nodeCounterSuffix(nodeId, node.type),
+                fontWeight = FontWeight.SemiBold, fontSize = 20.sp,
+            )
             Text(
                 node.type,
                 style = LogTextStyle,
@@ -269,16 +276,18 @@ internal fun NodeInspectorBody(
             // the pipeline needs".
             if (CropGeometry.needsPadding(src.width, src.height, outW, outH)) {
                 Text(
-                    "this picture is ${src.width}×${src.height}, smaller than the " +
-                        "${outW}×$outH being asked for — the bars are padding, not a crop. " +
-                        "Enlarging it instead would only make it soft.",
+                    stringResource(
+                        R.string.r2_ins_small_picture,
+                        "${src.width}×${src.height}",
+                        "${outW}×$outH",
+                    ),
                     style = LogTextStyle,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Text(
-                if (outW > 0) "drag to move · pinch to zoom · out ${outW}×$outH"
-                else "drag to move · pinch to zoom · the frame is the output, at its own size",
+                if (outW > 0) stringResource(R.string.r2_ins_crop_hint_out, "${outW}×$outH")
+                else stringResource(R.string.r2_ins_crop_hint_own),
                 style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -294,8 +303,7 @@ internal fun NodeInspectorBody(
         }
         if (maskSource == null && node.type == "image.mask") {
             Text(
-                "no picture to paint on yet — wire an image into this node, and " +
-                    "the picture appears here as soon as it can be worked out.",
+                stringResource(R.string.r2_ins_mask_no_source),
                 style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -307,9 +315,9 @@ internal fun NodeInspectorBody(
             // are genuinely missing input -- nothing wired, or no photo picked.
             Text(
                 if (node.inputs.containsKey("image"))
-                    "No picture yet — choose one on the Load Image node this is wired to."
+                    stringResource(R.string.r2_ins_crop_no_pick)
                 else
-                    "Wire an image into this node to frame it.",
+                    stringResource(R.string.r2_ins_crop_no_wire),
                 style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -332,11 +340,12 @@ internal fun NodeInspectorBody(
         // numbers, which is nowhere near the thing it changes.
         padWidget?.let { w ->
             ChoiceRow(
-                label = w.name,
+                label = widgetLabel(w.name),
                 hint = w.hint,
                 options = w.options.orEmpty(),
                 current = node.params[w.name] ?: w.default.orEmpty(),
                 onPick = { onSetParam(nodeId, w.name, it) },
+                optionText = { optionLabel(w.name, it) },
             )
         }
 
@@ -366,14 +375,14 @@ internal fun NodeInspectorBody(
                 IconButton(onClick = { onShareImage() }) {
                     Icon(
                         com.abrah.nightmare.ui.ShareIcon,
-                        contentDescription = "share this picture",
+                        contentDescription = stringResource(R.string.cd_share_picture),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 IconButton(onClick = { onSaveImage() }) {
                     Icon(
                         com.abrah.nightmare.ui.SaveIcon,
-                        contentDescription = "save to the gallery",
+                        contentDescription = stringResource(R.string.cd_save_gallery),
                         tint = MaterialTheme.colorScheme.primary,
                     )
                 }
@@ -381,7 +390,7 @@ internal fun NodeInspectorBody(
                     IconButton(onClick = keep) {
                         Icon(
                             Icons.Filled.Star,
-                            contentDescription = "keep this and its flow",
+                            contentDescription = stringResource(R.string.cd_keep_with_flow),
                             tint = MaterialTheme.colorScheme.primary,
                         )
                     }
@@ -390,7 +399,7 @@ internal fun NodeInspectorBody(
                     IconButton(onClick = clear) {
                         Icon(
                             Icons.Filled.Delete,
-                            contentDescription = "clear this picture",
+                            contentDescription = stringResource(R.string.cd_clear_picture),
                             tint = MaterialTheme.colorScheme.error,
                         )
                     }
@@ -408,7 +417,7 @@ internal fun NodeInspectorBody(
         preview?.takeIf { cropSource == null && maskSource == null }?.let {
             Image(
                 bitmap = it,
-                contentDescription = "this node's image",
+                contentDescription = stringResource(R.string.cd_node_image),
                 contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -450,8 +459,8 @@ internal fun NodeInspectorBody(
             // knobs and a node whose type failed to load look identical
             // otherwise, and one of those is a bug.
             Text(
-                if (type == null) "unknown node type — is its plugin loaded?"
-                else "this node has no widgets",
+                if (type == null) stringResource(R.string.r2_ins_unknown_type)
+                else stringResource(R.string.r2_ins_no_widgets),
                 style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -502,19 +511,21 @@ internal fun NodeInspectorBody(
                 // a dropdown shows the selection and nothing else.
                 if (options.size > CHIP_LIMIT) {
                     ChoiceDropdown(
-                        label = w.name,
+                        label = widgetLabel(w.name),
                         hint = w.hint,
                         options = options,
                         current = node.params[w.name] ?: w.default.orEmpty(),
                         onPick = { onSetParam(nodeId, w.name, it) },
+                        optionText = { optionLabel(w.name, it) },
                     )
                 } else {
                     ChoiceRow(
-                        label = w.name,
+                        label = widgetLabel(w.name),
                         hint = w.hint,
                         options = options,
                         current = node.params[w.name] ?: w.default.orEmpty(),
                         onPick = { onSetParam(nodeId, w.name, it) },
+                        optionText = { optionLabel(w.name, it) },
                     )
                 }
                 // ⚠ `scheduler` is batchable and is NOT a range — its popup is
@@ -538,7 +549,7 @@ internal fun NodeInspectorBody(
             val why = when {
                 (w.name == "out_w" || w.name == "out_h") && sized != null -> sized.reason()
                 (w.name == "out_w" || w.name == "out_h") && conflict != null ->
-                    "two consumers disagree -- ${conflict.reason()}"
+                    "两个下游节点的要求冲突——${conflict.reason()}"
                 else -> w.locked
             }
             // ⭐⭐ A knob with BOTH bounds is a slider, not a text field.
@@ -566,9 +577,9 @@ internal fun NodeInspectorBody(
                 val vals = com.abrah.nightmare.BatchParams.valuesOf(w.name, armedSpec)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(w.name, style = MaterialTheme.typography.bodyMedium)
+                        Text(widgetLabel(w.name), style = MaterialTheme.typography.bodyMedium)
                         Text(
-                            "Batching " + vals.size + " values: " + vals.joinToString(", "),
+                            stringResource(R.string.r2_ins_batching, vals.size, vals.joinToString(", ")),
                             style = LogTextStyle,
                             color = MaterialTheme.colorScheme.primary,
                         )
@@ -626,13 +637,13 @@ internal fun NodeInspectorBody(
                 },
                 readOnly = why != null,
                 enabled = why == null,
-                label = { Text(if (why != null) "${w.name}  (locked)" else w.name) },
+                label = { Text(if (why != null) stringResource(R.string.r2_ins_locked, widgetLabel(w.name)) else widgetLabel(w.name)) },
                 supportingText = {
                     val range = if (w.min != null && w.max != null) {
                         "  ${w.min}..${w.max}"
                     } else ""
                     Text(
-                        why ?: w.hint ?: (w.type + range),
+                        why ?: w.hint ?: (typeLabel(w.type) + range),
                         style = LogTextStyle,
                         color = if (why != null) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -660,7 +671,10 @@ internal fun NodeInspectorBody(
         // mean two mental models for one thing.
         if (node.inputs.isNotEmpty()) {
             Text(
-                "inputs: " + node.inputs.entries.joinToString(", ") { "${it.key} ← ${it.value}" },
+                stringResource(
+                    R.string.r2_ins_inputs,
+                    node.inputs.entries.joinToString(", ") { "${it.key} ← ${it.value}" },
+                ),
                 style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -678,7 +692,7 @@ internal fun NodeInspectorBody(
         // action in the app already asks -- multi-select delete, a saved flow,
         // a model -- and this was the one that did not. `docs/UI.md` §5.
         TextButton(onClick = { confirmingDelete = true }) {
-            Text("delete node", color = MaterialTheme.colorScheme.error)
+            Text(stringResource(R.string.inspector_delete_node), color = MaterialTheme.colorScheme.error)
         }
     }
 
@@ -687,10 +701,10 @@ internal fun NodeInspectorBody(
             onDismissRequest = { confirmingDelete = false },
             // ⚠ Names the node, exactly as the canvas's own confirm does: the
             // sheet is covering the node it is asking about.
-            title = { Text("Delete \"$nodeId\"?") },
+            title = { Text(stringResource(R.string.inspector_delete_node_title, nodeId)) },
             text = {
                 Text(
-                    "Every wire into or out of it goes too, and this cannot be undone.",
+                    stringResource(R.string.r2_ins_delete_wires),
                     style = LogTextStyle,
                 )
             },
@@ -704,10 +718,10 @@ internal fun NodeInspectorBody(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Delete") }
+                ) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmingDelete = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -744,6 +758,7 @@ private fun ChoiceDropdown(
     options: List<String>,
     current: String,
     onPick: (String) -> Unit,
+    optionText: @Composable (String) -> String = { it },
 ) {
     var open by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = open, onExpandedChange = { open = it }) {
@@ -769,7 +784,7 @@ private fun ChoiceDropdown(
         ExposedDropdownMenu(expanded = open, onDismissRequest = { open = false }) {
             for (o in options) {
                 DropdownMenuItem(
-                    text = { Text(o) },
+                    text = { Text(optionText(o)) },
                     onClick = { onPick(o); open = false },
                 )
             }
@@ -806,7 +821,7 @@ private fun SliderRow(widget: Widget, current: String, onSet: (String) -> Unit) 
     val shown = value.coerceIn(min, max)
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
-            "${widget.name}   " +
+            "${widgetLabel(widget.name)}   " +
                 if (isInt) shown.roundToInt().toString() else fixed(shown, decimals),
             style = MaterialTheme.typography.bodyMedium,
         )
@@ -1000,7 +1015,7 @@ private fun BatchToggle(armed: String?, onClick: () -> Unit) {
     IconButton(onClick = onClick, modifier = Modifier.size(32.dp)) {
         Icon(
             com.abrah.nightmare.ui.BatchIcon,
-            contentDescription = if (armed == null) "sweep this parameter" else "sweeping $armed",
+            contentDescription = if (armed == null) stringResource(R.string.cd_sweep_param) else stringResource(R.string.cd_sweeping, armed),
             tint = if (armed != null) MaterialTheme.colorScheme.primary
             else MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(18.dp),
@@ -1111,11 +1126,12 @@ private fun BatchDialog(
     val others = alreadyArmed -
         (if (com.abrah.nightmare.BatchParams.armed(node, widget.name) != null) 1 else 0)
     val why = com.abrah.nightmare.BatchParams.refusalFor(widget.name, spec, others)
+        ?.let { batchRefusalText(it) }
     val armedValues = com.abrah.nightmare.BatchParams.valuesOf(widget.name, spec)
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Sweep " + widget.name) },
+        title = { Text(stringResource(R.string.inspector_sweep, widgetLabel(widget.name))) },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
@@ -1125,7 +1141,10 @@ private fun BatchDialog(
                     // ⭐ SCHEDULER: a set, with no order to make a range from.
                     !isRange -> {
                         Text(
-                            "pick up to " + com.abrah.nightmare.BatchParams.MAX_PER_AXIS,
+                            stringResource(
+                                R.string.r2_ins_pick_up_to,
+                                com.abrah.nightmare.BatchParams.MAX_PER_AXIS,
+                            ),
                             style = LogTextStyle,
                         )
                         Row(
@@ -1146,7 +1165,7 @@ private fun BatchDialog(
                     }
                     // ⭐ RANGE: from, to, and a step that only gets coarser.
                     else -> {
-                        Text("from  " + fixed(from, dp), style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.inspector_sweep_from, fixed(from, dp)), style = MaterialTheme.typography.bodyMedium)
                         Slider(
                             value = from,
                             onValueChange = {
@@ -1157,7 +1176,7 @@ private fun BatchDialog(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Text(
-                            "to  " + fixed(snappedTo, dp),
+                            stringResource(R.string.inspector_sweep_to, fixed(snappedTo, dp)),
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Slider(
@@ -1168,7 +1187,7 @@ private fun BatchDialog(
                         )
                         // ⚠⚠ In MULTIPLES of the knob's own increment, so it can
                         // never go finer than the knob itself moves.
-                        Text("step  " + fixed(step, dp), style = MaterialTheme.typography.bodyMedium)
+                        Text(stringResource(R.string.inspector_sweep_step, fixed(step, dp)), style = MaterialTheme.typography.bodyMedium)
                         Slider(
                             // ⚠ Shows the FITTED value, so the handle sits where
                             // the sweep actually is rather than where the drag
@@ -1199,15 +1218,15 @@ private fun BatchDialog(
             TextButton(
                 onClick = { onSet(spec); onDismiss() },
                 enabled = why == null,
-            ) { Text(if (armedValues.isEmpty()) "Release" else "Arm") }
+            ) { Text(if (armedValues.isEmpty()) stringResource(R.string.inspector_release) else stringResource(R.string.inspector_arm)) }
         },
         dismissButton = {
             // ⚠ Release reachable WITHOUT dragging a slider to nothing — one
             // tap, the same as the run bar's ✕.
             if (com.abrah.nightmare.BatchParams.armed(node, widget.name) != null) {
-                TextButton(onClick = { onSet(""); onDismiss() }) { Text("Release") }
+                TextButton(onClick = { onSet(""); onDismiss() }) { Text(stringResource(R.string.inspector_release)) }
             } else {
-                TextButton(onClick = onDismiss) { Text("Cancel") }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
             }
         },
     )
@@ -1246,6 +1265,7 @@ private fun ChoiceRow(
     options: List<String>,
     current: String,
     onPick: (String) -> Unit,
+    optionText: @Composable (String) -> String = { it },
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(label, style = LogTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1257,7 +1277,7 @@ private fun ChoiceRow(
                 FilterChip(
                     selected = o == current,
                     onClick = { onPick(o) },
-                    label = { Text(o, fontSize = 12.sp) },
+                    label = { Text(optionText(o), fontSize = 12.sp) },
                     shape = RoundedCornerShape(10.dp),
                     colors = FilterChipDefaults.filterChipColors(),
                 )
@@ -1329,7 +1349,7 @@ private fun ImagePicker(current: String, onPicked: (String) -> Unit, onClear: ()
             Button(
                 onClick = pick,
                 shape = RoundedCornerShape(12.dp),
-            ) { Text("Choose an image") }
+            ) { Text(stringResource(R.string.inspector_choose_image)) }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 ImageActions(
@@ -1363,7 +1383,7 @@ internal fun ImageActions(onPick: () -> Unit, onClear: () -> Unit, tint: Color? 
     IconButton(onClick = onPick) {
         Icon(
             painterResource(R.drawable.ic_gallery),
-            contentDescription = "choose a different picture",
+            contentDescription = stringResource(R.string.cd_choose_other_picture),
             tint = tint ?: MaterialTheme.colorScheme.primary,
         )
     }
@@ -1373,7 +1393,7 @@ internal fun ImageActions(onPick: () -> Unit, onClear: () -> Unit, tint: Color? 
     IconButton(onClick = onClear) {
         Icon(
             Icons.Filled.Delete,
-            contentDescription = "remove this picture from the node",
+            contentDescription = stringResource(R.string.cd_remove_node_picture),
             tint = tint ?: MaterialTheme.colorScheme.error,
         )
     }
@@ -1422,7 +1442,7 @@ internal fun SeedRow(
         IconButton(onClick = { clipboard.setText(AnnotatedString(seed)) }) {
             Icon(
                 painterResource(R.drawable.ic_copy),
-                contentDescription = "copy the seed",
+                contentDescription = stringResource(R.string.cd_copy_seed),
                 tint = tint ?: MaterialTheme.colorScheme.primary,
             )
         }
@@ -1430,7 +1450,7 @@ internal fun SeedRow(
             IconButton(onClick = it) {
                 Icon(
                     Icons.Filled.Lock,
-                    contentDescription = "keep this seed for the next Run",
+                    contentDescription = stringResource(R.string.cd_keep_seed),
                     tint = tint ?: MaterialTheme.colorScheme.primary,
                 )
             }
@@ -1448,3 +1468,18 @@ internal fun SeedRow(
 private const val BRUSH_DEFAULT = 0.08f
 private const val BRUSH_MIN = 0.02f
 private const val BRUSH_MAX = 0.25f
+
+/**
+ * Localised wording for a structured [BatchRefusal] from BatchParams, which
+ * stays Compose-free and Android-free and so cannot carry text of its own.
+ */
+@Composable
+private fun batchRefusalText(r: com.abrah.nightmare.BatchRefusal): String = when (r) {
+    com.abrah.nightmare.BatchRefusal.NotARange -> stringResource(R.string.r2_batch_not_range)
+    is com.abrah.nightmare.BatchRefusal.OneValue -> stringResource(R.string.r2_batch_one_value, r.min)
+    is com.abrah.nightmare.BatchRefusal.TooFew -> stringResource(R.string.r2_batch_pick_min, r.min)
+    is com.abrah.nightmare.BatchRefusal.TooMany ->
+        stringResource(R.string.r2_batch_too_many, r.count, r.max) +
+            (if (r.widen) stringResource(R.string.r2_batch_widen_step) else "")
+    is com.abrah.nightmare.BatchRefusal.MaxAxes -> stringResource(R.string.r2_batch_max_axes, r.max)
+}

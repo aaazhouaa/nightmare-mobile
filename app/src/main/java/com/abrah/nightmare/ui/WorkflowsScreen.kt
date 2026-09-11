@@ -101,9 +101,9 @@ fun WorkflowsScreen(
                     Modifier.fillMaxWidth().clickable { onOpenRecipe(r) },
                 ) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(r.label, style = MaterialTheme.typography.titleMedium)
+                        Text(recipeLabel(r.id, r.label), style = MaterialTheme.typography.titleMedium)
                         Text(
-                            r.about,
+                            recipeAbout(r.id, r.about),
                             style = LogTextStyle,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -111,7 +111,7 @@ fun WorkflowsScreen(
                 }
             }
 
-            item { Section("Saved") }
+            item { Section(stringResource(R.string.flows_saved_title)) }
             if (saved.isEmpty()) {
                 item {
                     Text(
@@ -120,7 +120,7 @@ fun WorkflowsScreen(
                         // ⚠ And it names where Save actually IS: this screen no
                         // longer has one, so copy pointing at a button on this
                         // screen would send the user looking for it here.
-                        "Nothing saved yet — build a graph on the canvas, then press Save there.",
+                        stringResource(R.string.flows_empty),
                         style = LogTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -159,7 +159,7 @@ fun WorkflowsScreen(
                             // is worked on, and the name chosen in the first
                             // thirty seconds is rarely the one that fits.
                             IconButton(onClick = { renaming = w.name }) {
-                                Icon(Icons.Filled.Create, contentDescription = "rename \"${w.name}\"")
+                                Icon(Icons.Filled.Create, contentDescription = stringResource(R.string.cd_rename, w.name))
                             }
                             // ⭐ Share the flow as the same JSON the Import
                             // button accepts — so what you send is what someone
@@ -167,7 +167,7 @@ fun WorkflowsScreen(
                             IconButton(onClick = { onShareSaved(w.name) }) {
                                 Icon(
                                     com.abrah.nightmare.ui.ShareFlowIcon,
-                                    contentDescription = "share \"${w.name}\"",
+                                    contentDescription = stringResource(R.string.cd_share_named, w.name),
                                 )
                             }
                             // ⚠⚠ Behind a confirm now. This deleted a workflow on
@@ -176,7 +176,7 @@ fun WorkflowsScreen(
                             IconButton(onClick = { deleting = w.name }) {
                                 Icon(
                                     Icons.Filled.Delete,
-                                    contentDescription = "delete \"${w.name}\"",
+                                    contentDescription = stringResource(R.string.cd_delete_named, w.name),
                                     tint = MaterialTheme.colorScheme.error,
                                 )
                             }
@@ -234,7 +234,7 @@ fun WorkflowsScreen(
 
     renaming?.let { from ->
         NameDialog(
-            title = "Rename \"$from\"",
+            title = stringResource(R.string.workflows_rename_title, from),
             initial = from,
             confirm = "rename",
             onDismiss = { renaming = null },
@@ -245,17 +245,17 @@ fun WorkflowsScreen(
     deleting?.let { name ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Delete \"$name\"?") },
-            text = { Text("This cannot be undone.", style = LogTextStyle) },
+            title = { Text(stringResource(R.string.delete_named, name)) },
+            text = { Text(stringResource(R.string.cannot_undo), style = LogTextStyle) },
             confirmButton = {
                 Button(
                     onClick = { onDeleteSaved(name); deleting = null },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Delete") }
+                ) { Text(stringResource(R.string.delete)) }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -282,7 +282,7 @@ private fun NameDialog(
             OutlinedTextField(
                 value = name,
                 onValueChange = { name = it },
-                label = { Text("Name") },
+                label = { Text(stringResource(R.string.name)) },
                 singleLine = true,
             )
         },
@@ -292,7 +292,7 @@ private fun NameDialog(
                 enabled = name.isNotBlank() && name.trim() != initial,
             ) { Text(confirm) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -304,4 +304,21 @@ private fun Section(title: String) {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(top = 8.dp),
     )
+}
+
+/** Recipe wording lives in the data layer in English; localised at display. */
+@Composable
+private fun recipeLabel(id: String, fallback: String): String = when (id) {
+    "txt2img" -> stringResource(R.string.r2_recipe_txt2img_label)
+    "img2img" -> stringResource(R.string.r2_recipe_img2img_label)
+    "inpaint" -> stringResource(R.string.r2_recipe_inpaint_label)
+    else -> fallback
+}
+
+@Composable
+private fun recipeAbout(id: String, fallback: String): String = when (id) {
+    "txt2img" -> stringResource(R.string.r2_recipe_txt2img_about)
+    "img2img" -> stringResource(R.string.r2_recipe_img2img_about)
+    "inpaint" -> stringResource(R.string.r2_recipe_inpaint_about)
+    else -> fallback
 }

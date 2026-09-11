@@ -314,7 +314,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 "(arch ${DeviceProbe.caps().arch}, needs ${spec.builds.minOf { it.minArch }})", bad = true)
             return
         }
-        say("installing ${spec.label} ${build.tier} (${build.bytes shr 20} MB)")
+        say("正在安装 ${spec.label} ${build.tier}（${build.bytes shr 20} MB）")
         val t0 = System.nanoTime()
         var lastPct = -1
         try {
@@ -351,7 +351,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val spec = ModelCatalog.byId(id ?: "")
         if (spec == null) { say("model_use needs --es arg <id>", bad = true); return }
         if (!spec.installed(ctx)) {
-            say("${spec.id} is not installed -- missing ${spec.missing(ctx).joinToString()}", bad = true)
+            say(ctx.getString(R.string.err_model_not_installed, spec.id, spec.missing(ctx).joinToString()), bad = true)
             return
         }
         val was = SelectedModel.id
@@ -381,18 +381,18 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         when {
             r.code == 200 -> {
                 sink.backend(BackendState.UP)
-                say("/health 200 in ${r.millis} ms")
+                say("/health 200，耗时 ${r.millis} 毫秒")
             }
             r.code == -1 -> {
                 sink.backend(BackendState.DOWN)
-                say("/health unreachable after ${r.millis} ms -- ${r.body}", bad = true)
-                say("  no backend on :${Backend.PORT}. Stage and launch one first.", bad = true)
+                say("/health 无法连接（${r.millis} 毫秒）—— ${r.body}", bad = true)
+                say("  :${Backend.PORT} 上没有后端。请先部署并启动一个。", bad = true)
             }
             else -> {
                 // ⚠ A reachable server answering non-200 is a DIFFERENT finding
                 // from an absent one, and collapsing them hides which it was.
                 sink.backend(BackendState.UP)
-                say("/health ${r.code} in ${r.millis} ms -- reachable but unhappy", bad = true)
+                say("/health ${r.code}，耗时 ${r.millis} 毫秒——可连接但状态异常", bad = true)
             }
         }
     }
@@ -402,17 +402,17 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             is Ops.Result.Ok -> {
                 val c = r.value
                 sink.backend(BackendState.UP)
-                say("encode_text ${c.serverMs} ms (wire ${c.wireMs} ms)")
+                say("文本编码 ${c.serverMs} 毫秒（传输 ${c.wireMs} 毫秒）")
                 say("  ${c.handle}  ${c.seqLen}x${c.hiddenDim}")
                 // ⚠ Both hashes, because they answer different questions: neg is
                 // constant across these calls, pos is not. Showing one would
                 // make an unchanged encoder indistinguishable from a working
                 // one -- which is exactly how this check was wrong twice on the
                 // backend side (backend-patches/README.md).
-                say("  neg ${c.negHash}  pos ${c.posHash}")
+                say("  负向 ${c.negHash}  正向 ${c.posHash}")
             }
             is Ops.Result.Err -> {
-                say("encode_text FAILED http ${r.code}", bad = true)
+                say("文本编码失败 HTTP ${r.code}", bad = true)
                 say("  ${r.body.take(180)}", bad = true)
             }
         }
@@ -429,16 +429,16 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                     // ⚠ A PNG that will not decode is a real outcome, not a
                     // reason to show nothing. Silence here would look identical
                     // to a backend that never answered.
-                    say("vae_decode returned ${d.png.size} B that BitmapFactory " +
-                        "refused to decode", bad = true)
+                    say("VAE 解码返回了 ${d.png.size} 字节，但 BitmapFactory " +
+                        "无法解码", bad = true)
                 } else {
                     sink.image(bmp)
-                    say("vae_decode seed $s -- ${d.serverMs} ms (wire ${d.wireMs} ms)")
-                    say("  ${bmp.width}x${bmp.height}  ${d.png.size} B  sha ${d.rgbSha}")
+                    say("VAE 解码 seed $s —— ${d.serverMs} 毫秒（传输 ${d.wireMs} 毫秒）")
+                    say("  ${bmp.width}x${bmp.height}  ${d.png.size} 字节  sha ${d.rgbSha}")
                 }
             }
             is Ops.Result.Err -> {
-                say("vae_decode FAILED http ${r.code}", bad = true)
+                say("VAE 解码失败 HTTP ${r.code}", bad = true)
                 say("  ${r.body.take(180)}", bad = true)
             }
         }
@@ -668,10 +668,10 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (Backend.get("/health").code == 200) return true
         val spec = ModelCatalog.byId(SelectedModel.id)
         if (spec == null || !spec.installed(ctx)) {
-            say("no model installed -- open Models and download one", bad = true)
+            say(ctx.getString(R.string.err_no_model), bad = true)
             return false
         }
-        say("starting the backend for the first render…")
+        say(ctx.getString(R.string.starting_backend))
         return launchBackend()
     }
 
@@ -1182,8 +1182,8 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             val b = spec.buildFor(caps)
             say(
                 "  ${spec.id.padEnd(20)} " +
-                    (if (spec.installed(ctx)) "installed ${spec.bytesOnDisk(ctx)} B" else "absent") +
-                    "  build=" + (b?.tier ?: "none") + " " + (b?.bytes ?: 0) + " B"
+                    (if (spec.installed(ctx)) "已安装 ${spec.bytesOnDisk(ctx)} 字节" else "未安装") +
+                    "  构建=" + (b?.tier ?: "无") + " " + (b?.bytes ?: 0) + " 字节"
             )
             // ⚠ The leftovers too. A 0-byte `.part` is exactly what a broken
             // download leaves, and it is invisible from the Models tab —
@@ -1212,7 +1212,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             say("upscaler_install: no build for this device", bad = true)
             return
         }
-        say("upscaler_install: ${spec.label} tier ${build.tier}, ${build.bytes} B")
+        say("放大器安装：${spec.label} 档位 ${build.tier}，${build.bytes} 字节")
         try {
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 UpscalerCatalog.install(ctx, spec, build, onProgress = { p ->

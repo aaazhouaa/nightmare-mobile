@@ -125,9 +125,7 @@ fun ResultsScreen(
             // leaves the user to discover the star on the fullscreen viewer by
             // accident, and most never will.
             Text(
-                "Nothing kept yet.\n\nRun something, tap the picture to open it, " +
-                    "and press the star. The graph that made it is kept too, so you can " +
-                    "reopen the whole flow later — not just look at the picture.",
+                stringResource(R.string.r2_results_empty),
                 style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 16.dp),
@@ -138,8 +136,7 @@ fun ResultsScreen(
             // ⚠ Says the cost. These live in app-private storage and go with an
             // uninstall, which a user keeping favourites deserves to know before
             // there are two hundred of them.
-            "${results.size} kept · ${onDiskBytes shr 20} MB · " +
-                "reopening a flow replaces what is on the canvas",
+            stringResource(R.string.r2_results_summary, results.size, onDiskBytes shr 20),
             style = LogTextStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
@@ -160,21 +157,21 @@ fun ResultsScreen(
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                 )
-                TextButton(onClick = onSelectAll) { Text("All") }
+                TextButton(onClick = onSelectAll) { Text(stringResource(R.string.all)) }
                 // ⭐ Save to the gallery, from the selection. ⚠ "None" is gone:
                 // clearing is what BACK already does, and a row of three words
                 // beside a destructive icon is where a mis-tap lives.
                 IconButton(onClick = onSaveSelected) {
                     Icon(
                         SaveIcon,
-                        contentDescription = "save the selected pictures to the gallery",
+                        contentDescription = stringResource(R.string.cd_save_selected),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 IconButton(onClick = { deletingSelection = true }) {
                     Icon(
                         Icons.Filled.Delete,
-                        contentDescription = "forget the selected pictures",
+                        contentDescription = stringResource(R.string.cd_forget_selected),
                         tint = MaterialTheme.colorScheme.error,
                     )
                 }
@@ -233,12 +230,10 @@ fun ResultsScreen(
     deletingBatch?.let { g ->
         AlertDialog(
             onDismissRequest = { deletingBatch = null },
-            title = { Text("Forget this batch?") },
+            title = { Text(stringResource(R.string.results_forget_batch_title)) },
             text = {
                 Text(
-                    "All ${g.size} pictures and the flows that made them go, and " +
-                        "this cannot be undone.\n\nCopies saved to the gallery are " +
-                        "not affected."
+                    stringResource(R.string.r2_results_forget_batch_body, g.size)
                 )
             },
             confirmButton = {
@@ -247,10 +242,10 @@ fun ResultsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Forget ${g.size}") }
+                ) { Text(stringResource(R.string.results_forget_n, g.size)) }
             },
             dismissButton = {
-                TextButton(onClick = { deletingBatch = null }) { Text("Cancel") }
+                TextButton(onClick = { deletingBatch = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -258,12 +253,10 @@ fun ResultsScreen(
     if (deletingSelection) {
         AlertDialog(
             onDismissRequest = { deletingSelection = false },
-            title = { Text("Forget ${selected.size} pictures?") },
+            title = { Text(stringResource(R.string.results_forget_pictures_title, selected.size)) },
             text = {
                 Text(
-                    "Each picture and the flow that made it both go, and this " +
-                        "cannot be undone.\n\nCopies saved to the gallery are not " +
-                        "affected."
+                    stringResource(R.string.r2_results_forget_sel_body)
                 )
             },
             confirmButton = {
@@ -272,10 +265,10 @@ fun ResultsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Forget ${selected.size}") }
+                ) { Text(stringResource(R.string.results_forget_n, selected.size)) }
             },
             dismissButton = {
-                TextButton(onClick = { deletingSelection = false }) { Text("Cancel") }
+                TextButton(onClick = { deletingSelection = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -283,11 +276,10 @@ fun ResultsScreen(
     deleting?.let { r ->
         AlertDialog(
             onDismissRequest = { deleting = null },
-            title = { Text("Forget this one?") },
+            title = { Text(stringResource(R.string.results_forget_one_title)) },
             text = {
                 Text(
-                    "The picture and the flow that made it both go, and this cannot be " +
-                        "undone.\n\nA copy you saved to the gallery is not affected.",
+                    stringResource(R.string.r2_results_forget_one_body),
                     style = LogTextStyle,
                 )
             },
@@ -297,9 +289,9 @@ fun ResultsScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Forget") }
+                ) { Text(stringResource(R.string.results_forget)) }
             },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -382,7 +374,7 @@ fun ResultViewer(
             imageFor(item.id)?.let { bmp ->
                 Image(
                     bitmap = bmp,
-                    contentDescription = item.batchLabel.ifBlank { "the kept picture" },
+                    contentDescription = item.batchLabel.ifBlank { stringResource(R.string.r2_results_cd_kept) },
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxSize()
@@ -519,21 +511,21 @@ fun ResultViewer(
             IconButton(onClick = { onShare(current) }) {
                 Icon(
                     ShareIcon,
-                    contentDescription = "share this picture",
+                    contentDescription = stringResource(R.string.cd_share_picture),
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }
             IconButton(onClick = { onSave(current) }) {
                 Icon(
                     SaveIcon,
-                    contentDescription = "save to the gallery",
+                    contentDescription = stringResource(R.string.cd_save_gallery),
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }
             IconButton(onClick = { showInfo = !showInfo }) {
                 Icon(
                     Icons.Filled.Info,
-                    contentDescription = "what made this picture",
+                    contentDescription = stringResource(R.string.cd_what_made),
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }
@@ -581,12 +573,10 @@ fun ResultViewer(
         if (confirmingDelete) {
             AlertDialog(
                 onDismissRequest = { confirmingDelete = false },
-                title = { Text("Forget this one?") },
+                title = { Text(stringResource(R.string.results_forget_one_title)) },
                 text = {
                     Text(
-                        "The picture and the flow that made it both go, and this " +
-                            "cannot be undone.\n\nA copy you saved to the gallery is " +
-                            "not affected."
+                        stringResource(R.string.r2_results_forget_one_body)
                     )
                 },
                 confirmButton = {
@@ -595,10 +585,10 @@ fun ResultViewer(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error,
                         ),
-                    ) { Text("Forget") }
+                    ) { Text(stringResource(R.string.results_forget)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") }
+                    TextButton(onClick = { confirmingDelete = false }) { Text(stringResource(R.string.cancel)) }
                 },
             )
         }
@@ -756,7 +746,7 @@ private fun ResultCard(
                 meta = listOfNotNull(
                     result.model,
                     "${result.width}×${result.height}",
-                    result.seed?.let { "seed $it" },
+                    result.seed?.let { stringResource(R.string.r2_results_seed, it) },
                 ).joinToString("  "),
                 onDelete = onDelete,
                 onSave = onSave,
@@ -837,7 +827,7 @@ private fun ResultCardHeader(
             IconButton(onClick = onSave, modifier = Modifier.size(36.dp)) {
                 Icon(
                     SaveIcon,
-                    contentDescription = "save to the gallery",
+                    contentDescription = stringResource(R.string.cd_save_gallery),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )
@@ -856,7 +846,7 @@ private fun ResultCardHeader(
             IconButton(onClick = onShareFlow, modifier = Modifier.size(36.dp)) {
                 Icon(
                     ShareFlowIcon,
-                    contentDescription = "share the flow that made it",
+                    contentDescription = stringResource(R.string.cd_share_source_flow),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp),
                 )

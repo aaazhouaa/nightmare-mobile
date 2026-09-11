@@ -287,7 +287,7 @@ fun CanvasScreen(
             IconButton(onClick = { saving = true }) {
                 Icon(
                     com.abrah.nightmare.ui.SaveIcon,
-                    contentDescription = "save this workflow",
+                    contentDescription = stringResource(R.string.save_workflow),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -488,15 +488,24 @@ fun CanvasScreen(
     // action with no undo -- the wires that pointed at those nodes go with them.
     if (confirmingDelete && state.selection.isNotEmpty()) {
         val n = state.selection.size
+        // ⚠ The SAME display names the canvas headers draw — 文本编码(clip)_8,
+        // counter and all — so what the dialog lists is what the user sees on
+        // the canvas underneath it. A raw id here would name nothing.
+        val nodeNames = types.keys.associateWith { nodeDisplayName(it) }
+        val byId = state.workflow.graph.byId
+        val listed = state.selection.sorted().joinToString(", ") { id ->
+            val node = byId[id]
+            node?.let { nodeNames[it.type]?.let { name -> name + nodeCounterSuffix(id, it.type) } } ?: id
+        }
         AlertDialog(
             onDismissRequest = { confirmingDelete = false },
-            title = { Text(if (n == 1) "Delete this node?" else "Delete $n nodes?") },
+            title = { Text(if (n == 1) stringResource(R.string.canvas_delete_node_title) else stringResource(R.string.canvas_delete_n_nodes, n)) },
             text = {
                 Text(
                     // ⚠ Names them. "Delete 3 nodes?" over a canvas the dialog
                     // is covering is a question the user cannot check.
-                    state.selection.sorted().joinToString(", ") +
-                        "\n\nEvery wire into or out of them goes too, and this cannot be undone.",
+                    listed +
+                        "\n\n" + stringResource(R.string.canvas_delete_body),
                     style = LogTextStyle,
                 )
             },
@@ -506,10 +515,10 @@ fun CanvasScreen(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.error,
                     ),
-                ) { Text("Delete") }
+                ) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmingDelete = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -902,13 +911,13 @@ private fun RunBar(
                 mark = LockMark.ZOOM,
                 locked = state.zoomLocked,
                 onClick = onToggleZoomLock,
-                what = "zoom",
+                what = stringResource(R.string.r2_canvas_zoom),
             )
             LockButton(
                 mark = LockMark.PAN,
                 locked = state.panLocked,
                 onClick = onTogglePanLock,
-                what = "canvas movement",
+                what = stringResource(R.string.r2_canvas_pan),
             )
         }
     }
@@ -938,6 +947,10 @@ private fun LockButton(
     /** For the screen reader, and for the state to be sayable at all. */
     what: String,
 ) {
+    // ⚠ Resolved in composable scope: the `semantics` block below runs outside
+    // composition, so `stringResource` cannot be called from inside it.
+    val lockedCd = stringResource(R.string.r2_canvas_is_locked, what)
+    val openCd = stringResource(R.string.r2_canvas_lock, what)
     val tint =
         if (locked) CanvasColors.selectedStroke
         else MaterialTheme.colorScheme.onSurfaceVariant
@@ -946,7 +959,7 @@ private fun LockButton(
             Modifier
                 .size(30.dp, 22.dp)
                 .semantics {
-                    contentDescription = if (locked) "$what is locked" else "lock $what"
+                    contentDescription = if (locked) lockedCd else openCd
                 }
         ) {
             val h = size.height
@@ -1063,7 +1076,7 @@ private fun SelectionBar(
                 onClick = onSelectAll,
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-            ) { Text("All", fontSize = 12.sp) }
+            ) { Text(stringResource(R.string.all), fontSize = 12.sp) }
         }
         // ⚠ Disabled, not hidden, at zero: the row must not change shape as the
         // count crosses one, or the Done button moves under the finger reaching
@@ -1071,7 +1084,7 @@ private fun SelectionBar(
         IconButton(onClick = onDelete, enabled = count > 0) {
             Icon(
                 Icons.Filled.Delete,
-                contentDescription = "delete the selected nodes",
+                contentDescription = stringResource(R.string.cd_delete_selected),
                 tint = if (count > 0) {
                     MaterialTheme.colorScheme.error
                 } else {
@@ -1080,7 +1093,7 @@ private fun SelectionBar(
             )
         }
         IconButton(onClick = onDone) {
-            Icon(Icons.Filled.Close, contentDescription = "clear the selection")
+            Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_clear_selection))
         }
     }
 }
@@ -1194,7 +1207,7 @@ private fun FullscreenImage(
     ) {
         Image(
             bitmap = image,
-            contentDescription = "the picture, full screen",
+            contentDescription = stringResource(R.string.cd_picture_fullscreen),
             // ⚠ Fit, never Crop: this is the one place the whole image must be
             // visible, and cropping here would hide the edges of what was made.
             contentScale = ContentScale.Fit,
@@ -1229,7 +1242,7 @@ private fun FullscreenImage(
                 IconButton(onClick = { save(); saved = true }) {
                     Icon(
                         if (saved) Icons.Filled.Check else com.abrah.nightmare.ui.SaveIcon,
-                        contentDescription = if (saved) "saved to the gallery" else "save to the gallery",
+                        contentDescription = if (saved) stringResource(R.string.cd_saved_gallery) else stringResource(R.string.cd_save_gallery),
                         tint = Color.White,
                     )
                 }
@@ -1241,7 +1254,7 @@ private fun FullscreenImage(
                 IconButton(onClick = share) {
                     Icon(
                         com.abrah.nightmare.ui.ShareIcon,
-                        contentDescription = "share this picture",
+                        contentDescription = stringResource(R.string.cd_share_picture),
                         tint = Color.White,
                     )
                 }
@@ -1250,7 +1263,7 @@ private fun FullscreenImage(
                 IconButton(onClick = { keep(); kept = true }) {
                     Icon(
                         Icons.Filled.Star,
-                        contentDescription = if (kept) "kept in Results" else "keep this and its flow",
+                        contentDescription = if (kept) stringResource(R.string.cd_kept_in_results) else stringResource(R.string.cd_keep_with_flow),
                         // ⚠ One glyph at two alphas rather than Star/StarBorder:
                         // `material-icons-core` has no outlined star, and the
                         // extended set costs ~55 MB of dex for it
@@ -1263,7 +1276,7 @@ private fun FullscreenImage(
                 IconButton(onClick = { confirmingDelete = true }) {
                     Icon(
                         Icons.Filled.Delete,
-                        contentDescription = "clear this output",
+                        contentDescription = stringResource(R.string.cd_clear_output),
                         tint = Color.White,
                     )
                 }
@@ -1274,7 +1287,8 @@ private fun FullscreenImage(
             seed?.let { SeedRow(it, tint = Color.White, onLock = onLockSeed) }
             if (onPick == null && seed == null && onSave == null) {
                 Text(
-                    if (scale > 1.01f) "double tap to fit" else "tap to close",
+                    if (scale > 1.01f) stringResource(R.string.r2_canvas_double_tap_fit)
+                    else stringResource(R.string.r2_canvas_tap_close),
                     style = LogTextStyle,
                     color = Color.White.copy(alpha = 0.6f),
                 )
@@ -1287,16 +1301,11 @@ private fun FullscreenImage(
         if (confirmingDelete && onDeleteOutput != null) {
             AlertDialog(
                 onDismissRequest = { confirmingDelete = false },
-                title = { Text("Clear this picture?") },
+                title = { Text(stringResource(R.string.canvas_clear_picture_title)) },
                 text = {
                     Text(
-                        "The node goes back to empty. " +
-                            if (saved) {
-                                "You saved it to the gallery, so that copy stays."
-                            } else {
-                                "It has NOT been saved to the gallery, and Run will " +
-                                    "make a different one unless the seed is locked."
-                            },
+                        if (saved) stringResource(R.string.r2_canvas_clear_saved)
+                        else stringResource(R.string.r2_canvas_clear_unsaved),
                         style = LogTextStyle,
                     )
                 },
@@ -1306,10 +1315,10 @@ private fun FullscreenImage(
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.error,
                         ),
-                    ) { Text("Clear") }
+                    ) { Text(stringResource(R.string.canvas_clear)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") }
+                    TextButton(onClick = { confirmingDelete = false }) { Text(stringResource(R.string.cancel)) }
                 },
             )
         }

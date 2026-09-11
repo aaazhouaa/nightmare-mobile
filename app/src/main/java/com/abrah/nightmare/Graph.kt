@@ -81,7 +81,7 @@ const val V1_MODEL = "absolutereality"
 
 /** Shared reason text, so all three context-key knobs explain themselves alike. */
 const val CONTEXT_KEY_LOCK =
-    "bound when the backend launches -- v1 pins one context for the whole graph"
+    "在后端启动时绑定——v1 为整张图固定一个上下文"
 
 /**
  * `(type, model, resolution)` -- the three things bound at BACKEND LAUNCH

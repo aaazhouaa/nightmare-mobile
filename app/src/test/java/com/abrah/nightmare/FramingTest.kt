@@ -90,7 +90,7 @@ class FramingTest {
             graph(photo, encode("enc", from = "photo")), types, "photo", "enc", "image",
         )
         assertNotNull(why)
-        assertTrue("should name the fix: $why", why!!.contains("Crop"))
+        assertTrue("should name the fix: $why", why!!.contains("裁剪"))
     }
 
     /** ⭐ …and putting one between them is allowed, because that is what tells it what to make. */

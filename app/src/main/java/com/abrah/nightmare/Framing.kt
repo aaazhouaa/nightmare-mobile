@@ -109,7 +109,7 @@ sealed interface SizeDemand {
     /** @param by the node ids demanding it, for the message that explains the lock. */
     data class Exactly(val width: Int, val height: Int, val by: List<String>) : SizeDemand {
         /** ⚠ Named, because a locked widget with no reason is worse than no widget. */
-        fun reason() = "${by.joinToString(" and ")} needs ${width}x$height"
+        fun reason() = "${by.joinToString("、")} 需要 ${width}x$height"
     }
 
     /**
@@ -120,8 +120,8 @@ sealed interface SizeDemand {
      * nothing on screen admitting a choice had been made.
      */
     data class Conflict(val demands: List<Pair<String, Pair<Int, Int>>>) : SizeDemand {
-        fun reason() = "wanted at " + demands.joinToString(" and ") { (who, wh) ->
-            "${wh.first}x${wh.second} by $who"
+        fun reason() = "被要求输出 " + demands.joinToString("、") { (who, wh) ->
+            "${wh.first}x${wh.second}（来自 $who）"
         }
     }
 }
@@ -189,25 +189,24 @@ fun sizeRefusal(
         // file, since the canvas refuses to build one -- must not quietly accept
         // a third wire on top of it.
         if (already is SizeDemand.Conflict) {
-            return "$fromNode is already ${already.reason()}"
+            return "$fromNode 已被占用：${already.reason()}"
         }
         if (already is SizeDemand.Exactly &&
             (already.width to already.height) != want &&
             toNode !in already.by
         ) {
-            return "$fromNode already makes ${already.width}x${already.height} " +
-                "for ${already.by.joinToString(" and ")}; " +
-                "$toNode needs ${want.first}x${want.second}"
+            return "$fromNode 已经在为 ${already.by.joinToString("、")} 生成 " +
+                "${already.width}x${already.height}；而 $toNode 需要 ${want.first}x${want.second}"
         }
         return null
     }
 
     val promise = runCatching { producerType.outputSize(producer) }.getOrNull()
-        ?: return "$toNode needs ${want.first}x${want.second} and $fromNode " +
-            "cannot promise a size -- put a Crop between them"
+        ?: return "$toNode 需要 ${want.first}x${want.second}，但 $fromNode " +
+            "无法确定输出尺寸——在两者之间加一个裁剪节点"
     if (promise != want) {
-        return "$toNode needs ${want.first}x${want.second}, " +
-            "$fromNode makes ${promise.first}x${promise.second}"
+        return "$toNode 需要 ${want.first}x${want.second}，" +
+            "而 $fromNode 输出的是 ${promise.first}x${promise.second}"
     }
     return null
 }
@@ -293,12 +292,12 @@ fun sizeMismatches(graph: Graph, types: Map<String, NodeType>): List<String> {
         val h = n.params["out_h"]?.toIntOrNull() ?: 0
         when (demand) {
             is SizeDemand.Conflict ->
-                out += "\"${n.id}\" is ${demand.reason()}, so it promises nothing " +
-                    "and will emit at its source's own size"
+                out += "\"${n.id}\" ${demand.reason()}，因此无法承诺任何尺寸，" +
+                    "将按其来源自身的尺寸输出"
             is SizeDemand.Exactly ->
                 if (w != demand.width || h != demand.height) {
-                    out += "\"${n.id}\" is set to ${w}x$h but ${demand.by.joinToString(" and ")} " +
-                        "needs ${demand.width}x${demand.height}"
+                    out += "\"${n.id}\" 当前设为 ${w}x$h，但 ${demand.by.joinToString("、")} " +
+                        "需要 ${demand.width}x${demand.height}"
                 }
             else -> Unit
         }

@@ -179,15 +179,15 @@ class CanvasGeometryTest {
 
     @Test
     fun aNodeCannotFeedItself() =
-        assertEquals("a node cannot feed itself", connectionError(out("a", "IMAGE"), inp("a", "IMAGE")))
+        assertEquals("节点不能连接到自己", connectionError(out("a", "IMAGE"), inp("a", "IMAGE")))
 
     @Test
     fun twoOutputsDoNotConnect() =
-        assertEquals("both ends are outputs", connectionError(out("a", "IMAGE"), out("b", "IMAGE")))
+        assertEquals("两端都是输出口", connectionError(out("a", "IMAGE"), out("b", "IMAGE")))
 
     @Test
     fun twoInputsDoNotConnect() =
-        assertEquals("both ends are inputs", connectionError(inp("a", "IMAGE"), inp("b", "IMAGE")))
+        assertEquals("两端都是输入口", connectionError(inp("a", "IMAGE"), inp("b", "IMAGE")))
 
     // --- layout -------------------------------------------------------------
 

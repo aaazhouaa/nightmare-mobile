@@ -44,6 +44,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -188,21 +189,20 @@ fun HarnessScreen(
     vm.pendingOpen?.let { p ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = vm::dismissPendingOpen,
-            title = { Text("Open \"" + p.label + "\"?") },
+            title = { Text(stringResource(R.string.main_open_flow_confirm, p.label)) },
             text = {
                 Text(
-                    "The flow on the canvas has unsaved edits. Opening this one " +
-                        "replaces it, and the edits are gone."
+                    stringResource(R.string.r2_main_open_flow_body)
                 )
             },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = vm::confirmPendingOpen) {
-                    Text("Open anyway")
+                    Text(stringResource(R.string.main_open_anyway))
                 }
             },
             dismissButton = {
                 androidx.compose.material3.TextButton(onClick = vm::dismissPendingOpen) {
-                    Text("Keep editing")
+                    Text(stringResource(R.string.main_keep_editing))
                 }
             },
         )
@@ -375,7 +375,7 @@ fun HarnessScreen(
             // ⚠ A flow opened from Results has a name now, so the run bar
             // stops reading "unsaved flow" for a graph that plainly came from
             // somewhere. Saved name first, then the result's, then neither.
-            flowName = vm.activeFlow.name ?: vm.openedResultName ?: "unsaved flow",
+            flowName = vm.activeFlow.name ?: vm.openedResultName ?: stringResource(R.string.r2_main_unsaved_flow),
             flowDirty = vm.activeFlow.dirty,
             loadLine = vm.load?.let { l ->
                 // ⚠⚠ Formatted HERE rather than in the view model: the STRING is
@@ -395,7 +395,7 @@ fun HarnessScreen(
                 // still the honest thing to show — marked idle so it is not
                 // read as "loaded".
                 val name = l.resident ?: vm.modelLabel
-                val holding = if (l.resident != null) "holding $name" else "$name (idle)"
+                val holding = if (l.resident != null) stringResource(R.string.r2_main_holding, name) else stringResource(R.string.r2_main_idle, name)
                 "$holding  ·  $free/$total GB free"
             },
             onModels = { vm.setModelsVisible(true) },
@@ -565,7 +565,7 @@ private fun SampleProgress(progress: Pair<Int, Int>) {
     val (step, total) = progress
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            "sampling  $step / $total",
+            stringResource(R.string.r2_main_sampling, step, total),
             style = LogTextStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -585,7 +585,7 @@ private fun SampleProgress(progress: Pair<Int, Int>) {
 private fun DecodedImage(image: ImageBitmap) {
     Image(
         bitmap = image,
-        contentDescription = "the latest vae_decode output",
+        contentDescription = stringResource(R.string.cd_latest_output),
         contentScale = ContentScale.Fit,
         modifier = Modifier
             .fillMaxWidth()
@@ -631,9 +631,9 @@ private fun StatusRow(state: BackendState) {
         BackendState.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     val label = when (state) {
-        BackendState.UP -> "running"
-        BackendState.DOWN -> "not reachable"
-        BackendState.UNKNOWN -> "checking"
+        BackendState.UP -> stringResource(R.string.r2_main_running)
+        BackendState.DOWN -> stringResource(R.string.r2_main_not_reachable)
+        BackendState.UNKNOWN -> stringResource(R.string.r2_main_checking)
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -647,7 +647,7 @@ private fun StatusRow(state: BackendState) {
                     .background(dot)
             )
             Text(
-                "backend  " + label + "  :" + Backend.PORT, style = LogTextStyle,
+                stringResource(R.string.r2_main_backend_row, label, Backend.PORT), style = LogTextStyle,
                 color = MaterialTheme.colorScheme.onSurface,
             )
         }
@@ -656,7 +656,7 @@ private fun StatusRow(state: BackendState) {
         // It said "dreamshaper (dev fixture)" for as long as that was true and
         // would have kept saying it afterwards.
         Text(
-            "model     " + SelectedModel.id, style = LogTextStyle,
+            stringResource(R.string.r2_main_model_row, SelectedModel.id), style = LogTextStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -681,34 +681,34 @@ private fun OpButtons(
         // The backend is now a child of this app, so starting it is a button
         // rather than an adb command someone has to know about.
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Op(if (running) "restart backend" else "start backend", busy,
+            Op(stringResource(if (running) R.string.r2_main_restart else R.string.r2_main_start), busy,
                 Modifier.weight(2f), onStart)
-            Op("stop", busy, Modifier.weight(1f), onStop)
+            Op(stringResource(R.string.r2_main_stop), busy, Modifier.weight(1f), onStop)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Op("health", busy, Modifier.weight(1f), onHealth)
-            Op("encode_text", busy, Modifier.weight(1f), onEncodeText)
-            Op("vae_decode", busy, Modifier.weight(1f), onVaeDecode)
+            Op(stringResource(R.string.r2_main_health), busy, Modifier.weight(1f), onHealth)
+            Op(stringResource(R.string.r2_main_op_encode_text), busy, Modifier.weight(1f), onEncodeText)
+            Op(stringResource(R.string.r2_main_op_vae_decode), busy, Modifier.weight(1f), onVaeDecode)
         }
         // The first two-node graph, on one button: sample -> latent handle ->
         // vae_decode. It is a row of its own because it is the only op here
         // that is a GRAPH rather than a single call.
-        Op("sample -> decode  (the graph)", busy, Modifier.fillMaxWidth(), onSample)
+        Op(stringResource(R.string.r2_main_sample_graph), busy, Modifier.fillMaxWidth(), onSample)
         // Four passes over a two-branch graph, with a verdict per pass. It is
         // its own button rather than a variant of the one above because what it
         // measures is what did NOT run (HarnessViewModel.runGraph).
-        Op("executor: 4-pass cache check", busy, Modifier.fillMaxWidth(), onGraph)
+        Op(stringResource(R.string.r2_main_cache_check), busy, Modifier.fillMaxWidth(), onGraph)
         // ⭐ The canvas. Its own row because it is the only button here that
         // opens a SCREEN rather than running an op.
-        Op("open the canvas", busy, Modifier.fillMaxWidth(), onOpenCanvas)
+        Op(stringResource(R.string.r2_main_open_canvas), busy, Modifier.fillMaxWidth(), onOpenCanvas)
         // ⭐ Where a user gets a model at all. Full width and next to the
         // canvas because on a fresh install it is the FIRST thing needed:
         // without it the graph renders against a directory that is not there.
-        Op("models", busy, Modifier.fillMaxWidth(), onOpenModels)
+        Op(stringResource(R.string.r2_main_models), busy, Modifier.fillMaxWidth(), onOpenModels)
         // Still honest stubs. Each names the step that will wire it, so the
         // screen doubles as the plan.
-        Stub("tier0: resize", "QuickJS", busy, onNotWired)
-        Stub("tier1: clipseg", "ORT CPU", busy, onNotWired)
+        Stub(stringResource(R.string.r2_main_stub_resize), "QuickJS", busy, onNotWired)
+        Stub(stringResource(R.string.r2_main_stub_clipseg), "ORT CPU", busy, onNotWired)
     }
 }
 

@@ -46,8 +46,8 @@ private val NightmareDark = darkColorScheme(
  */
 private val NightmareLight = lightColorScheme(primary = Ember)
 
-/** Monospace for anything an agent or a human reads as a measurement. */
-val LogTextStyle = TextStyle(fontFamily = FontFamily.Monospace, fontSize = 12.sp)
+/** The system font for anything an agent or a human reads as a measurement. */
+val LogTextStyle = TextStyle(fontFamily = FontFamily.Default, fontSize = 12.sp)
 
 @Composable
 fun NightmareTheme(

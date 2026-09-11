@@ -124,4 +124,308 @@
     <string name="mask_brush_px">brush  %1$d px</string>
     <string name="mask_paint_hint">paint over what you want REPAINTED · pinch to zoom</string>
     <string name="mask_covered">%1$d%% covered · the red area is what gets repainted</string>
+
+    <!--
+      ⚠ 2026-09-11: strings extracted from hardcoded literals in .kt files so
+      the zh locale can cover the whole UI. Keys follow the same screen order.
+    -->
+    <!-- Main activity: open-saved-flow dialog. -->
+    <string name="main_open_flow_confirm">Open \"%1$s\"?</string>
+    <string name="main_open_anyway">Open anyway</string>
+    <string name="main_keep_editing">Keep editing</string>
+    <string name="cd_latest_output">the latest vae_decode output</string>
+
+    <!-- Op service notification (non-Composable: resolve via context). -->
+    <string name="notify_title">Nightmare harness</string>
+    <string name="notify_text">running an op</string>
+
+    <!-- Canvas screen. -->
+    <string name="all">All</string>
+    <string name="cd_delete_selected">delete the selected nodes</string>
+    <string name="cd_clear_selection">clear the selection</string>
+    <string name="cd_picture_fullscreen">the picture, full screen</string>
+    <string name="cd_share_picture">share this picture</string>
+    <string name="cd_clear_output">clear this output</string>
+    <string name="canvas_clear_picture_title">Clear this picture?</string>
+    <string name="canvas_clear">Clear</string>
+
+    <!-- Node inspector. -->
+    <string name="cd_save_gallery">save to the gallery</string>
+    <string name="cd_keep_with_flow">keep this and its flow</string>
+    <string name="cd_clear_picture">clear this picture</string>
+    <string name="cd_node_image">this node\'s image</string>
+    <string name="inspector_delete_node">delete node</string>
+    <string name="inspector_delete_node_title">Delete \"%1$s\"?</string>
+    <string name="r2_ins_batching">Batching %1$d values: %2$s</string>
+    <string name="r2_ins_locked">%1$s  (locked)</string>
+    <string name="r2_ins_inputs">inputs: %1$s</string>
+    <string name="r2_ins_delete_wires">Every wire into or out of it goes too, and this cannot be undone.</string>
+    <string name="inspector_sweep">Sweep %1$s</string>
+    <string name="inspector_sweep_from">from  %1$s</string>
+    <string name="inspector_sweep_step">step  %1$s</string>
+    <string name="inspector_release">Release</string>
+    <string name="inspector_choose_image">Choose an image</string>
+    <string name="cd_choose_other_picture">choose a different picture</string>
+    <string name="cd_remove_node_picture">remove this picture from the node</string>
+    <string name="cd_copy_seed">copy the seed</string>
+    <string name="cd_keep_seed">keep this seed for the next Run</string>
+
+    <!-- Node palette. -->
+    <string name="palette_add_node">add a node</string>
+    <string name="palette_cat_sampling">Sampling</string>
+    <string name="palette_cat_latent">Latent</string>
+    <string name="palette_cat_image">Image</string>
+    <string name="palette_cat_conditioning">Conditioning</string>
+    <string name="palette_cat_misc">Plugins</string>
+    <string name="palette_ports">%1$d in · %2$d out</string>
+
+    <!-- Node type display names (keyed by the short node label). -->
+    <string name="node_sd_sample">Sample</string>
+    <string name="node_sd_vae_decode">VAE decode</string>
+    <string name="node_sd_vae_encode">VAE encode</string>
+    <string name="node_sd_clip_encode">Text encode (CLIP)</string>
+    <string name="node_sd_latent_blend">Latent blend</string>
+    <string name="node_image_load">Load image</string>
+    <string name="node_image_output">Output image</string>
+    <string name="node_image_crop">Crop</string>
+    <string name="node_image_mask">Mask</string>
+    <string name="node_image_upscale">Upscale</string>
+
+    <!-- Widget display names (storage keys are never renamed; only shown text is). -->
+    <string name="param_steps">Steps</string>
+    <string name="param_cfg">CFG (guidance)</string>
+    <string name="param_seed">Seed</string>
+    <string name="param_denoise">Denoise strength</string>
+    <string name="param_scheduler">Sampler</string>
+    <string name="param_model">Model</string>
+    <string name="param_width">Width</string>
+    <string name="param_height">Height</string>
+    <string name="param_prompt">Prompt</string>
+    <string name="param_negative">Negative prompt</string>
+    <string name="param_uri">Picture</string>
+    <string name="param_save">Save to gallery</string>
+    <string name="param_name">File name</string>
+    <string name="param_x">Frame X</string>
+    <string name="param_y">Frame Y</string>
+    <string name="param_w">Frame width</string>
+    <string name="param_h">Frame height</string>
+    <string name="param_out_w">Output width</string>
+    <string name="param_out_h">Output height</string>
+    <string name="param_aspect">Aspect ratio</string>
+    <string name="param_pad">Padding</string>
+    <string name="param_ops">Brush strokes</string>
+    <string name="param_grow">Grow mask</string>
+    <string name="param_feather">Feather mask</string>
+    <string name="param_upscaler">Upscaler</string>
+
+    <!-- Widget types, for the supporting text under a bare field. -->
+    <string name="wtype_string">text</string>
+    <string name="wtype_int">integer</string>
+    <string name="wtype_float">decimal</string>
+    <string name="wtype_bool">toggle</string>
+
+    <!-- Option values that are words rather than technical ids. -->
+    <string name="opt_source">Original shape</string>
+    <string name="opt_black">Black bars</string>
+    <string name="opt_blur">Blurred fill</string>
+
+    <!-- Canvas port labels (resolved once per composition; DrawScope cannot read resources). -->
+    <string name="port_cond">cond</string>
+    <string name="port_latent">latent</string>
+    <string name="port_image">image</string>
+    <string name="port_mask">mask</string>
+    <string name="port_base">base</string>
+    <string name="port_repaint">repaint</string>
+
+    <!-- Library tabs and run/model errors that surface on the canvas. -->
+    <string name="tab_models">Models</string>
+    <string name="tab_flows">Flows</string>
+    <string name="tab_results">Results</string>
+    <string name="err_no_model">no model installed -- open Models and download one</string>
+    <string name="err_backend_start">the backend would not start -- see the harness log</string>
+    <string name="err_model_not_installed">%1$s is not installed -- missing %2$s</string>
+    <string name="model_not_installed">%1$s (not installed)</string>
+    <string name="starting_backend">starting the backend for the first render…</string>
+    <string name="flows_saved_title">Saved</string>
+    <string name="flows_empty">Nothing saved yet — build a graph on the canvas, then press Save there.</string>
+    <string name="canvas_delete_body">Every wire into or out of them goes too, and this cannot be undone.</string>
+    <string name="r2_main_op_encode_text">encode text</string>
+    <string name="r2_main_op_vae_decode">vae decode</string>
+
+    <!-- Run log. -->
+    <string name="cd_release_seed_sweep">release the seed sweep</string>
+    <string name="cd_release_batch">release the %1$s batch</string>
+
+    <!-- Mask editor. -->
+    <string name="cd_masked_picture">the picture being masked</string>
+
+    <!-- Device sheet. -->
+    <string name="device_this_device">This device</string>
+
+    <!-- Models screen. -->
+    <string name="models_keep">Keep</string>
+    <string name="models_name_it">Name it</string>
+    <string name="models_name_label">model name</string>
+    <string name="models_pick_zip">Pick a zip</string>
+
+    <!-- Results screen. -->
+    <string name="cd_save_selected">save the selected pictures to the gallery</string>
+    <string name="cd_forget_selected">forget the selected pictures</string>
+    <string name="results_forget_batch_title">Forget this batch?</string>
+    <string name="results_forget_n">Forget %1$s</string>
+    <string name="results_forget_pictures_title">Forget %1$s pictures?</string>
+    <string name="results_forget_one_title">Forget this one?</string>
+    <string name="results_forget">Forget</string>
+    <string name="cd_what_made">what made this picture</string>
+    <string name="cd_share_source_flow">share the flow that made it</string>
+
+    <!-- Screen header / workflows. -->
+    <string name="cd_close_back">close %1$s — back to the canvas</string>
+    <string name="cd_rename">rename %1$s</string>
+    <string name="cd_share_named">share %1$s</string>
+    <string name="cd_delete_named">delete %1$s</string>
+    <string name="workflows_rename_title">Rename %1$s</string>
+    <string name="delete_named">Delete %1$s?</string>
+    <string name="cannot_undo">This cannot be undone.</string>
+
+    <!-- 2026-09-11 second pass: conditional/expr literals + ViewModel toasts. -->
+    <string name="canvas_delete_node_title">Delete this node?</string>
+    <string name="canvas_delete_n_nodes">Delete %1$s nodes?</string>
+    <string name="cd_saved_gallery">saved to the gallery</string>
+    <string name="cd_kept_in_results">kept in Results</string>
+    <string name="cd_sweep_param">sweep this parameter</string>
+    <string name="cd_sweeping">sweeping %1$s</string>
+    <string name="inspector_arm">Arm</string>
+    <string name="inspector_sweep_to">to  %1$s</string>
+    <string name="results_kept_picture">the kept picture</string>
+
+    <!-- HarnessViewModel toasts (non-Composable: resolve via application). -->
+    <string name="vm_picture_gone">That picture is no longer in memory — Run again</string>
+    <string name="vm_saved_gallery">Saved to the gallery</string>
+    <string name="vm_save_failed">Could not save: %1$s</string>
+    <string name="vm_picture_missing">That picture is missing</string>
+    <string name="vm_share_failed">Could not share: %1$s</string>
+    <string name="vm_flow_unreadable">That flow could not be read</string>
+    <string name="vm_nothing_to_save">nothing to save</string>
+    <string name="vm_named_unreadable">"%1$s" could not be read</string>
+    <string name="vm_saved_n">Saved %1$s to the gallery</string>
+
+    <!-- ===== Round 2: device sheet ===== -->
+    <string name="r2_device_chip">chip</string>
+    <string name="r2_device_htp_arch">HTP arch</string>
+    <string name="r2_device_source">source</string>
+    <string name="r2_device_source_measured">measured from the HTP</string>
+    <string name="r2_device_source_assumed">assumed from the chip name</string>
+    <string name="r2_device_unknown">unknown</string>
+    <string name="r2_device_no_qnn">⚠ This build ships no QNN libraries for v%1$d, so the NPU cannot start. Staged: %2$s.</string>
+    <string name="r2_device_runnable">models it can run</string>
+    <string name="r2_device_runnable_frac">%1$d of %2$d</string>
+    <string name="r2_device_sd15_build">SD 1.5 build</string>
+    <string name="r2_device_supported">supported</string>
+    <string name="r2_device_sdxl_needs">needs v75+ with 8 MB — no other build is published</string>
+    <string name="r2_device_not_measured">Measured on the first backend start; until then this is a table lookup, and an unlisted chip is assumed to be the oldest we support.</string>
+
+    <!-- ===== Round 2: models screen ===== -->
+    <string name="r2_models_hint_sd15">About 1 GB each. Use Wi-Fi.</string>
+    <string name="r2_models_hint_sdxl">About 3.5 GB each, and ~7.5 GB free while it unpacks. Use Wi-Fi.</string>
+    <string name="r2_models_delete_frees">Frees %1$d MB. </string>
+    <string name="r2_models_upscaler_restore">Getting it back is a %1$d MB download. Any flow with an Upscale node set to it will fail until you install it again.</string>
+    <string name="r2_models_custom_restore">You imported it, so getting it back means importing the zip again.</string>
+    <string name="r2_models_redownload">Getting it back is a %1$d MB download.</string>
+    <string name="r2_models_in_use_note">It is the model in use, so another will be selected.</string>
+    <string name="r2_models_import_title">Import a checkpoint</string>
+    <string name="r2_models_import_desc">A zip of QNN model files, converted on a PC. SD 1.5 or SDXL — it works out which.</string>
+    <string name="r2_models_name_reserved">That is a built-in model\'s name; pick another.</string>
+    <string name="r2_models_name_invalid">No slashes, colons or leading dots.</string>
+    <string name="r2_models_name_note">This becomes the folder name and the id saved into every workflow that uses it.</string>
+    <string name="r2_models_status_in_use">in use  %1$d MB</string>
+    <string name="r2_models_incomplete">incomplete -- missing %1$s</string>
+
+    <!-- ===== Round 2: results screen ===== -->
+    <string name="r2_results_empty">Nothing kept yet.\n\nRun something, tap the picture to open it, and press the star. The graph that made it is kept too, so you can reopen the whole flow later — not just look at the picture.</string>
+    <string name="r2_results_summary">%1$d kept · %2$d MB · reopening a flow replaces what is on the canvas</string>
+    <string name="r2_results_forget_batch_body">All %1$d pictures and the flows that made them go, and this cannot be undone.\n\nCopies saved to the gallery are not affected.</string>
+    <string name="r2_results_forget_sel_body">Each picture and the flow that made it both go, and this cannot be undone.\n\nCopies saved to the gallery are not affected.</string>
+    <string name="r2_results_forget_one_body">The picture and the flow that made it both go, and this cannot be undone.\n\nA copy you saved to the gallery is not affected.</string>
+    <string name="r2_results_cd_kept">the kept picture</string>
+    <string name="r2_results_seed">seed %1$d</string>
+
+    <!-- ===== Round 2: main screen ===== -->
+    <string name="r2_main_running">running</string>
+    <string name="r2_main_not_reachable">not reachable</string>
+    <string name="r2_main_checking">checking</string>
+    <string name="r2_main_backend_row">backend  %1$s  :%2$d</string>
+    <string name="r2_main_model_row">model     %1$s</string>
+    <string name="r2_main_restart">restart backend</string>
+    <string name="r2_main_start">start backend</string>
+    <string name="r2_main_stop">stop</string>
+    <string name="r2_main_health">health</string>
+    <string name="r2_main_sample_graph">sample -&gt; decode  (the graph)</string>
+    <string name="r2_main_cache_check">executor: 4-pass cache check</string>
+    <string name="r2_main_open_canvas">open the canvas</string>
+    <string name="r2_main_models">models</string>
+    <string name="r2_main_unsaved_flow">unsaved flow</string>
+    <string name="r2_main_holding">holding %1$s</string>
+    <string name="r2_main_idle">%1$s (idle)</string>
+    <string name="r2_main_sampling">sampling  %1$d / %2$d</string>
+    <string name="r2_main_open_flow_body">The flow on the canvas has unsaved edits. Opening this one replaces it, and the edits are gone.</string>
+    <string name="r2_main_stub_resize">tier0: resize</string>
+    <string name="r2_main_stub_clipseg">tier1: clipseg</string>
+
+    <!-- ===== Round 2: canvas ===== -->
+    <string name="r2_canvas_zoom">zoom</string>
+    <string name="r2_canvas_pan">canvas movement</string>
+    <string name="r2_canvas_is_locked">%1$s is locked</string>
+    <string name="r2_canvas_lock">lock %1$s</string>
+    <string name="r2_canvas_double_tap_fit">double tap to fit</string>
+    <string name="r2_canvas_tap_close">tap to close</string>
+    <string name="r2_canvas_clear_saved">The node goes back to empty. You saved it to the gallery, so that copy stays.</string>
+    <string name="r2_canvas_clear_unsaved">The node goes back to empty. It has NOT been saved to the gallery, and Run will make a different one unless the seed is locked.</string>
+
+    <!-- ===== Round 2: node inspector ===== -->
+    <string name="r2_ins_small_picture">this picture is %1$s, smaller than the %2$s being asked for — the bars are padding, not a crop. Enlarging it instead would only make it soft.</string>
+    <string name="r2_ins_crop_hint_out">drag to move · pinch to zoom · out %1$s</string>
+    <string name="r2_ins_crop_hint_own">drag to move · pinch to zoom · the frame is the output, at its own size</string>
+    <string name="r2_ins_mask_no_source">no picture to paint on yet — wire an image into this node, and the picture appears here as soon as it can be worked out.</string>
+    <string name="r2_ins_crop_no_pick">No picture yet — choose one on the Load Image node this is wired to.</string>
+    <string name="r2_ins_crop_no_wire">Wire an image into this node to frame it.</string>
+    <string name="r2_ins_unknown_type">unknown node type — is its plugin loaded?</string>
+    <string name="r2_ins_no_widgets">this node has no widgets</string>
+    <string name="r2_ins_pick_up_to">pick up to %1$d</string>
+
+    <!-- ===== Round 2: run log ===== -->
+    <string name="r2_run_batching_seeds">Batching %1$d seeds</string>
+    <string name="r2_run_seed_locked">seed locked: %1$s</string>
+    <string name="r2_run_seed_random">seed: random</string>
+    <string name="r2_run_batching_param">Batching %1$d %2$s</string>
+    <string name="r2_run_done">done</string>
+    <string name="r2_run_running">running</string>
+    <string name="r2_run_ran">ran %1$s</string>
+    <string name="r2_run_cached">cached</string>
+    <string name="r2_run_failed">failed — %1$s</string>
+    <string name="r2_run_blocked">blocked — %1$s</string>
+
+    <!-- ===== Round 2: batch sweep ===== -->
+    <string name="r2_batch_not_range">not a list or a range — try 1, 2, 3 or 1..20 by 2</string>
+    <string name="r2_batch_one_value">one value is not a sweep — pick at least %1$d</string>
+    <string name="r2_batch_pick_min">pick at least %1$d</string>
+    <string name="r2_batch_too_many">%1$d values — at most %2$d per knob</string>
+    <string name="r2_batch_widen_step">, so widen the step</string>
+    <string name="r2_batch_max_axes">%1$d knobs can be swept at once — release one first</string>
+
+    <!-- ===== Round 2: upscaler display names & installer progress ===== -->
+    <string name="r2_upscaler_anime_label">Anime 4x</string>
+    <string name="r2_upscaler_anime_about">RealESRGAN x4plus anime 6B — for illustration and anime. Flattens skin and fabric texture on a photo.</string>
+    <string name="r2_upscaler_realistic_label">Realistic 4x</string>
+    <string name="r2_upscaler_realistic_about">4x UltraSharp V2 Lite — for photos and realistic renders.</string>
+    <string name="r2_progress_downloading">downloading %1$s</string>
+    <string name="r2_progress_extracting">extracting %1$s</string>
+
+    <!-- ===== Round 2: recommended workflow recipes ===== -->
+    <string name="r2_recipe_txt2img_label">Text to image</string>
+    <string name="r2_recipe_txt2img_about">A prompt in, a picture out. The one to start with.</string>
+    <string name="r2_recipe_img2img_label">Image to image</string>
+    <string name="r2_recipe_img2img_about">A photo from the gallery: frame it, then re-imagine it at the strength you choose.</string>
+    <string name="r2_recipe_inpaint_label">Inpaint — paint an area to redo</string>
+    <string name="r2_recipe_inpaint_about">Paint over part of a photo and only that part is re-imagined. Tap the Mask node to paint.</string>
 </resources>

@@ -403,11 +403,11 @@ fun nodeAt(boxes: List<NodeBox>, worldPoint: Pt): NodeBox? = boxes.lastOrNull { 
  * the string is what the UI shows them.
  */
 fun connectionError(from: PortRef, to: PortRef): String? = when {
-    from.nodeId == to.nodeId -> "a node cannot feed itself"
+    from.nodeId == to.nodeId -> "节点不能连接到自己"
     from.isInput == to.isInput ->
-        if (from.isInput) "both ends are inputs" else "both ends are outputs"
+        if (from.isInput) "两端都是输入口" else "两端都是输出口"
     from.port.type != to.port.type ->
-        "${from.port.type} does not fit a ${to.port.type} port"
+        "${from.port.type} 无法接入 ${to.port.type} 端口"
     else -> null
 }
 

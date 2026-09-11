@@ -39,6 +39,36 @@ object BackendProcess {
     val isRunning: Boolean get() = process?.isAlive == true
 
     /**
+     * ⭐⭐ The [ContextKey] the RUNNING process was launched with, or null when
+     * nothing is up.
+     *
+     * ⚠⚠ **Nothing recorded this before, and once resolution is a live knob
+     * nothing could reconstruct it.** Reconciliation used to be model-id-only —
+     * `selectModel` stopped the backend, and everything else assumed the
+     * running process matched `SelectedModel`. That assumption is exactly what
+     * breaks when `--patch` enters the launch line: a process started at 512²
+     * answers `/health` identically to one started at 768², and `/vae_decode`
+     * at the wrong size decodes plausible garbage rather than failing.
+     *
+     * ⇒ The launch key is the only thing that can tell them apart, so it is
+     * stored at the moment it is used and cleared when the process dies.
+     */
+    @Volatile
+    var launchedKey: ContextKey? = null
+        private set
+
+    /**
+     * True when the running process is an upscale-only server — no checkpoint.
+     *
+     * ⚠ Distinct from `launchedKey == null`, which also means "nothing is
+     * running": a caller has to tell "there is no backend" from "there is one,
+     * and it deliberately holds no model".
+     */
+    @Volatile
+    var upscalerServer: Boolean = false
+        private set
+
+    /**
      * Unpacks `assets/qnnlibs` into `filesDir/qnnruntime`.
      *
      * ⚠ Re-copies every time rather than skipping when the directory exists.
@@ -87,7 +117,34 @@ object BackendProcess {
      * poll `/health`. Reporting "started" as though it meant "ready" is how a
      * first request lands on a socket nobody is listening to yet.
      */
-    suspend fun start(context: Context, modelId: String, port: Int): Start =
+    suspend fun start(
+        context: Context,
+        modelId: String,
+        port: Int,
+        /**
+         * ⚠ The resolution third of the [ContextKey], bound HERE via `--patch`
+         * and nowhere else. Defaults to the selection so every existing caller
+         * keeps its meaning; a caller that cares passes the graph's own.
+         */
+        res: Res = SelectedModel.res,
+        /**
+         * ⭐⭐ Launch with **no diffusion model at all** — upstream's
+         * `--upscaler_mode`, "Upscale-only server, no diffusion model".
+         *
+         * ⚠⚠ For a graph that names no [ContextKey]: an upscale-only flow, or
+         * any all-app-side graph that still needs an endpoint. `/upscale`
+         * builds its own QNN context per request, so it needs a PROCESS but not
+         * a checkpoint — and launching the ordinary way kept a ~1.2 GB SD
+         * pipeline resident underneath it for nothing. That is both why the
+         * load readout named a model an upscale flow was not using, and the
+         * most likely reason an upscale on top of a resident pipeline died with
+         * a closed socket.
+         *
+         * ⚠ No `--model_dir`, so [launchedKey] stays null and the readout
+         * honestly reports nothing held.
+         */
+        upscalerOnly: Boolean = false,
+    ): Start =
         withContext(Dispatchers.IO) {
             if (isRunning) return@withContext Start.Failed("already running")
             try {
@@ -101,7 +158,9 @@ object BackendProcess {
                 }
 
                 val model = File(modelsDir(context), modelId)
-                if (!model.isDirectory) {
+                // ⚠ Only an ordinary launch needs a model directory. An
+                // upscale-only server has none by definition.
+                if (!upscalerOnly && !model.isDirectory) {
                     return@withContext Start.Failed(
                         "no model at ${model.absolutePath} -- push one there first"
                     )
@@ -117,10 +176,39 @@ object BackendProcess {
                 // client sends, so the mismatch renders the wrong size and
                 // reports success.
                 val spec = ModelCatalog.byId(modelId)
+
+                // ⚠⚠ **A missing patch is FATAL here, and that is a deliberate
+                // departure from both upstreams.** `local-dream`'s
+                // BackendService logs "Patch file not found … falling back to
+                // 512×512" and launches anyway; DreamUI inherits the same shape
+                // by passing null. In a node graph that silence is worse than
+                // it is in a single-shot app: the nodes are keyed at the size
+                // the user asked for, so `/vae_decode` would then be handed a
+                // latent of one size against graphs built for another --
+                // "decodes plausible garbage rather than failing", which is the
+                // exact wording main.cpp's own /vae_decode guard uses.
+                //
+                // ⇒ Refuse, and name the file, because the cause is always a
+                // model directory that shipped fewer patches than the
+                // catalogue assumed.
+                if (!upscalerOnly) spec?.missingPatch(context, res)?.let { name ->
+                    return@withContext Start.Failed(
+                        "$modelId cannot render $res -- ${File(model, name).absolutePath} is missing. " +
+                            "Re-download the model, or pick a size it ships a patch for"
+                    )
+                }
+                val patch = spec?.patchFor(context, res)
+
                 val cmd = buildList {
                     add(exe.absolutePath)
-                    add("--type"); add(ModelCatalog.backendTypeOf(modelId))
-                    add("--model_dir"); add(model.absolutePath)
+                    if (upscalerOnly) {
+                        // ⚠ QNN upscalers still need `--lib_dir`; everything
+                        // else about a diffusion launch is skipped.
+                        add("--upscaler_mode")
+                    } else {
+                        add("--type"); add(ModelCatalog.backendTypeOf(modelId))
+                        add("--model_dir"); add(model.absolutePath)
+                    }
                     add("--lib_dir"); add(runtime.absolutePath)
                     add("--port"); add(port.toString())
                     // ⚠⚠ Not a tuning knob. `--lowram` loads and releases each
@@ -130,7 +218,13 @@ object BackendProcess {
                     // run slower, it fails to allocate. ⚠ It is a property of
                     // the MODEL, so it is read off the catalogue entry beside
                     // the `--type` rather than decided here.
-                    if (spec?.lowram == true) add("--lowram")
+                    if (!upscalerOnly && spec?.lowram == true) add("--lowram")
+                    // ⭐ The third launch-bound field of the context key. Absent
+                    // for the 512 base (`unet.bin` already IS that graph) and
+                    // for every family that ships no patches; a patch that was
+                    // wanted and absent never reaches here -- it was refused
+                    // above.
+                    if (!upscalerOnly && patch != null) { add("--patch"); add(patch.absolutePath) }
                 }
                 val env = mapOf(
                     "LD_LIBRARY_PATH" to listOf(
@@ -149,6 +243,16 @@ object BackendProcess {
                     environment().putAll(env)
                 }.start()
                 process = p
+                // ⚠ Recorded from the values actually placed on the command
+                // line, not from `SelectedModel` -- the caller may have passed
+                // a graph's own key, and a launch key read back off a global is
+                // a launch key that can lie.
+                // ⚠ Null for an upscale-only process: it holds no checkpoint, so
+                // there is no context key and nothing for the readout to name.
+                launchedKey = if (upscalerOnly) null else ContextKey(
+                    ModelCatalog.backendTypeOf(modelId), modelId, res.width, res.height,
+                )
+                upscalerServer = upscalerOnly
                 monitor(p)
                 Start.Ok
             } catch (e: Exception) {
@@ -184,6 +288,11 @@ object BackendProcess {
             // worked, not as a crash. Nothing before pass D had ever called
             // stop() on a live backend, so the bug shipped in 0.5.
             val code = try { p.waitFor() } catch (e: Exception) { -1 }
+            // ⚠ A crashed backend has no launch key. Leaving the last one set
+            // would make [ensureBackend] believe the right process is up and
+            // skip the relaunch that is the whole point of recording it.
+            launchedKey = null
+            upscalerServer = false
             say("[exited $code]")
         }.apply { isDaemon = true; name = "backend-monitor" }.start()
     }
@@ -194,6 +303,8 @@ object BackendProcess {
             it.destroy()
         }
         process = null
+        launchedKey = null
+        upscalerServer = false
     }
 
     private fun say(line: String) {

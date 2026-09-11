@@ -91,6 +91,14 @@ interface OpHost {
         scheduler: String = ModelCatalog.DEFAULT_SCHEDULER,
         /** The conditioning the graph encoded. Required -- see [SampleNode]. */
         condHandle: String,
+        /**
+         * ⭐ `w:h` for a fixed-canvas family, or null for the plain square.
+         *
+         * ⚠ NOT a size. It asks the backend to paint a centered rectangle of
+         * that shape into the canvas it was launched with; the canvas, and so
+         * the context key, is unchanged (`ModelCatalog.aspectTarget`).
+         */
+        aspect: String? = null,
         onProgress: (Ops.Progress) -> Unit,
     ): Ops.Result<Ops.Sampled>
 
@@ -134,7 +142,8 @@ object BackendHost : OpHost {
     override suspend fun sample(
         steps: Int, cfg: Double, seed: Int,
         width: Int, height: Int, latentHandle: String?, denoise: Double,
-        scheduler: String, condHandle: String, onProgress: (Ops.Progress) -> Unit,
+        scheduler: String, condHandle: String, aspect: String?,
+        onProgress: (Ops.Progress) -> Unit,
         // ⚠ Named, not positional. Ops.sample grew preview arguments BEFORE
         // onProgress, and a positional forward silently bound the callback to
         // the wrong parameter -- caught here only because the types happened to
@@ -149,7 +158,8 @@ object BackendHost : OpHost {
         // and the cond TENSOR hash is what separates two renders.
         prompt = "", negative = "", steps = steps, cfg = cfg, seed = seed,
         width = width, height = height, latentHandle = latentHandle, denoise = denoise,
-        scheduler = scheduler, condHandle = condHandle, onProgress = onProgress,
+        scheduler = scheduler, condHandle = condHandle, aspect = aspect,
+        onProgress = onProgress,
     )
 
     override suspend fun vaeDecode(latentHandle: String, width: Int, height: Int) =
@@ -303,6 +313,19 @@ interface NodeType {
     val sizedByConsumer: Boolean get() = false
 
     /**
+     * ⭐⭐ Param names whose VALUES this node shows in its body on the canvas.
+     *
+     * ⚠ For a node whose whole content is text. A prompt node's ports carry a
+     * conditioning, so without this the canvas can only draw a box with a name
+     * and the only way to see what it says is to open the inspector.
+     *
+     * ⚠ Declared by the TYPE rather than matched by name, so a plugin node that
+     * holds prose gets the same treatment and one that merely has a `prompt`
+     * param does not.
+     */
+    val prose: List<String> get() = emptyList()
+
+    /**
      * The params as the node will actually be run with, defaults filled in.
      *
      * ⚠⚠ The CACHE KEY is computed from this, not from what the user typed. A
@@ -346,6 +369,85 @@ private fun Node.dbl(name: String): Double =
  * authoritative (`docs/MODELS.md` §4), and it is what the executor refuses two
  * of.
  */
+/**
+ * ⭐⭐ The aspect chip, declared **only by the families that can honour it**.
+ *
+ * ⚠⚠ Not a context-key knob and deliberately not locked: `aspect_ratio` is a
+ * REQUEST field that costs no relaunch (`ModelCatalog.aspectTarget`). Locking
+ * it would say the opposite of what is true, and putting it in the key would
+ * make a change of shape cost 2.3-5 s for nothing.
+ *
+ * ⚠ Absent on SD 1.5 rather than present-and-ignored: the backend only reads
+ * `aspect_ratio` for `sdxl`/`anima`, so on SD 1.5 this would be a knob that
+ * silently does nothing — and SD 1.5 has real resolutions instead.
+ *
+ * ⚠ A spread, so a family switch simply removes it. An `aspect` param already
+ * written stays in `node.params` and keeps being hashed into the cache key
+ * (that is `applyDefaults`' rule), which is correct: it is the value the node
+ * would use again if the user switched back.
+ */
+private fun aspectWidget(): Array<Widget> =
+    if (!SelectedModel.spec.fixedCanvas) emptyArray()
+    else arrayOf(
+        Widget(
+            "aspect", "string", ModelCatalog.DEFAULT_ASPECT,
+            options = ModelCatalog.ASPECTS,
+            hint = "this family renders a fixed ${SelectedModel.spec.native} and crops to shape -- " +
+                "it costs no reload, but a wider picture is not a bigger one",
+        )
+    )
+
+/**
+ * ⭐ Keep `aspect` identical on every node in the graph that declares it.
+ *
+ * ⚠⚠ **The sampler and the decoder must agree or the picture is wrong, and
+ * nothing would report it.** `/sample` uses the ratio to place the inpaint
+ * rectangle; the decode node uses it to cut that rectangle back out. Two
+ * different values crop the wrong region of a correctly rendered canvas — a
+ * plausible picture, off centre, with no error anywhere.
+ *
+ * ⇒ Written graph-wide from one choice, by WIDGET rather than by node type, for
+ * the same reason [modelRecipeRetarget] is: a plugin node declaring `aspect`
+ * gets the same treatment and one that does not is left alone.
+ */
+fun aspectRetarget(
+    graph: Graph,
+    types: Map<String, NodeType>,
+    aspect: String,
+): Map<String, Map<String, String>> {
+    val out = LinkedHashMap<String, Map<String, String>>()
+    for (n in graph.nodes) {
+        val t = types[n.type] ?: continue
+        if (t.widgets.none { it.name == "aspect" }) continue
+        if (n.params["aspect"] == aspect) continue
+        out[n.id] = mapOf("aspect" to aspect)
+    }
+    return out
+}
+
+/**
+ * ⭐⭐ The `aspect` this node should actually act on, or **null**.
+ *
+ * ⚠⚠ **A leftover `aspect` param is normal and must be ignored, not obeyed.**
+ * The chip is only DECLARED by a fixed-canvas family ([aspectWidget]), but a
+ * param already written stays in `node.params` when the graph is retargeted to
+ * SD 1.5 — that is `applyDefaults`' rule, and it is right, because switching
+ * back should restore the user's choice. What was wrong was ACTING on it:
+ * `RequestParser.hpp` only reads `aspect_ratio` for `sdxl`/`anima`, so on SD 1.5
+ * the backend rendered a full frame while the app cropped it anyway. Reported
+ * from the phone 2026-09-11 as a decode of **432x768** — 768 with a stale 9:16
+ * applied to it.
+ *
+ * ⚠ Keyed on the node's OWN `model`, never [SelectedModel]: the graph is
+ * authoritative (`docs/MODELS.md` §4), and this must agree with what the
+ * SAMPLER sent for the same node.
+ */
+fun nodeAspect(node: Node): String? {
+    val spec = ModelCatalog.byId(node.params["model"].orEmpty()) ?: return null
+    if (!spec.fixedCanvas) return null
+    return node.params["aspect"]
+}
+
 fun backendContextKey(node: Node) = ContextKey(
     ModelCatalog.backendTypeOf(node.str("model")),
     node.str("model"),
@@ -366,8 +468,30 @@ fun backendContextKey(node: Node) = ContextKey(
 fun contextKeyModels(graph: Graph, types: Map<String, NodeType>): List<String> =
     graph.nodes.mapNotNull { n ->
         val t = types[n.type] ?: return@mapNotNull null
-        if (t.widgets.none { it.name == "model" && it.locked == CONTEXT_KEY_LOCK }) null
+        if (t.widgets.none { it.name == "model" && it.contextKey }) null
         else n.params["model"]
+    }.distinct()
+
+/**
+ * ⭐ The resolutions this graph's backend nodes name, without duplicates.
+ *
+ * ⚠ The sibling of [contextKeyModels] and for the same reason: read off the
+ * WIDGET declaration rather than off `contextKey()`, so it cannot throw on a
+ * malformed param. It is asked on the path that OPENS a workflow, and a graph
+ * that will not run must still open.
+ *
+ * ⚠ A node missing either half contributes nothing rather than a half-formed
+ * size — `applyDefaults` will fill it in, and guessing here would make the
+ * adopted resolution depend on which node happened to be incomplete.
+ */
+fun contextKeyResolutions(graph: Graph, types: Map<String, NodeType>): List<Res> =
+    graph.nodes.mapNotNull { n ->
+        val t = types[n.type] ?: return@mapNotNull null
+        val keyed = t.widgets.filter { it.contextKey }.map { it.name }.toSet()
+        if ("width" !in keyed || "height" !in keyed) return@mapNotNull null
+        val w = n.params["width"]?.toIntOrNull() ?: return@mapNotNull null
+        val h = n.params["height"]?.toIntOrNull() ?: return@mapNotNull null
+        Res(w, h)
     }.distinct()
 
 /**
@@ -392,17 +516,24 @@ fun contextKeyRetarget(
     graph: Graph,
     types: Map<String, NodeType>,
     spec: ModelSpec,
+    /**
+     * ⚠ The size to write, defaulting to the model's native one. Passed
+     * explicitly when the user picks a resolution: that is the SAME act as
+     * picking a model -- both rewrite the whole graph's context key, which is
+     * what keeps §5.2's one-key-per-graph pin true while the size is editable.
+     */
+    res: Res = spec.native,
 ): Map<String, Map<String, String>> {
     val wanted = mapOf(
         "model" to spec.id,
-        "width" to spec.native.width.toString(),
-        "height" to spec.native.height.toString(),
+        "width" to res.width.toString(),
+        "height" to res.height.toString(),
     )
     val out = LinkedHashMap<String, Map<String, String>>()
     for (n in graph.nodes) {
         val t = types[n.type] ?: continue
-        val locked = t.widgets.filter { it.locked == CONTEXT_KEY_LOCK }.map { it.name }.toSet()
-        val change = wanted.filterKeys { it in locked && n.params[it] != wanted[it] }
+        val keyed = t.widgets.filter { it.contextKey }.map { it.name }.toSet()
+        val change = wanted.filterKeys { it in keyed && n.params[it] != wanted[it] }
         if (change.isNotEmpty()) out[n.id] = change
     }
     return out
@@ -500,7 +631,10 @@ object SampleNode : NodeType {
         // -- measured on device 2026-09-10. A checkpoint that says nothing gets
         // ModelCatalog.DEFAULT_STEPS/DEFAULT_CFG, which are these same numbers.
         Widget("steps", "int", SelectedModel.spec.steps.toString(), 1.0, 50.0),
-        Widget("cfg", "float", SelectedModel.spec.cfg.toString(), 1.0, 20.0),
+        // ⚠ `fine`: the slider weights its travel toward 1.0 and keeps two
+        // decimals there, because a distilled checkpoint lives between 1.0 and
+        // 2.0 and a linear 1..20 track gives that band 5% of its length.
+        Widget("cfg", "float", SelectedModel.spec.cfg.toString(), 1.0, 20.0, fine = true),
         // ⭐ 0 rolls a new seed on every Run. A fixed seed is what makes a
         // render reproducible; 0 is what makes Run mean "give me another one"
         // instead of returning the cached picture unchanged.
@@ -531,9 +665,16 @@ object SampleNode : NodeType {
         // knobs: changing either costs a backend relaunch, and v1 pins one key
         // for the whole graph. They are listed so the inspector can show them,
         // and the executor still refuses a graph that needs two.
-        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK),
-        Widget("width", "int", SelectedModel.spec.native.width.toString(), locked = CONTEXT_KEY_LOCK),
-        Widget("height", "int", SelectedModel.spec.native.height.toString(), locked = CONTEXT_KEY_LOCK),
+        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK, contextKey = true),
+        *aspectWidget(),
+        // ⚠⚠ contextKey but NOT locked: a size is chosen ON a node now, and
+        // choosing it rewrites every other backend node in the graph
+        // ([contextKeyRetarget]) rather than leaving two keys behind. The
+        // inspector replaces this pair with ONE chip row of the sizes the
+        // model's patches actually make reachable -- a free number field would
+        // let a user type 640, which has no patch and fails at launch.
+        Widget("width", "int", SelectedModel.res.width.toString(), contextKey = true),
+        Widget("height", "int", SelectedModel.res.height.toString(), contextKey = true),
     )
 
     override fun contextKey(node: Node) = backendContextKey(node)
@@ -571,6 +712,12 @@ object SampleNode : NodeType {
             denoise = node.dbl("denoise"),
             scheduler = node.str("scheduler"),
             condHandle = cond.id,
+            // ⚠ Only a ratio that actually crops is sent. `1:1` (and anything
+            // malformed) resolves to null, which is exactly what the backend
+            // does with equal terms -- so the two agree on "no aspect" without
+            // the app having to know that.
+            aspect = nodeAspect(node)
+                ?.takeIf { ModelCatalog.aspectTarget(it, Res(node.int("width"), node.int("height"))) != null },
             // ⚠ No previews from the executor yet. They cost a VAE decode per
             // stride (measured by the `preview` op), so turning them on is a
             // per-node choice the canvas makes, not a default.
@@ -593,13 +740,41 @@ object VaeDecodeNode : NodeType {
     override val outputs = listOf(Port("image", "IMAGE"))
     override val category = "latent"
     override val widgets get() = listOf(
-        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK),
-        Widget("width", "int", SelectedModel.spec.native.width.toString(), locked = CONTEXT_KEY_LOCK),
-        Widget("height", "int", SelectedModel.spec.native.height.toString(), locked = CONTEXT_KEY_LOCK),
+        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK, contextKey = true),
+        // ⚠⚠ contextKey but NOT locked: a size is chosen ON a node now, and
+        // choosing it rewrites every other backend node in the graph
+        // ([contextKeyRetarget]) rather than leaving two keys behind. The
+        // inspector replaces this pair with ONE chip row of the sizes the
+        // model's patches actually make reachable -- a free number field would
+        // let a user type 640, which has no patch and fails at launch.
+        Widget("width", "int", SelectedModel.res.width.toString(), contextKey = true),
+        Widget("height", "int", SelectedModel.res.height.toString(), contextKey = true),
+        // ⚠ Declared here as well as on the sampler because THIS node is where
+        // the crop happens -- see [run]. [aspectRetarget] keeps the two equal.
+        *aspectWidget(),
     )
 
     override fun contextKey(node: Node) = backendContextKey(node)
 
+    /**
+     * ⚠⚠ **The aspect crop that `/generate` does and the op path does not.**
+     *
+     * `opSample` sets `return_latent = true`, and `generate()` returns on that
+     * flag (`Pipeline.hpp`) **before** `decodeToPixels` and therefore before its
+     * own `needsAspectCrop` / `cropCenter` at the tail. So on the monolithic
+     * path a 16:9 request yields a 1024x576 picture, and on the decomposed node
+     * path the identical request yields the target rectangle **letterboxed
+     * inside a full 1024² frame** — sampled correctly, never cut out.
+     *
+     * ⇒ Reattached here, in Kotlin, on the decoded bitmap. App-side by choice:
+     * no rebuild, no patch to regenerate, and it cannot break the shared C++
+     * that `/generate` still depends on.
+     *
+     * ⚠ Centred, because the backend centres the rectangle it paints
+     * (`req.width - paint_w) / 2`). Off-by-one here is an off-centre picture
+     * with nothing to report it, which is why [ModelCatalog.aspectTarget]
+     * mirrors the C++ sum exactly rather than approximating the ratio.
+     */
     override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
         val latent = inputs["latent"]
             ?: throw IllegalArgumentException("node \"${node.id}\": input \"latent\" is not connected")
@@ -612,15 +787,37 @@ object VaeDecodeNode : NodeType {
         val h = node.int("height")
         return when (val r = ctx.host.vaeDecode(latent.id, w, h)) {
             is Ops.Result.Ok -> {
-                val bmp = ctx.images.decode(r.value.png)
+                val full = ctx.images.decode(r.value.png)
                     ?: throw OpFailure("vae_decode", 200,
                         "returned ${r.value.png.size} B that would not decode as an image")
-                // ⭐ The backend already hashed these pixels, so its rgb_sha IS
-                // the content address -- no reason to hash a megabyte again,
-                // and using the same id everywhere means a decode and a
-                // re-decode are interchangeable to everything downstream.
-                val id = ctx.images.put(bmp, png = r.value.png, id = "img_" + r.value.rgbSha)
-                Value.Image(id, bmp.width, bmp.height)
+                val target = nodeAspect(node)
+                    ?.let { ModelCatalog.aspectTarget(it, Res(w, h)) }
+                if (target == null || (target.width == full.width && target.height == full.height)) {
+                    // ⭐ The backend already hashed these pixels, so its rgb_sha
+                    // IS the content address -- no reason to hash a megabyte
+                    // again, and using the same id everywhere means a decode and
+                    // a re-decode are interchangeable to everything downstream.
+                    val id = ctx.images.put(full, png = r.value.png, id = "img_" + r.value.rgbSha)
+                    return Value.Image(id, full.width, full.height)
+                }
+                // ⚠ Refuse rather than clamp: a target bigger than the canvas
+                // means [ModelCatalog.aspectTarget] and the backend disagree,
+                // and silently shrinking the crop would hide exactly the drift
+                // that comment warns about.
+                if (target.width > full.width || target.height > full.height) {
+                    throw OpFailure("vae_decode", 200,
+                        "aspect ${nodeAspect(node)} wants ${target.width}x${target.height} " +
+                            "out of a ${full.width}x${full.height} canvas")
+                }
+                val cropped = cropCenter(full, target.width, target.height)
+                // ⚠⚠ A DIFFERENT id, derived from the backend's hash plus the
+                // crop. Reusing `rgb_sha` would address the uncropped frame,
+                // so a graph that changed only its aspect would serve the
+                // previous shape's pixels out of the image store.
+                val id = ctx.images.put(
+                    cropped, id = "img_" + r.value.rgbSha + "_${target.width}x${target.height}",
+                )
+                Value.Image(id, cropped.width, cropped.height)
             }
             is Ops.Result.Err -> throw OpFailure("vae_decode", r.code, r.body)
         }
@@ -726,6 +923,10 @@ object LoadImageNode : NodeType {
  * canvas can SHOW conditioning as a wire, not that it saves time.
  */
 object TextEncodeNode : NodeType {
+    // ⚠ Both prompts, in the order they are read. The negative is second
+    // because it is the one people check rather than compose.
+    override val prose = listOf("prompt", "negative")
+
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
     override val name = "sd.clip_encode"
@@ -777,9 +978,15 @@ object VaeEncodeNode : NodeType {
     override val outputs = listOf(Port("latent", "LATENT"))
     override val category = "latent"
     override val widgets get() = listOf(
-        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK),
-        Widget("width", "int", SelectedModel.spec.native.width.toString(), locked = CONTEXT_KEY_LOCK),
-        Widget("height", "int", SelectedModel.spec.native.height.toString(), locked = CONTEXT_KEY_LOCK),
+        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK, contextKey = true),
+        // ⚠⚠ contextKey but NOT locked: a size is chosen ON a node now, and
+        // choosing it rewrites every other backend node in the graph
+        // ([contextKeyRetarget]) rather than leaving two keys behind. The
+        // inspector replaces this pair with ONE chip row of the sizes the
+        // model's patches actually make reachable -- a free number field would
+        // let a user type 640, which has no patch and fails at launch.
+        Widget("width", "int", SelectedModel.res.width.toString(), contextKey = true),
+        Widget("height", "int", SelectedModel.res.height.toString(), contextKey = true),
         // ⚠ A VAE latent is mean + std * noise, so the seed is what makes the
         // same image encode to the same latent -- and therefore what lets the
         // executor cache anything downstream of it.
@@ -1050,6 +1257,29 @@ object CropNode : NodeType {
 }
 
 /**
+ * ⭐ Cut a [w]x[h] rectangle from the middle of [src].
+ *
+ * ⚠⚠ **The same rectangle `Pipeline.hpp`'s `cropCenter` cuts**, and the offset
+ * arithmetic is deliberately the C++'s: integer `(full - target) / 2`, which
+ * truncates. Rounding the other way would shift the crop a pixel on every odd
+ * difference — invisible in a test that checks only the SIZE, and visible as a
+ * one-pixel drift against `/generate`'s output for the same request.
+ *
+ * ⚠ No scaling: this is a cut, not a resize. `createBitmap` with an origin is
+ * the cheap path — it shares the source's pixel buffer where it can.
+ */
+fun cropCenter(
+    src: android.graphics.Bitmap,
+    w: Int,
+    h: Int,
+): android.graphics.Bitmap {
+    if (w == src.width && h == src.height) return src
+    val x = (src.width - w) / 2
+    val y = (src.height - h) / 2
+    return android.graphics.Bitmap.createBitmap(src, x, y, w, h)
+}
+
+/**
  * A small copy of [src], for the blurred padding.
  *
  * ⚠ Shared with [CropEditor] through the same constant so the node and its own
@@ -1204,9 +1434,15 @@ object LatentBlendNode : NodeType {
         // ⚠ The context key, exactly as on the sampler: a blend is done by the
         // backend against the model it was launched with, so it cannot be the
         // one node in a graph that names a different one.
-        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK),
-        Widget("width", "int", SelectedModel.spec.native.width.toString(), locked = CONTEXT_KEY_LOCK),
-        Widget("height", "int", SelectedModel.spec.native.height.toString(), locked = CONTEXT_KEY_LOCK),
+        Widget("model", "string", SelectedModel.id, locked = CONTEXT_KEY_LOCK, contextKey = true),
+        // ⚠⚠ contextKey but NOT locked: a size is chosen ON a node now, and
+        // choosing it rewrites every other backend node in the graph
+        // ([contextKeyRetarget]) rather than leaving two keys behind. The
+        // inspector replaces this pair with ONE chip row of the sizes the
+        // model's patches actually make reachable -- a free number field would
+        // let a user type 640, which has no patch and fails at launch.
+        Widget("width", "int", SelectedModel.res.width.toString(), contextKey = true),
+        Widget("height", "int", SelectedModel.res.height.toString(), contextKey = true),
     )
 
     override fun contextKey(node: Node) = backendContextKey(node)
@@ -1279,15 +1515,24 @@ object UpscaleNode : NodeType {
     const val UPSCALER = "upscaler"
 
     override val widgets get() = listOf(
-        // ⚠⚠ The OPTIONS are the installed set, read at call time, so the
-        // dropdown cannot offer a file that is not on the device. ⚠ The list can
-        // legitimately be EMPTY — that is a fresh install with no upscaler
-        // fetched, and [run] says so by name rather than handing the backend a
-        // path of "".
+        // ⚠⚠ The OPTIONS are the INSTALLED set, so the dropdown cannot offer a
+        // file that is not on the device -- and the DEFAULT is the first of
+        // them.
+        //
+        // ⚠⚠ This comment used to say exactly that while the code read
+        // `ALL.first()` and `ALL.map`, which are not the same thing: on a phone
+        // with only the realistic upscaler fetched, a freshly dropped node was
+        // pre-set to `upscaler_anime` and failed the instant it ran. The list is
+        // a cached disk scan ([UpscalerCatalog.installedIds]) because a widgets
+        // getter has no Context.
+        //
+        // ⚠ Falls back to [UpscalerCatalog.ALL] when nothing is installed --
+        // that is a fresh install, and a control with no options at all says
+        // less than one whose [run] names what to download.
         Widget(
             UPSCALER, "string",
-            UpscalerCatalog.ALL.first().id,
-            options = UpscalerCatalog.ALL.map { it.id },
+            (UpscalerCatalog.installedIds.firstOrNull() ?: UpscalerCatalog.ALL.first().id),
+            options = UpscalerCatalog.installedIds.ifEmpty { UpscalerCatalog.ALL.map { it.id } },
             hint = "使用哪个放大器权重——请先在模型页安装",
         ),
     )

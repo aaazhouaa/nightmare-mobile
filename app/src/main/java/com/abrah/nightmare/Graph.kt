@@ -79,9 +79,22 @@ sealed interface Value {
  */
 const val V1_MODEL = "absolutereality"
 
-/** Shared reason text, so all three context-key knobs explain themselves alike. */
+/**
+ * Why `model` cannot be typed into.
+ *
+ * ⚠⚠ **It used to lock all three context-key knobs; now it locks only this
+ * one.** `width`/`height` became editable on the node (they are still
+ * [Widget.contextKey], and choosing one rewrites the whole graph), so a reason
+ * that said "bound when the backend launches" on a knob the user can change
+ * would be describing the wrong thing. The model is still not editable here:
+ * changing it means a different catalogue entry, a different download, and a
+ * different set of reachable sizes.
+ *
+ * ⚠ It names WHERE to change it. A lock with no way out is the state
+ * `contextKeyRetarget` was written to rescue people from.
+ */
 const val CONTEXT_KEY_LOCK =
-    "在后端启动时绑定——v1 为整张图固定一个上下文"
+    "在后端启动时绑定——打开模型页可更换 checkpoint"
 
 /**
  * `(type, model, resolution)` -- the three things bound at BACKEND LAUNCH
@@ -155,6 +168,39 @@ data class Widget(
      * not be the last: a plugin manifest can declare one too.
      */
     val options: List<String>? = null,
+    /**
+     * ⭐⭐ This knob is one third of the [ContextKey] — it is bound at BACKEND
+     * LAUNCH, not sent with a request.
+     *
+     * ⚠⚠ **Separate from [locked], and it has to be.** The two used to be the
+     * same thing: `contextKeyRetarget` found the knobs to rewrite by filtering
+     * on `locked == CONTEXT_KEY_LOCK`, which was exact only while every
+     * context-key knob happened to be uneditable. `width`/`height` are editable
+     * now and `model` is not, so a single flag can no longer mean both "the
+     * user may not touch this" and "this must be rewritten graph-wide".
+     *
+     * ⚠ Declared by the WIDGET rather than matched by name, so a plugin node
+     * that declares its own context-key knobs is retargeted too, and a node
+     * that merely happens to carry a param called `width` is not.
+     */
+    val contextKey: Boolean = false,
+    /**
+     * ⭐⭐ This knob needs PRECISION at the bottom of its range, so the slider
+     * weights its travel there and keeps two decimals there.
+     *
+     * ⚠⚠ Written for `cfg`, and the reason is distilled checkpoints: LCM,
+     * Turbo and Lightning models live between 1.0 and 2.0, where the difference
+     * between 1.02 and 1.2 is visible and the difference between 7 and 8 is
+     * not. A plain linear 1..20 slider gives that whole band **5% of the
+     * track** — about 18dp on a phone — so the values that matter most are the
+     * ones a finger cannot land on. Asked for from the phone, 2026-09-11
+     * ("add decimal cfg i.e. 1.002, 1.02").
+     *
+     * ⚠ Opt-in rather than inferred from the range: `denoise` is 0..1 and
+     * wants its travel spread evenly, and guessing from the numbers would have
+     * curved it too.
+     */
+    val fine: Boolean = false,
 ) {
     /** True for the kinds that want a numeric keyboard rather than a text one. */
     val numeric: Boolean get() = type == "int" || type == "float"

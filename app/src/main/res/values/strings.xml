@@ -84,11 +84,12 @@
     <string name="community_experimental">Experimental. The plugin format can still change between versions, and there is no validation gate on an imported pack yet, so import packs the way you would run any other code you did not write.</string>
 
     <!-- Flows. -->
-    <string name="flows_import">Import</string>
-    <string name="flows_import_note">a flow someone sent you (.json), or a pack of nodes (.zip)</string>
-    <string name="flows_import_flow">Flow</string>
-    <string name="flows_import_pack">Nodes</string>
-    <string name="flows_import_warning">⚠ a pack runs its own code — import ones you trust</string>
+    <string name="flows_import">Import a flow</string>
+    <string name="flows_import_note">A .json flow someone shared. It opens on the canvas.</string>
+    <string name="flows_import_flow">Import</string>
+    <string name="flows_import_pack">Import a node pack</string>
+    <string name="pack_import_note">A .zip of JavaScript nodes. They appear in the palette beside the built-ins.</string>
+    <string name="flows_import_warning">⚠ A pack runs its own code. Import only ones you trust.</string>
     <string name="flows_recommended">Recommended</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
@@ -110,6 +111,18 @@
     <string name="remove">Remove</string>
     <string name="use">Use</string>
     <string name="in_use">In use</string>
+    <string name="rename_node">Node name</string>
+    <string name="run_starting">starting…</string>
+    <string name="cancel_run">Cancel</string>
+    <string name="importing_model">Importing %1$s…</string>
+    <string name="importing_working">reading the archive</string>
+    <string name="karras_sigmas">Karras sigmas</string>
+    <string name="karras_unavailable">Karras sigmas (not available for LCM)</string>
+    <!-- The output shape controls on the model in use. -->
+    <string name="resolution">Resolution</string>
+    <string name="shape">Shape</string>
+    <string name="resolution_reloads">A different size is a different graph — the backend reloads on the next Run.</string>
+    <string name="shape_is_free">This model renders one size and crops to shape. No reload.</string>
     <string name="unsupported">Unsupported</string>
     <string name="installed_mb">installed · %1$d MB</string>
     <string name="not_installed_mb">not installed  %1$d MB download</string>
@@ -433,4 +446,9 @@
     <string name="r2_recipe_img2img_about">A photo from the gallery: frame it, then re-imagine it at the strength you choose.</string>
     <string name="r2_recipe_inpaint_label">Inpaint — paint an area to redo</string>
     <string name="r2_recipe_inpaint_about">Paint over part of a photo and only that part is re-imagined. Tap the Mask node to paint.</string>
+
+    <plurals name="kept_in_results">
+        <item quantity="one">%1$d picture saved to Results</item>
+        <item quantity="other">%1$d pictures saved to Results</item>
+    </plurals>
 </resources>

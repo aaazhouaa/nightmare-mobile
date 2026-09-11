@@ -362,7 +362,15 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // ⚠ Only when the backend is actually UP. A checkpoint sitting on disk
         // is not "resident", and saying so would make the readout describe the
         // catalogue rather than the machine.
-        val spec = if (backend == BackendState.UP) ModelCatalog.byId(SelectedModel.id) else null
+        //
+        // ⚠⚠ **Read off the LAUNCH KEY, not off [SelectedModel].** The selection
+        // is what the next graph would use; the launch key is what this process
+        // actually has in memory, and they differ constantly — an upscale-only
+        // graph holds no checkpoint at all, yet the readout named the t2i model
+        // that merely happened to be selected. Reported from the phone
+        // 2026-09-11. A process launched in `--upscaler_mode` has no model, so
+        // `launchedKey` is null and the line correctly says nothing is held.
+        val spec = BackendProcess.launchedKey?.model?.let { ModelCatalog.byId(it) }
         load = CanvasLoad(
             ramFreeBytes = mi.availMem,
             ramTotalBytes = mi.totalMem,
@@ -601,6 +609,25 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Non-null while an install is running; the id being fetched. */
     private var installing by mutableStateOf<String?>(null)
+
+    /**
+     * ⭐⭐ The import in flight, for the banner that says one is happening.
+     *
+     * ⚠⚠ **Exposed separately because the model ROW cannot show it.** A row's
+     * progress is matched as `spec.id == installing`, and during an import
+     * there IS no spec: the directory is still being written and
+     * [CustomModels.scan] has not seen it, so the row the progress belongs to
+     * does not exist until the work is already finished. The bar was plumbed
+     * end to end and rendered nowhere — reported from the phone 2026-09-11 as
+     * "no idea if importing is in progress".
+     *
+     * ⚠ A DOWNLOAD is unaffected: its row is a catalogue entry that exists
+     * before, during and after, which is exactly why this was never noticed.
+     */
+    val importing: String? get() = installing?.takeIf { ModelCatalog.byId(it) == null }
+
+    /** The phase/bytes of [importing], or null. */
+    val importProgress: ModelInstaller.Progress? get() = if (importing != null) installProgress else null
     @Volatile private var cancelInstall = false
     private var installProgress by mutableStateOf<ModelInstaller.Progress?>(null)
 
@@ -614,6 +641,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // ⚠ The upscalers ride along: this is the app's "re-read the disk"
         // entry point and a second one would be a second thing to forget.
         refreshUpscalers()
+        // ⚠ …and so does the reachable-size cache, for exactly that reason. A
+        // download that has just landed brings six patch files with it, and the
+        // size chips read a cache rather than the disk ([SelectedModel.refresh]).
+        SelectedModel.refresh(ctx)
         // ⚠⚠ Rescan first. A custom model directory is normally copied onto the
         // phone WHILE the app is running (adb, a file manager, a share), so the
         // catalogue read on the next line is stale by construction unless this
@@ -639,6 +670,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+
 
     /**
      * Imports a picked zip as a custom checkpoint, then selects it.
@@ -777,6 +809,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshUpscalers() {
         val ctx = getApplication<Application>()
+        // ⚠ The node's dropdown reads a cache, not the disk -- refresh it here,
+        // where the disk is being read anyway, or a just-downloaded upscaler
+        // stays invisible to every upscale node until the app restarts.
+        UpscalerCatalog.refresh(ctx)
         upscalerRows = UpscalerCatalog.ALL.map { spec ->
             val here = spec.installed(ctx)
             com.abrah.nightmare.ui.UpscalerRow(
@@ -893,11 +929,104 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // same reason when a graph is replaced wholesale; a model switch
         // rewrites every backend node's size, which is the same kind of event.
         previewSigs.clear()
-        retargetCanvas(spec)
+        retargetCanvas(spec, SelectedModel.res)
         if (backend == BackendState.UP) {
             say("  stopping the backend -- it was launched for the previous model")
             stopBackend()
         }
+        refreshModels()
+    }
+
+    /**
+     * ⭐⭐ Change the render size for the WHOLE graph.
+     *
+     * ⚠⚠ **The same act as choosing a model, and it must do the same things.**
+     * `--patch` binds at backend launch beside `--type` and `--model_dir`
+     * (`docs/ARCHITECTURE.md` §4), so a resolution is a third of the context
+     * key, not a knob: it rewrites every backend node, it invalidates the
+     * running process, and it costs a relaunch of 2.3-5 s on the next Run.
+     * Doing less than [selectModel] does here would leave the graph and the
+     * process disagreeing about the size, which decodes plausible garbage
+     * rather than failing.
+     *
+     * ⚠⚠ `previewSigs.clear()` is NOT tidiness. DreamUI hit this on its first
+     * non-square inpaint: cropping at one resolution and generating at another
+     * left the painter holding a bitmap of the OLD size, which then went to a
+     * backend that sizes its buffers from the request and **died with SIGSEGV
+     * writing past them** (`GenerateViewModel.setResolution`). Every derived
+     * picture on this canvas is the wrong shape the instant this returns, and a
+     * signature is only rechecked when a node's params changed — which is a
+     * race against the derivation that changes them.
+     */
+    fun selectResolution(res: Res) {
+        val ctx = getApplication<Application>()
+        val spec = SelectedModel.spec
+        // ⚠⚠ **Not `if (res == SelectedModel.res) return`.** That guard was right
+        // while the only way to choose a size was the model card, where the
+        // selection WAS the state. The knob is on a node now, and the graph is
+        // authoritative (`docs/MODELS.md` §4) -- so a workflow opened at 768x512
+        // while the selection says 512x512 must still be retargetable back to
+        // 512x512, and an early return keyed on the selection alone would
+        // silently refuse exactly that. ⇒ Bail only when the selection AND every
+        // node already agree, which is the real "nothing to do".
+        val graphAgrees = runCatching {
+            contextKeyRetarget(
+                canvas.workflow.graph, typesFor(canvas.workflow.graph), spec, res,
+            ).isEmpty()
+        }.getOrDefault(false)
+        if (res == SelectedModel.res && graphAgrees) return
+        val ok = spec.availableResolutions(ctx)
+        if (res !in ok) {
+            say(
+                "${spec.label} cannot render $res -- it serves ${ok.joinToString(", ")}",
+                bad = true,
+            )
+            return
+        }
+        SelectedModel.setRes(ctx, res)
+        say("resolution set to $res")
+        // ⚠ The last run was at the OLD size, so its timings and its "done" no
+        // longer describe this canvas -- exactly as after a model switch.
+        clearRunLog()
+        previewSigs.clear()
+        retargetCanvas(spec, res)
+        if (backend == BackendState.UP) {
+            say("  stopping the backend -- it was launched at ${BackendProcess.launchedKey?.let { "${it.width}x${it.height}" } ?: "another size"}")
+            stopBackend()
+        }
+        // ⚠ The chip that was tapped reads its selected state off this list.
+        refreshModels()
+    }
+
+    /**
+     * ⭐ Change the output shape on a fixed-canvas family.
+     *
+     * ⚠⚠ Deliberately **not** [selectResolution], though the user experiences
+     * both as "what shape is my picture". `aspect_ratio` is a request field: it
+     * paints a centered rectangle into the 1024² canvas the process is already
+     * running (`ModelCatalog.aspectTarget`), so it costs **no relaunch**, does
+     * not touch the context key, and must not stop the backend. Conflating the
+     * two would spend 2.3-5 s to change a crop.
+     *
+     * ⚠ Previews still go: every derived picture downstream is a different
+     * shape now, which is the same staleness a resolution change causes.
+     */
+    fun selectAspect(aspect: String) {
+        val spec = SelectedModel.spec
+        if (!spec.fixedCanvas) {
+            say("${spec.label} renders real resolutions -- pick one of those instead", bad = true)
+            return
+        }
+        val graph = canvas.workflow.graph
+        val changes = aspectRetarget(graph, typesFor(graph), aspect)
+        if (changes.isEmpty()) return
+        editCanvas { s -> changes.entries.fold(s) { acc, (id, p) -> acc.setParams(id, p) } }
+        previewSigs.clear()
+        val target = ModelCatalog.aspectTarget(aspect, spec.native)
+        say("aspect $aspect -- ${target ?: spec.native} on ${changes.size} node" +
+            (if (changes.size == 1) "" else "s"))
+        // ⚠ Same reason as [selectResolution]: the chip's selected state is
+        // read back off `modelRows`, which reads it off the graph.
         refreshModels()
     }
 
@@ -932,20 +1061,44 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // for reasons that have nothing to do with the model. Losing the user's
         // restored graph to a question about which checkpoint it wants would be
         // far worse than leaving the selection where it was.
-        val named = try {
-            contextKeyModels(w.graph, typesFor(w.graph))
+        val types = try {
+            typesFor(w.graph)
         } catch (e: Throwable) {
             return
         }
-        val id = named.singleOrNull() ?: return
-        if (id == SelectedModel.id) return
-        val spec = ModelCatalog.byId(id) ?: return
+        val named = contextKeyModels(w.graph, types)
+        // ⚠⚠ **The resolution is adopted too, and on its own.** A saved graph
+        // stores `width`/`height` on every backend node, so opening one at 768²
+        // while 512² is selected would launch the backend with the wrong
+        // `--patch` and render the user's graph against it -- the same silent
+        // wrong-size failure adopting the MODEL exists to prevent, and it does
+        // not need the model to differ to happen.
+        val id = named.singleOrNull()
+        val res = contextKeyResolutions(w.graph, types).singleOrNull()
         val ctx = getApplication<Application>()
-        SelectedModel.set(ctx, id)
-        say("this workflow uses ${spec.label} -- selected it")
+        val spec = id?.let { ModelCatalog.byId(it) }
+        val modelMoved = spec != null && id != SelectedModel.id
+        // ⚠ Read against the graph's model, not the selected one -- on a model
+        // switch the sizes that are legal change with it.
+        val resMoved = res != null && res != SelectedModel.res &&
+            res in (spec ?: SelectedModel.spec).availableResolutions(ctx)
+        if (!modelMoved && !resMoved) return
+
+        if (modelMoved) {
+            SelectedModel.set(ctx, id!!)
+            say("this workflow uses ${spec!!.label} -- selected it")
+        }
+        // ⚠ AFTER the model, because [SelectedModel.set] re-resolves the
+        // resolution per model and would otherwise overwrite this.
+        if (resMoved) {
+            SelectedModel.setRes(ctx, res!!)
+            say("this workflow renders at $res -- selected it")
+        }
         clearRunLog()
+        // ⚠ Derived pictures are the previous size, exactly as in [selectModel].
+        previewSigs.clear()
         if (backend == BackendState.UP) {
-            say("  stopping the backend -- it was launched for the previous model")
+            say("  stopping the backend -- it was launched for the previous context")
             stopBackend()
         }
         refreshModels()
@@ -971,10 +1124,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * the autosave, the derived crop sizes and the preview refresh for free. A
      * captured snapshot here would revert whatever the user did since.
      */
-    private fun retargetCanvas(spec: ModelSpec) {
+    private fun retargetCanvas(spec: ModelSpec, res: Res = spec.native) {
         val graph = canvas.workflow.graph
         val types = typesFor(graph)
-        val changes = contextKeyRetarget(graph, types, spec)
+        val changes = contextKeyRetarget(graph, types, spec, res)
         if (changes.isNotEmpty()) {
             editCanvas { s -> changes.entries.fold(s) { acc, (id, p) -> acc.setParams(id, p) } }
             say("  retargeted ${changes.size} node${if (changes.size == 1) "" else "s"} on the canvas")
@@ -1357,6 +1510,45 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * flow that makes the seed-1 one. The stored flow is the whole reason
      * Results is more than a gallery.
      */
+    /**
+     * ⭐⭐ Is this picture already kept? Drives the star's filled/outline state.
+     *
+     * ⚠ Matched on [Result.imageId], a content address, so the SAME pixels
+     * re-rendered from a cache still read as kept.
+     */
+    fun isKept(imageId: String): Boolean = kept.any { it.imageId == imageId }
+
+    /**
+     * ⭐⭐ Star, or UN-star. A second tap removes what the first kept.
+     *
+     * ⚠⚠ The star was one-way: tapping it again filed a SECOND copy of the
+     * same picture, so a mis-tap could only be undone by going to Results and
+     * deleting it. Asked for from the phone, 2026-09-11.
+     *
+     * ⚠ Removes every result naming this image, not just the first — a
+     * duplicate kept before this existed should not survive the un-star and
+     * leave the state looking unchanged.
+     */
+    fun toggleKeepResult(
+        imageId: String,
+        flow: com.abrah.nightmare.canvas.Workflow? = null,
+        batchId: String? = null,
+        batchLabel: String = "",
+    ) {
+        val existing = kept.filter { it.imageId == imageId }
+        if (existing.isEmpty()) {
+            keepResult(imageId, flow, batchId, batchLabel)
+            return
+        }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            existing.forEach { runCatching { results.delete(it.id) } }
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                say("un-starred")
+                refreshResults()
+            }
+        }
+    }
+
     fun keepResult(
         imageId: String,
         flow: com.abrah.nightmare.canvas.Workflow? = null,
@@ -1380,7 +1572,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val r = runCatching {
                 results.keep(
-                    bmp, workflow, types, seed, SelectedModel.spec.label, prompt,
+                    bmp, imageId, workflow, types, seed, SelectedModel.spec.label, prompt,
                     batchId, batchLabel,
                 )
             }
@@ -2178,8 +2370,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         runLog = runLog.copy(
             startedAtMs = 0L, now = null, step = null,
             totalMs = android.os.SystemClock.elapsedRealtime() - started,
+            // ⭐⭐ Every run was kept, and the canvas shows only the LAST one —
+            // so say where the other seven went and offer to open it.
+            keptCount = done,
         )
-        say("batch: $done of ${combos.size} done")
+        say("batch: $done of ${combos.size} done -- all $done are in Results")
         refreshResults()
     }
 
@@ -2227,8 +2422,16 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // screen to launch it -- which is what the app required until now.
         // ⚠ Shared with the headless op via HarnessOps, so the two front ends
         // cannot drift on the one path a user actually takes.
-        if (!ops.ensureBackend()) {
-            runError = if (ModelCatalog.byId(SelectedModel.id)?.installed(getApplication()) != true) {
+        // ⚠ A graph naming no context key (upscale-only, or all app-side) needs
+        // a server but NOT a checkpoint. Launching one the ordinary way held
+        // ~1.2 GB of SD pipeline for nothing -- and made the load readout name a
+        // model the flow was not using.
+        val namesNoKey = runCatching {
+            contextKeyModels(canvas.workflow.graph, typesFor(canvas.workflow.graph)).isEmpty()
+        }.getOrDefault(false)
+        if (!ops.ensureBackend(noModel = namesNoKey)) {
+            runError = if (!namesNoKey &&
+                ModelCatalog.byId(SelectedModel.id)?.installed(getApplication()) != true) {
                 getApplication<Application>().getString(R.string.err_no_model)
             } else {
                 getApplication<Application>().getString(R.string.err_backend_start)
@@ -2386,12 +2589,54 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         const val PREVIEW_TAG = "NmPreview"
     }
 
+    /**
+     * ⭐⭐ The job a Cancel button stops. Null when nothing is running.
+     *
+     * ⚠ Held rather than derived from `busy`, because cancelling needs the Job
+     * itself and `busy` is only a flag.
+     */
+    private var runJob: kotlinx.coroutines.Job? = null
+
+    /** True while a run is in flight and can be stopped. */
+    val canCancel: Boolean get() = busy
+
+    /**
+     * ⭐⭐ Stop the run in progress. **Completed nodes keep their outputs**, so
+     * pressing Run again resumes from the cache rather than redoing them — the
+     * executor's cache is untouched by this, exactly as it is by a node that
+     * fails.
+     *
+     * ⚠⚠ **The disconnect is what actually stops the NPU**, not the job
+     * cancellation. The sampler's SSE loop is a blocking socket read that
+     * coroutine cancellation cannot interrupt, so without
+     * [Backend.abortInFlight] this would stop the UI and leave the render
+     * running to completion. The backend notices the dead socket on its next
+     * progress write and aborts (`main.cpp`, "Client disconnected").
+     *
+     * ⚠ Order matters: disconnect FIRST so the read is already unblocked when
+     * the job is cancelled, then cancel so nothing downstream of it runs.
+     */
+    fun cancelRun() {
+        if (!busy) return
+        say("cancelling…")
+        Backend.abortInFlight()
+        runJob?.cancel()
+    }
+
     private fun run(label: String, block: suspend () -> Unit) {
         if (busy) { say("$label ignored -- already running", bad = true); return }
         busy = true
-        viewModelScope.launch {
+        runJob = viewModelScope.launch {
             try {
                 block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // ⚠⚠ Caught SEPARATELY and rethrown. The broad `Throwable` below
+                // would otherwise swallow a cancellation and report it as a
+                // crash -- and a coroutine that eats its own CancellationException
+                // leaves the scope believing the job is still alive.
+                runError = "cancelled"
+                say("$label cancelled")
+                throw e
             } catch (e: Throwable) {
                 // ⚠⚠ Throwable, not Exception. `UnsatisfiedLinkError` from a
                 // missing native library is an ERROR, so it slipped past the
@@ -2402,6 +2647,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 say("$label threw ${e.javaClass.simpleName}: ${e.message}", bad = true)
             } finally {
                 busy = false
+                runJob = null
             }
         }
     }

@@ -65,8 +65,9 @@
     <string name="community_experimental">实验性。插件格式在版本之间仍可能变动，且导入的包尚无校验机制，请像对待任何来路不明的代码那样谨慎导入。</string>
 
     <string name="flows_import">导入</string>
+    <string name="pack_import_note">JavaScript 节点包（.zip）。导入后会出现在面板里，和内置节点排在一起。</string>
     <string name="flows_import_note">别人发给你的流程（.json），或一个节点包（.zip）</string>
-    <string name="flows_import_flow">流程</string>
+    <string name="flows_import_flow">导入</string>
     <string name="flows_import_pack">节点</string>
     <string name="flows_import_warning">⚠ 节点包会运行自己的代码 — 请只导入你信任的包</string>
     <string name="flows_recommended">推荐</string>
@@ -88,6 +89,17 @@
     <string name="remove">移除</string>
     <string name="use">使用</string>
     <string name="in_use">使用中</string>
+    <string name="rename_node">节点名称</string>
+    <string name="run_starting">正在启动…</string>
+    <string name="cancel_run">取消</string>
+    <string name="importing_model">正在导入 %1$s…</string>
+    <string name="importing_working">正在读取压缩包</string>
+    <string name="karras_sigmas">Karras 噪声表</string>
+    <string name="karras_unavailable">Karras 噪声表（LCM 不支持）</string>
+    <string name="resolution">分辨率</string>
+    <string name="shape">比例</string>
+    <string name="resolution_reloads">不同尺寸即不同图谱 — 下次运行时后端会重新加载。</string>
+    <string name="shape_is_free">此模型仅渲染单一尺寸并裁剪成比例，无需重新加载。</string>
     <string name="unsupported">不支持</string>
     <string name="installed_mb">已安装 · %1$d MB</string>
     <string name="not_installed_mb">未安装  需下载 %1$d MB</string>
@@ -401,4 +413,8 @@
     <string name="r2_recipe_img2img_about">从相册选一张照片：取景后按你选择的强度重新想象它。</string>
     <string name="r2_recipe_inpaint_label">局部重绘——涂抹区域重新生成</string>
     <string name="r2_recipe_inpaint_about">涂抹照片的一部分，仅该部分会被重新生成。点按蒙版节点开始涂抹。</string>
+
+    <plurals name="kept_in_results">
+        <item quantity="other">已将 %1$d 张图片保存到结果</item>
+    </plurals>
 </resources>

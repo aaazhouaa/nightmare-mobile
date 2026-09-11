@@ -85,6 +85,10 @@ class MainActivity : ComponentActivity() {
         // against it. Loading late would render the first graph against the
         // previous selection.
         SelectedModel.load(this)
+        // ⚠ Before NODE_TYPES is touched: the upscale node's default and its
+        // dropdown read this cache, and an empty one makes a new node default to
+        // an upscaler that may not be installed.
+        UpscalerCatalog.refresh(this)
         // ⚠ Before setContent: the theme decides the FIRST frame, and loading it
         // afterwards means a flash of the wrong palette on every cold start.
         Prefs.load(this)
@@ -252,6 +256,8 @@ fun HarnessScreen(
                     onCancel = vm::cancelModelInstall,
                     onDelete = vm::deleteModel,
                     onSelect = vm::selectModel,
+                    importing = vm.importing,
+                    importProgress = vm.importProgress,
                     onImport = { name ->
                         importName = name
                         // ⚠ Two MIME types. A zip arrives as
@@ -295,9 +301,6 @@ fun HarnessScreen(
                 val flowPicker = rememberLauncherForActivityResult(
                     androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
                 ) { uri -> if (uri != null) vm.importWorkflow(uri) }
-                val packPicker = rememberLauncherForActivityResult(
-                    androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-                ) { uri -> if (uri != null) vm.importPlugin(uri) }
                 WorkflowsScreen(
                     recipes = com.abrah.nightmare.canvas.RECIPES,
                     saved = vm.savedWorkflows,
@@ -314,9 +317,6 @@ fun HarnessScreen(
                     // with nothing on screen explaining why.
                     onImportFlow = {
                         flowPicker.launch(arrayOf("application/json", "application/octet-stream"))
-                    },
-                    onImportPack = {
-                        packPicker.launch(arrayOf("application/zip", "application/octet-stream"))
                     },
                 )
             },
@@ -426,11 +426,15 @@ fun HarnessScreen(
             // dragged crop rect, both on sheet dismissal.
             onEdit = vm::editCanvas,
             onEditMask = vm::editMask,
+            onCancelRun = vm::cancelRun,
+            onSetResolution = vm::selectResolution,
+            onSetAspect = vm::selectAspect,
             validateWorkflowName = vm::workflowNameError,
             onClearImage = vm::clearImage,
             onSaveImage = vm::saveImage,
             onShareImage = vm::shareNodeImage,
-            onKeepImage = vm::keepResult,
+            onKeepImage = vm::toggleKeepResult,
+            isKept = vm::isKept,
             onClearOutput = vm::clearOutput,
             onSave = vm::saveWorkflowAs,
             savedAs = vm.currentWorkflowName,
@@ -456,11 +460,23 @@ fun HarnessScreen(
     // ⚠ Back returns to the canvas rather than quitting -- the same hole the
     // fullscreen viewer had, and the reason every over-canvas screen handles it.
     BackHandler { vm.setCanvasVisible(true) }
+    // ⚠ Declared HERE now, not on the Flows tab: a node pack is code and is
+    // installed from Settings → Community, beside the page that explains what a
+    // pack may and may not do. `ui/WorkflowsScreen.kt` has the reasoning.
+    // ⚠ Two MIME types, as every other picker in this app does: plenty of
+    // providers hand a zip over as `application/octet-stream`, and filtering on
+    // the exact type greys out the file the user came for.
+    val packPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) vm.importPlugin(uri) }
     com.abrah.nightmare.ui.SettingsScreen(
         tab = vm.settingsTab,
         onTab = vm::switchSettingsTab,
         onClose = { vm.setCanvasVisible(true) },
         diagnostics = { HarnessPane(vm) },
+        onImportPack = {
+            packPicker.launch(arrayOf("application/zip", "application/octet-stream"))
+        },
     )
 }
 

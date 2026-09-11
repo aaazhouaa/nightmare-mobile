@@ -117,6 +117,13 @@ fun ModelsScreen(
      */
     onImport: ((name: String) -> Unit)? = null,
     /**
+     * ⭐ The name of an import in flight, or null. Drawn as a banner ABOVE the
+     * family tabs — an imported model has no row to hang progress on until the
+     * scan finds it, which is exactly why nothing was visible before.
+     */
+    importing: String? = null,
+    importProgress: ModelInstaller.Progress? = null,
+    /**
      * ⭐⭐ The second KIND of model — see `Upscalers.kt`. Empty renders no tab
      * at all, which is what a preview and a golden with no catalogue want.
      */
@@ -145,6 +152,42 @@ fun ModelsScreen(
                 color = MaterialTheme.colorScheme.error,
                 modifier = Modifier.padding(top = 8.dp),
             )
+        }
+        // ⭐ "Something is happening", for the one case with no row to say so.
+        if (importing != null) {
+            Card(
+                Modifier.fillMaxWidth().padding(top = 8.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                ),
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(
+                        stringResource(R.string.importing_model, importing),
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        // ⚠ The PHASE, not a percentage: a zip's uncompressed
+                        // size is unknown until it is read, so there is no
+                        // honest percentage to show during the unpack.
+                        importProgress?.phase ?: stringResource(R.string.importing_working),
+                        style = LogTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // ⚠ Indeterminate whenever the total is unknown, which is
+                    // most of an import. A bar parked at 100% through a minute
+                    // of unpacking reads as a hang.
+                    val p = importProgress
+                    if (p != null && p.total > 0) {
+                        LinearProgressIndicator(
+                            progress = { p.fraction },
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        )
+                    } else {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                    }
+                }
+            }
         }
         // ⭐⭐ One sub-tab per FAMILY, swipeable.
         //
@@ -337,42 +380,14 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
     var naming by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
 
-    // ⚠⚠ Deliberately NOT the same surface as a model row. This card is an
-    // ACTION sitting in a list of things; drawn identically it reads as a
-    // sixteenth checkpoint called "Import a checkpoint", which is exactly how it
-    // went unnoticed at the bottom. The outline and the tinted ground say "this
-    // one is different" without shouting.
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-        ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(12.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    stringResource(R.string.r2_models_import_title),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                    // ⚠ Says what the app CANNOT do, because the alternative is
-                    // a user picking a `.safetensors` and reading "not a
-                    // checkpoint" without knowing why. Conversion is a PC step
-                    // and there is no runtime compiler on the NPU.
-                    stringResource(R.string.r2_models_import_desc),
-                    style = LogTextStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Button(colors = nightmareButtonColors(), onClick = { name = ""; naming = true }, enabled = !busy) { Text(stringResource(R.string.flows_import)) }
-        }
-    }
+    // ⚠ [ImportCallout] owns the look; this file owns the naming dialog that
+    // follows. The three importers in the app share one card shape.
+    ImportCallout(
+        title = stringResource(R.string.r2_models_import_title),
+        body = stringResource(R.string.r2_models_import_desc),
+        enabled = !busy,
+        onImport = { name = ""; naming = true },
+    )
 
     if (naming) {
         val trimmed = name.trim()
@@ -485,9 +500,15 @@ private fun ModelCard(
                     // than listing all 46 is that a user can tell them apart,
                     // and "DreamShaper XL" against "ChilloutMix" says nothing
                     // about which one costs 3.5 GB or which produces a 1024
-                    // picture. ⚠ The resolution is NOT a choice here -- it is
-                    // the size the model's graphs were compiled at, and the
-                    // canvas shows it locked for the same reason.
+                    // picture.
+                    //
+                    // ⚠⚠ **This says NATIVE, and the chips below say what is
+                    // chosen.** The two differ now: an SD 1.5 model ships
+                    // resolution patches and the selected size may be any of
+                    // them. Native is still the right thing on the line that
+                    // compares models to each other -- it is a property of the
+                    // checkpoint, where the chosen size is a property of the
+                    // session.
                     Text(
                         // ⭐ Family, size, and the BUILD TIER -- which is a
                         // statement about the chip, not a detail: `_min` is

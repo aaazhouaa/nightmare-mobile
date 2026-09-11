@@ -16,7 +16,11 @@ import com.abrah.nightmare.sources
  * family. `docs/MODELS.md` §3 step 3.
  */
 private fun ctxKeyParams(): Map<String, String> {
-    val res = SelectedModel.spec.native
+    // ⚠ The SELECTED size, not the model's native one. A recipe builds NEW
+    // nodes, and a new node is born at the size the user last chose for this
+    // checkpoint (`SelectedModel.res`) -- opening a recipe at 512 while the
+    // picker said 768x512 would silently retarget their whole graph back.
+    val res = SelectedModel.res
     return mapOf(
         "model" to SelectedModel.id,
         "width" to res.width.toString(),
@@ -42,7 +46,7 @@ fun defaultWorkflow(): Workflow = Workflow(
             // this node is where a user types, and it is first in the chain
             // because it is the first thing they will want to change.
             Node(
-                "text", "sd.clip_encode",
+                "prompt", "sd.clip_encode",
                 params = mapOf(
                     "prompt" to "a cat on grass",
                     "negative" to "blurry, lowres",
@@ -79,7 +83,7 @@ fun defaultWorkflow(): Workflow = Workflow(
                     // render is worth reproducing.
                     "seed" to "0",
                 ),
-                inputs = sources("cond" to "text"),
+                inputs = sources("cond" to "prompt"),
             ),
             Node(
                 "decode", "sd.vae_decode",
@@ -97,7 +101,14 @@ fun defaultWorkflow(): Workflow = Workflow(
     // line of its own, and 96 then cleared it by 3dp at the default zoom --
     // which is not clearance, it is a coincidence. Chrome height and node
     // positions are independent numbers that have to be re-checked together.
-    mapOf("text" to Pt(24f, 120f), "sample" to Pt(24f, 300f), "decode" to Pt(24f, 560f)),
+    // ⚠⚠ The gap under `prompt` is 240, not 180. A prompt node carries its two
+    // prompt boxes in its BODY now, so it stands ~205 tall where it used to be
+    // ~128 -- and at the old spacing the sampler was drawn straight through it.
+    // Caught by the golden, 2026-09-11.
+    // ⚠ These are the only stacked positions that matter: every other recipe
+    // puts the prompt node in a SECOND COLUMN, where its height cannot collide
+    // with the pixel chain beside it.
+    mapOf("prompt" to Pt(24f, 120f), "sample" to Pt(24f, 360f), "decode" to Pt(24f, 620f)),
 )
 
 /**
@@ -108,6 +119,19 @@ fun defaultWorkflow(): Workflow = Workflow(
  * not been handed one, which is every device but the developer's.
  */
 data class Recipe(val id: String, val label: String, val about: String, val build: () -> Workflow)
+
+/**
+ * ⚠ The text node is called **`prompt`**, not `text`.
+ *
+ * A node's id is its title on the canvas, and "text" named the DATA TYPE where
+ * every other node in these recipes is named for its job (`sample`, `decode`,
+ * `frame`, `mask`). The thing a person is looking for when they open one of
+ * these is where to type the prompt. The user's call, 2026-09-11.
+ *
+ * ⚠ Recipes only. A saved workflow keeps whatever ids it was written with, and
+ * a node dragged from the palette is still named from its TYPE
+ * (`clip_encode`) -- renaming that is a separate change to `nodeLabel`.
+ */
 
 /**
  * ⭐ The recommended workflows.
@@ -125,6 +149,12 @@ val RECIPES: List<Recipe> = listOf(
         "img2img", "Image to image",
         "A photo from the gallery: frame it, then re-imagine it at the strength you choose.",
         ::img2imgWorkflow,
+    ),
+    Recipe(
+        "upscale", "Upscale a photo",
+        "A picture from the gallery, enlarged 4x. No checkpoint involved — " +
+            "the upscaler is its own small model, installed under Models.",
+        ::upscaleWorkflow,
     ),
     Recipe(
         "inpaint", "Inpaint — paint an area to redo",
@@ -170,7 +200,7 @@ fun inpaintWorkflow(): Workflow = Workflow(
         listOf(
             Node("photo", "image.load", params = mapOf("uri" to "")),
             Node(
-                "text", "sd.clip_encode",
+                "prompt", "sd.clip_encode",
                 params = mapOf(
                     "prompt" to "masterpiece, best quality, highly detailed,",
                     "negative" to "blurry, lowres",
@@ -196,7 +226,7 @@ fun inpaintWorkflow(): Workflow = Workflow(
             Node(
                 "sample", "sd.sample",
                 params = ctxKeyParams() + mapOf("seed" to "0", "denoise" to "0.85"),
-                inputs = sources("cond" to "text", "latent" to "encode"),
+                inputs = sources("cond" to "prompt", "latent" to "encode"),
             ),
             // ⚠⚠ `base` is the ORIGINAL and `repaint` is the sampled one. The
             // mask's white area is where `repaint` shows through; the other way
@@ -221,7 +251,7 @@ fun inpaintWorkflow(): Workflow = Workflow(
         "blend" to Pt(24f, 1060f), "decode" to Pt(24f, 1330f),
         // Second column: the prompt and the mask, the two things a user
         // actually touches, level with the chain they join.
-        "text" to Pt(250f, 120f), "mask" to Pt(250f, 560f),
+        "prompt" to Pt(250f, 120f), "mask" to Pt(250f, 560f),
     ),
 )
 
@@ -244,7 +274,7 @@ fun img2imgWorkflow(): Workflow = Workflow(
             // second column for that reason -- stacked into the middle of the
             // pixel chain it would read as a step the picture passes through.
             Node(
-                "text", "sd.clip_encode",
+                "prompt", "sd.clip_encode",
                 params = mapOf(
                     "prompt" to "masterpiece, best quality, highly detailed,",
                     "negative" to "blurry, lowres",
@@ -268,7 +298,7 @@ fun img2imgWorkflow(): Workflow = Workflow(
                     // property of THIS recipe, not of the checkpoint.
                     "seed" to "0", "denoise" to "0.6",
                 ),
-                inputs = sources("cond" to "text", "latent" to "encode"),
+                inputs = sources("cond" to "prompt", "latent" to "encode"),
             ),
             Node(
                 "decode", "sd.vae_decode",
@@ -283,6 +313,47 @@ fun img2imgWorkflow(): Workflow = Workflow(
         "sample" to Pt(24f, 790f), "decode" to Pt(24f, 1130f),
         // Second column, level with the photo: the two branches start side by
         // side and meet at the sampler.
-        "text" to Pt(250f, 120f),
+        "prompt" to Pt(250f, 120f),
+    ),
+)
+
+/**
+ * ⭐⭐ Enlarge a picture, and nothing else.
+ *
+ * ⚠⚠ **No sampler, no checkpoint, no [ContextKey] at all.** An upscaler binds
+ * nothing at backend launch — `/upscale` builds its own QNN context from the
+ * weight file per request and frees it after — so this graph pins the process
+ * to nothing and runs beside any model. That is also why an upscaler never
+ * appears as a "resident" model in the load readout: there is nothing resident
+ * to report.
+ *
+ * ⚠ It exists because wiring a photo straight into an upscale node by hand was
+ * the obvious thing to try and gave no clue what was missing: the node needs an
+ * upscaler INSTALLED (Models → Upscalers) and an `image.output` to land in.
+ * Asked for from the phone, 2026-09-11.
+ */
+fun upscaleWorkflow(): Workflow = Workflow(
+    Graph(
+        listOf(
+            // ⚠ Whole, uncropped. There is no size to match here -- unlike the
+            // sampler recipes, an upscaler takes whatever it is given.
+            Node("photo", "image.load", params = mapOf("uri" to "")),
+            // ⚠ **No `image.output` after it.** The upscale node shows its own
+            // result and carries save/share/keep like any node with a picture,
+            // so a terminal node would be a third box doing nothing the second
+            // one does not. `image.output` earns its place only where a graph
+            // needs an explicit save toggle.
+            Node(
+                "upscale", "image.upscale",
+                // ⚠ No `upscaler` param written: the node's own default is the
+                // first INSTALLED one, read at call time, and pinning a literal
+                // here would name a file a fresh install does not have.
+                inputs = sources("image" to "photo"),
+            ),
+        )
+    ),
+    positions = mapOf(
+        "photo" to Pt(24f, 40f),
+        "upscale" to Pt(24f, 300f),
     ),
 )

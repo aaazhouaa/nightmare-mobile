@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
@@ -48,6 +49,19 @@ fun SettingsScreen(
     onClose: () -> Unit,
     /** ⭐ The harness, handed in whole: this screen does not know what an op is. */
     diagnostics: @Composable () -> Unit,
+    /**
+     * ⭐⭐ Install a node pack from a zip.
+     *
+     * ⚠⚠ **Moved here from the Flows tab**, 2026-09-11 at the user's call. A
+     * flow is inert data the app can refuse to open; a pack is CODE, and there
+     * is no validation gate on one yet (`docs/ARCHITECTURE.md` §8c). Two
+     * actions that differ that much in consequence do not belong on one card —
+     * and this page is already the one about writing nodes, so the warning has
+     * context around it rather than sitting beside a list of recipes.
+     *
+     * ⚠ Null hides it, so a preview and a golden render without a picker.
+     */
+    onImportPack: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     // ⚠⚠⚠ **Laid out EXACTLY like [LibraryScreen], and the first version was
@@ -82,7 +96,7 @@ fun SettingsScreen(
             }
         }
         when (tab) {
-            SettingsTab.COMMUNITY -> CommunityPage()
+            SettingsTab.COMMUNITY -> CommunityPage(onImportPack)
             // ⚠ The harness is passed in rather than built here so this file
             // stays free of the view model.
             SettingsTab.DIAGNOSTICS -> diagnostics()
@@ -101,7 +115,7 @@ fun SettingsScreen(
  * that works with no network and no access.
  */
 @Composable
-private fun CommunityPage() {
+private fun CommunityPage(onImportPack: (() -> Unit)? = null) {
     Column(
         Modifier.fillMaxWidth().padding(top = 10.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -115,6 +129,27 @@ private fun CommunityPage() {
             style = LogTextStyle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        // ⭐⭐ Installing a pack, with what it costs you stated AT the button.
+        //
+        // ⚠⚠ The warning is not a footnote. A pack is code: the QuickJS sandbox
+        // stops it reaching the network or the disk, and nothing stops it
+        // looping forever or allocating until the app dies
+        // (`docs/ARCHITECTURE.md` §8c). Until the validation gate exists, the
+        // honest place to say so is where the tap happens.
+        onImportPack?.let { importPack ->
+            // ⚠⚠ The warning is not a footnote. A pack is code: the QuickJS
+            // sandbox stops it reaching the network or the disk, and nothing
+            // stops it looping forever or allocating until the app dies
+            // (`docs/ARCHITECTURE.md` §8c). Until the validation gate exists,
+            // the honest place to say so is where the tap happens.
+            // ⚠ [ImportCallout] is the SAME card Models and Flows draw.
+            ImportCallout(
+                title = stringResource(R.string.flows_import_pack),
+                body = stringResource(R.string.pack_import_note),
+                warning = stringResource(R.string.flows_import_warning),
+                onImport = importPack,
+            )
+        }
         Section(R.string.community_files_title, R.string.community_files_body)
         // ⚠ The op table is the reference an author actually keeps coming back
         // to, so it is a card of its own rather than a bullet in a paragraph.

@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -744,6 +746,9 @@ private fun ResultCard(
             ResultCardHeader(
                 title = "1 picture",
                 label = result.label,
+                // ⚠ The seed has left this line — it is its own control below,
+                // because it is the one piece of metadata people want to TAKE
+                // rather than read.
                 meta = listOfNotNull(
                     result.model,
                     "${result.width}×${result.height}",
@@ -753,7 +758,14 @@ private fun ResultCard(
                 onSave = onSave,
                 onShareFlow = onShareFlow,
                 onOpenFlow = onOpenFlow,
+                // ⭐ Copyable, and on the action row rather than its own.
+                // [SeedRow] is the SAME control the inspector and the viewer
+                // use — not a second copy button. No `onLock` here: locking
+                // writes onto the OPEN canvas, and a result in a list is not
+                // necessarily from the graph that is open.
+                seed = result.seed?.toString(),
             )
+
             Row(
                 Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -803,20 +815,44 @@ private fun ResultCardHeader(
     onSave: () -> Unit,
     onShareFlow: () -> Unit,
     onOpenFlow: () -> Unit,
+    /**
+     * ⭐ The seed, shown INLINE with the actions rather than on a row of its
+     * own. Null on a batch — a group has one seed per picture, so a single
+     * value there would name one of eight.
+     */
+    seed: String? = null,
 ) {
+    // ⚠⚠ **Three rows, not five.** The card was title / label / meta /
+    // actions / seed stacked, which on a phone meant a handful of results filled
+    // the screen with mostly chrome. Reported from the phone 2026-09-11 ("way
+    // too much space per card").
+    // ⇒ The count and the metadata share the first line, and the seed shares
+    // the action row.
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        Text(title, style = MaterialTheme.typography.titleSmall)
-        Text(label, style = LogTextStyle, maxLines = 2)
-        Text(
-            meta,
-            style = LogTextStyle,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            Text(
+                "  $meta",
+                style = LogTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(label, style = LogTextStyle, maxLines = 2, overflow = TextOverflow.Ellipsis)
         Row(
             Modifier.fillMaxWidth().padding(top = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // ⚠⚠ The seed sits at the START and a weighted spacer pushes the
+            // actions right, so the buttons land in the SAME place whether or
+            // not there is a seed — a batch card has none, and right-aligning
+            // the group would otherwise make the two card kinds disagree.
+            if (seed != null) {
+                com.abrah.nightmare.canvas.SeedRow(seed = seed)
+            }
+            Spacer(Modifier.weight(1f))
             IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
                 Icon(
                     Icons.Filled.Delete,
@@ -844,6 +880,11 @@ private fun ResultCardHeader(
             // genuinely different things to send — one is a JPEG for a friend,
             // the other is a graph they can run — and collapsing them into one
             // control would make the app choose which the user meant.
+            // ⚠⚠ **The glyphs swapped, 2026-09-11 at the user's request.**
+            // Sharing a flow is still sharing, so it takes the ordinary share
+            // arrow everyone already reads as "send this somewhere"; the
+            // node-graph glyph moved to OPEN, where it names the thing being
+            // opened rather than the act of sending it.
             IconButton(onClick = onShareFlow, modifier = Modifier.size(36.dp)) {
                 Icon(
                     ShareFlowIcon,
@@ -852,14 +893,19 @@ private fun ResultCardHeader(
                     modifier = Modifier.size(20.dp),
                 )
             }
+            // ⚠ The glyph REPLACES the label rather than joining it: the row
+            // is four controls on a phone, and a text button among three icons
+            // was the widest thing on the card. It stays a filled Button so it
+            // still reads as the card's primary action.
             Button(
                 colors = nightmareButtonColors(),
                 onClick = onOpenFlow,
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 4.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
             ) {
-                Text(
-                    stringResource(R.string.open_flow),
-                    style = MaterialTheme.typography.labelLarge,
+                Icon(
+                    ShareFlowIcon,
+                    contentDescription = stringResource(R.string.open_flow),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }

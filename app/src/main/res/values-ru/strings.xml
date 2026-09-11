@@ -86,6 +86,17 @@
     <string name="remove">Убрать</string>
     <string name="use">Выбрать</string>
     <string name="in_use">Используется</string>
+    <string name="rename_node">Имя узла</string>
+    <string name="run_starting">запуск…</string>
+    <string name="cancel_run">Отмена</string>
+    <string name="importing_model">Импорт %1$s…</string>
+    <string name="importing_working">чтение архива</string>
+    <string name="karras_sigmas">Сигмы Karras</string>
+    <string name="karras_unavailable">Сигмы Karras (недоступно для LCM)</string>
+    <string name="resolution">Разрешение</string>
+    <string name="shape">Форма</string>
+    <string name="resolution_reloads">Другой размер — другой граф: бэкенд перезагрузится при следующем запуске.</string>
+    <string name="shape_is_free">Эта модель рендерит один размер и обрезает его. Без перезагрузки.</string>
     <string name="unsupported">Не поддерживается</string>
     <string name="installed_mb">установлено · %1$d МБ</string>
     <string name="not_installed_mb">не установлено  загрузка %1$d МБ</string>
@@ -101,4 +112,10 @@
     <string name="mask_brush_px">кисть  %1$d пикс.</string>
     <string name="mask_paint_hint">закрасьте то, что нужно перерисовать · щипок для масштаба</string>
     <string name="mask_covered">закрашено %1$d%% · красная область будет перерисована</string>
+    <plurals name="kept_in_results">
+        <item quantity="one">%1$d изображение сохранено в Результаты</item>
+        <item quantity="few">%1$d изображения сохранено в Результаты</item>
+        <item quantity="many">%1$d изображений сохранено в Результаты</item>
+        <item quantity="other">%1$d изображений сохранено в Результаты</item>
+    </plurals>
 </resources>

@@ -149,6 +149,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             "model_install" -> installModel(arg)
             "model_delete" -> deleteModel(arg)
             "model_use" -> useModel(arg)
+            "resolutions" -> listResolutions()
+            "res_use" -> useResolution(arg)
+            "aspect" -> aspectProbe(arg)
             "model_scan" -> scanModels()
             "model_import" -> importModels()
             "latent_blend" -> latentBlend()
@@ -174,7 +177,11 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * ⇒ The size comes from the model, exactly as it does for a real node.
      */
     private fun ctxKey(extra: Map<String, String> = emptyMap()): Map<String, String> {
-        val res = SelectedModel.spec.native
+        // ⚠ The SELECTED size, not the model's native one. Once resolution is a
+        // live knob those differ, and a fixture pinned to native would launch
+        // the backend at the user's size and then ask it for the model's -- the
+        // exact mismatch this function was written to stop.
+        val res = SelectedModel.res
         return mapOf(
             "model" to SelectedModel.id,
             "width" to res.width.toString(),
@@ -374,6 +381,59 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // window, and the open graph is a view-model field. The divergence it
         // leaves is self-healing, because the next restore adopts the model the
         // GRAPH names (`adoptGraphModel`) rather than the one this set.
+    }
+
+    /**
+     * ⭐ What sizes the selected model can serve, and which one is chosen.
+     *
+     * ⚠ Discovered from the patch files on disk
+     * ([ModelSpec.availableResolutions]), so this op is also how you find out
+     * that an archive shipped fewer patches than expected -- the row simply is
+     * not there, and nothing else would say so.
+     */
+    fun listResolutions() {
+        val spec = SelectedModel.spec
+        if (spec.fixedCanvas) {
+            say("${spec.label} renders a fixed ${spec.native} and crops to shape:")
+            for (a in ModelCatalog.ASPECTS) {
+                val t = ModelCatalog.aspectTarget(a, spec.native) ?: spec.native
+                say("  ${a.padEnd(5)} $t")
+            }
+            return
+        }
+        val all = spec.availableResolutions(ctx)
+        say("${spec.label}: ${all.size} resolution${if (all.size == 1) "" else "s"}")
+        for (r in all) {
+            val patch = r.patchName?.let { n ->
+                if (java.io.File(spec.dir(ctx), n).exists()) n else "$n MISSING"
+            } ?: "base unet.bin"
+            say("  ${if (r == SelectedModel.res) "*" else " "} ${r.toString().padEnd(9)} $patch")
+        }
+    }
+
+    /**
+     * ⚠ Takes `WxH` — `--es arg 768x512`. It sets the selection and stops a
+     * backend launched for another size, exactly as [useModel] does for a
+     * model; the size is the same kind of launch-bound field.
+     */
+    suspend fun useResolution(arg: String?) {
+        val want = arg?.let { Res.fromLabel(it) }
+        if (want == null) { say("res_use needs --es arg <WxH>, e.g. 768x512", bad = true); return }
+        val spec = SelectedModel.spec
+        val ok = spec.availableResolutions(ctx)
+        if (want !in ok) {
+            say("${spec.label} cannot render $want -- it serves ${ok.joinToString(", ")}", bad = true)
+            return
+        }
+        val was = SelectedModel.res
+        SelectedModel.setRes(ctx, want)
+        say("resolution $want")
+        // ⚠ Same reasoning as [useModel]: `--patch` binds at launch, so a
+        // process started at the old size will not reload into the new one.
+        if (was != want && Backend.get("/health").code == 200) {
+            say("  stopping the backend -- it was launched at $was")
+            stopBackend()
+        }
     }
 
     suspend fun health() {
@@ -664,19 +724,63 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * Keeping that only in the view model made this op test a path no user
      * takes -- the same front-end drift `model_use` had.
      */
-    suspend fun ensureBackend(): Boolean {
-        if (Backend.get("/health").code == 200) return true
-        val spec = ModelCatalog.byId(SelectedModel.id)
+    /**
+     * ⚠⚠ **`/health` is not the question any more.** It answers 200 from a
+     * process launched at ANY resolution, so once `--patch` is on the launch
+     * line a healthy backend can still be the wrong one -- and the failure is
+     * silent, because `/vae_decode` against graphs of another size decodes
+     * plausible garbage rather than erroring.
+     *
+     * ⇒ Serving AND launched for the key we want. Anything else is a kill and
+     * a relaunch, which costs 2.3-5 s (`docs/ARCHITECTURE.md` §4) and is
+     * announced rather than silent: it is about a whole render, and a user who
+     * is not told will read it as the app having hung.
+     */
+    suspend fun ensureBackend(
+        want: ContextKey? = null,
+        /**
+         * ⭐⭐ This graph names NO context key, so it needs a server but no
+         * checkpoint — an upscale-only flow, or any all-app-side graph that
+         * still calls an endpoint.
+         *
+         * ⚠⚠ Launching the ordinary way for one of those kept a ~1.2 GB SD
+         * pipeline resident for nothing, which is what made the load readout
+         * name a model the flow was not using. `--upscale` allocates its own
+         * QNN context per request on TOP of whatever is resident, so this is
+         * also the memory that an upscale-after-t2i had to find.
+         */
+        noModel: Boolean = false,
+    ): Boolean {
+        if (noModel) return ensureUpscaleServer()
+        val target = want ?: ContextKey(
+            ModelCatalog.backendTypeOf(SelectedModel.id),
+            SelectedModel.id,
+            SelectedModel.res.width,
+            SelectedModel.res.height,
+        )
+        if (Backend.get("/health").code == 200) {
+            val have = BackendProcess.launchedKey
+            // ⚠ A null launch key with a live /health is a backend this app did
+            // not start -- a leftover from a previous process, or one launched
+            // by hand during development. It cannot be verified, so it is
+            // replaced rather than trusted.
+            if (have == target) return true
+            say(
+                if (have == null) "the running backend was not started by this app -- relaunching"
+                else "the backend is serving $have but this graph needs $target -- relaunching"
+            )
+            stopBackend()
+        }
+        val spec = ModelCatalog.byId(target.model)
         if (spec == null || !spec.installed(ctx)) {
             say(ctx.getString(R.string.err_no_model), bad = true)
             return false
         }
-        say(ctx.getString(R.string.starting_backend))
-        return launchBackend()
+        say("正在为 ${target.model} 启动后端（${target.width}x${target.height}）…")
+        return launchBackend(target)
     }
 
     suspend fun canvasRun() {
-        if (!ensureBackend()) return
         // ⭐⭐ The user's OWN canvas, not a fixture.
         //
         // ⚠⚠ This ran `defaultWorkflow()` — a hardcoded three-node txt2img —
@@ -695,6 +799,31 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }.getOrNull() ?: com.abrah.nightmare.canvas.defaultWorkflow()
         say("canvas: ${wf.graph.nodes.size} nodes, " +
             "${nodeTypes().size} types available")
+        // ⚠⚠ Launch for the key the GRAPH names, not for the selection. This op
+        // reads the autosave straight off disk, so it bypasses the adoption
+        // [HarnessViewModel.adoptGraphModel] does when a workflow is opened --
+        // a saved graph at 768² would otherwise be run against a backend
+        // launched at whatever the picker last said.
+        var namesNoKey = false
+        val want = try {
+            val types = nodeTypes()
+            val models = contextKeyModels(wf.graph, types)
+            // ⚠⚠ EMPTY is a different answer from "could not resolve one".
+            // A graph naming two models also yields a null `want`, and launching
+            // a model-free server for THAT would replace a clear refusal
+            // ("needs 2 backend contexts") with a confusing one.
+            namesNoKey = models.isEmpty()
+            val m = models.singleOrNull()
+            val res = contextKeyResolutions(wf.graph, types).singleOrNull()
+            if (m != null && res != null) {
+                ContextKey(ModelCatalog.backendTypeOf(m), m, res.width, res.height)
+            } else null
+        } catch (e: Throwable) {
+            null
+        }
+        // ⚠ No context key means no checkpoint is needed — an upscale-only or
+        // all-app-side graph gets a server with no model loaded.
+        if (!ensureBackend(want, noModel = namesNoKey)) return
         val r = runWorkflow(wf, onNode = { n ->
             say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} " +
                 "${n.ms} ms  ${n.detail}", bad = n.outcome == Outcome.FAILED)
@@ -2099,6 +2228,85 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * is what makes the pass falsifiable; 5 ran means the prune is too broad,
      * 5 cached means residency is not consulted at all.
      */
+    /**
+     * ⭐⭐ Prove the aspect crop on a fixed-canvas family, end to end.
+     *
+     * ⚠⚠ **The one part of the shape feature a fixture could not otherwise
+     * reach.** `aspect_ratio` changes nothing the other ops look at: the
+     * context key is the same, the launch line is the same, and `/sample`
+     * returns a full-canvas latent either way. What differs is only the SIZE of
+     * the picture [VaeDecodeNode] cuts out of it — so the check is the decoded
+     * dimensions, compared against [ModelCatalog.aspectTarget], which is itself
+     * the app's copy of arithmetic that lives in C++.
+     *
+     * ⇒ A disagreement here is the drift that copy exists to make visible, and
+     * it is invisible to every other op and to every JVM test (which can only
+     * check the app's copy against itself).
+     *
+     * `--es arg 16:9`
+     */
+    suspend fun aspectProbe(arg: String?) {
+        val spec = SelectedModel.spec
+        if (!spec.fixedCanvas) {
+            say("aspect needs a fixed-canvas model (SDXL/Anima); ${spec.label} is ${spec.family.label}",
+                bad = true)
+            return
+        }
+        val ratio = arg ?: ModelCatalog.DEFAULT_ASPECT
+        val want = ModelCatalog.aspectTarget(ratio, spec.native)
+        if (want == null && ratio != ModelCatalog.DEFAULT_ASPECT) {
+            say("\"$ratio\" is not a w:h ratio this app would crop for", bad = true)
+            return
+        }
+        if (!ensureBackend()) return
+        val expect = want ?: spec.native
+        say("aspect $ratio on ${spec.label}: expecting $expect out of ${spec.native}")
+        val g = Graph(
+            listOf(
+                textNode(),
+                Node(
+                    "sample", "sd.sample",
+                    params = ctxKey(
+                        mapOf("steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to "42",
+                              "aspect" to ratio)
+                    ),
+                    inputs = sources("cond" to "text"),
+                ),
+                Node(
+                    "decode", "sd.vae_decode",
+                    // ⚠ The SAME ratio on the decoder. That is the pairing
+                    // `aspectRetarget` enforces on a real graph, and writing it
+                    // by hand here is what makes this fixture a test of the crop
+                    // rather than of the retarget.
+                    params = ctxKey(mapOf("aspect" to ratio)),
+                    inputs = sources("latent" to "sample"),
+                ),
+            )
+        )
+        // ⚠ `executor.run`, not `runWorkflow`: the latter rolls a `seed = 0`
+        // into a fresh one, and this fixture pins 42 so two runs of it are
+        // comparable.
+        val r = executor.run(
+            g,
+            onProgress = { _, step, total -> sink.progress(step to total) },
+            onNode = { n ->
+                say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} " +
+                    "${n.ms} ms  ${n.detail}", bad = n.outcome == Outcome.FAILED)
+            },
+        )
+        sink.progress(null)
+        if (r.error != null) { say("aspect: refused -- ${r.error}", bad = true); return }
+        val out = r.outputs["decode"] as? Value.Image
+        if (out == null) { say("aspect: no image came out", bad = true); return }
+        images.get(out.id)?.let { sink.image(it) }
+        if (out.w == expect.width && out.h == expect.height) {
+            say("aspect $ratio -> ${out.w}x${out.h} ✓ matches ${expect}")
+        } else {
+            say("aspect $ratio -> ${out.w}x${out.h} but expected $expect -- " +
+                "the app's aspectTarget and the backend disagree", bad = true)
+        }
+    }
+
     suspend fun runGraph() {
         executor.cache.clear()
         val a = pass("A cold", demoGraph(42, 7), expectRan = 5, expectCached = 0)
@@ -2211,10 +2419,37 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * between "started" and "serving", and reporting the former as the latter
      * is how a first request lands on a socket nobody is listening to.
      */
-    suspend fun launchBackend(): Boolean {
+    /**
+     * A server with no diffusion model, for a graph that names no context key.
+     *
+     * ⚠ A process holding a CHECKPOINT also serves `/upscale` perfectly well,
+     * so one that is already up is left alone rather than torn down: the user
+     * would pay a relaunch to free memory they may be about to need again. Only
+     * an absent backend is started this way.
+     */
+    private suspend fun ensureUpscaleServer(): Boolean {
+        if (Backend.get("/health").code == 200) {
+            if (!BackendProcess.upscalerServer) {
+                say("this graph needs no checkpoint; the backend already up is holding one")
+            }
+            return true
+        }
+        say("starting an upscale-only backend -- this graph needs no checkpoint…")
+        return launchBackend(upscalerOnly = true)
+    }
+
+    suspend fun launchBackend(
+        want: ContextKey? = null,
+        upscalerOnly: Boolean = false,
+    ): Boolean {
         val models = BackendProcess.modelsDir(ctx)
         say("models dir: ${models.absolutePath}")
-        when (val r = BackendProcess.start(ctx, modelId = SelectedModel.id, port = Backend.PORT)) {
+        val modelId = want?.model ?: SelectedModel.id
+        val res = want?.let { Res(it.width, it.height) } ?: SelectedModel.res
+        when (val r = BackendProcess.start(
+            ctx, modelId = modelId, port = Backend.PORT, res = res,
+            upscalerOnly = upscalerOnly,
+        )) {
             is BackendProcess.Start.Failed -> {
                 say("start failed -- ${r.why}", bad = true)
                 drainBackendLog()

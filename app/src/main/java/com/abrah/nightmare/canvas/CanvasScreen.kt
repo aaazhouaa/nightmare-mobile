@@ -62,6 +62,15 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.layout.width
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
@@ -95,6 +104,8 @@ fun CanvasScreen(
      */
     onGesture: (CanvasState) -> Unit,
     onRun: () -> Unit,
+    /** ⭐ Stop the run in flight. Null hides the affordance (previews, goldens). */
+    onCancelRun: (() -> Unit)? = null,
     /** ⭐ Open the Batch sheet. See `BatchSheet.kt`. */
     onBatch: () -> Unit = {},
     /** ⭐ Which run of how many, while a sweep is going. Null when it is not. */
@@ -164,6 +175,18 @@ fun CanvasScreen(
      * node and handing it over as an absolute loses any stroke made since.
      * `HarnessViewModel.editMask` has the measurement.
      */
+    /**
+     * ⭐⭐ Set the render size for the WHOLE graph, from the node the user
+     * happened to open.
+     *
+     * ⚠ Not an `onEdit` transform like [onSetParam] is: a size change also
+     * stops a backend launched at the old one, re-derives every framed crop and
+     * moves the remembered default for new nodes — none of which a pure
+     * `CanvasState` edit can do. `HarnessViewModel.selectResolution` owns it.
+     */
+    onSetResolution: (com.abrah.nightmare.Res) -> Unit = {},
+    /** ⭐ The same for a fixed-canvas family, where the choice is a ratio. */
+    onSetAspect: (String) -> Unit = {},
     onEditMask: (node: String, (com.abrah.nightmare.MaskState) -> com.abrah.nightmare.MaskState) -> Unit =
         { _, _ -> },
     /**
@@ -188,6 +211,8 @@ fun CanvasScreen(
     onShareImage: (String) -> Unit = {},
     /** ⭐ Keep a rendered image AND the flow that made it, in Results. */
     onKeepImage: (String) -> Unit = {},
+    /** ⭐ Is this picture already kept? Drives the star's filled/outline state. */
+    isKept: (String) -> Boolean = { false },
     /** ⭐ Drop a render from the node that made it. */
     onClearOutput: (String) -> Unit = {},
     modifier: Modifier = Modifier,
@@ -326,9 +351,11 @@ fun CanvasScreen(
         }
 
         RunBar(
+            onResults = onResults,
             state = state,
             busy = busy,
             onRun = onRun,
+            onCancelRun = onCancelRun,
             onBatch = onBatch,
             batchProgress = batchProgress,
             onCancelBatch = onCancelBatch,
@@ -394,12 +421,18 @@ fun CanvasScreen(
         onSaveImage = onSaveImage,
         onShareImage = onShareImage,
         onKeepImage = onKeepImage,
+        isKept = isKept,
         onClearOutput = onClearOutput,
         imageFor = imageFor,
         onViewFullscreen = { id -> onEdit { s -> s.copy(editing = null, viewing = id) } },
         onSetParam = { node, name, value -> onEdit { s -> s.setParam(node, name, value) } },
         onSetParams = { node, values -> onEdit { s -> s.setParams(node, values) } },
         onEditMask = onEditMask,
+        onSetResolution = onSetResolution,
+        onSetAspect = onSetAspect,
+        // ⚠ A pure state edit, like every other canvas change: renameNode
+        // rewires the graph and moves every id-keyed map with it.
+        onRename = { from, to -> onEdit { s -> s.renameNode(from, to) } },
         onDelete = { id -> onEdit { s -> s.removeNode(id) } },
         onDismiss = { onEdit { s -> s.closeInspector() } },
     )
@@ -464,6 +497,7 @@ fun CanvasScreen(
                 onKeep = if (!viewedIsPhoto) {
                     { onKeepImage(id) }
                 } else null,
+                kept = isKept(id),
                 onDeleteOutput = if (!viewedIsPhoto && viewedNode != null) {
                     {
                         onClearImage(viewedNode)
@@ -773,6 +807,10 @@ private fun RunBar(
     state: CanvasState,
     busy: Boolean,
     onRun: () -> Unit,
+    /** ⚠ The SAME callback the top bar uses, so the run log's "in Results" row
+     *  and the Results button cannot land anywhere different. */
+    onResults: () -> Unit = {},
+    onCancelRun: (() -> Unit)? = null,
     onBatch: () -> Unit,
     /** ⭐ Which run of how many, while a sweep is going. Null when it is not. */
     batchProgress: Pair<Int, Int>? = null,
@@ -844,6 +882,9 @@ private fun RunBar(
         RunLogPanel(
             runLog,
             onClose = onCloseRunLog,
+            // ⚠ The same callback the top bar's Results button uses, so the
+            // two cannot land anywhere different.
+            onResults = onResults,
             // ⚠⚠ Present whenever there IS a sampler, locked or not: a user
             // cannot tell "a new picture every Run" from "the same one" by
             // looking at the canvas, and that is the most confusing thing about
@@ -889,12 +930,31 @@ private fun RunBar(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Button(
-                colors = nightmareButtonColors(),
-                onClick = onRun,
-                enabled = !busy,
-                shape = RoundedCornerShape(12.dp),
-            ) { Text(stringResource(if (busy) R.string.running else R.string.run), fontWeight = FontWeight.Medium) }
+            // ⭐⭐ Run BECOMES Cancel while a render is in flight, rather than
+            // sitting there greyed out beside a new button.
+            //
+            // ⚠ A disabled Run was the only thing the bar said during a 24 s
+            // SDXL sample, which reads as "the app is stuck" — and there was no
+            // way to stop a render you had already decided was wrong.
+            // ⚠⚠ Completed nodes keep their outputs, so this is cheap to press:
+            // Run again resumes from the cache.
+            if (busy && onCancelRun != null) {
+                Button(
+                    onClick = onCancelRun,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                    ),
+                ) { Text(stringResource(R.string.cancel_run), fontWeight = FontWeight.Medium) }
+            } else {
+                Button(
+                    colors = nightmareButtonColors(),
+                    onClick = onRun,
+                    enabled = !busy,
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text(stringResource(if (busy) R.string.running else R.string.run), fontWeight = FontWeight.Medium) }
+            }
             // ⚠⚠ **No Batch button.** It opened a second way to build a sweep,
             // and there is only one now: arm a knob from its own node. The run
             // bar already says what is armed and Run already sweeps when it is
@@ -1135,6 +1195,8 @@ private fun FullscreenImage(
     onShare: (() -> Unit)? = null,
     /** ⭐ Keep it in Results, with the graph that made it. */
     onKeep: (() -> Unit)? = null,
+    /** ⭐ Whether this picture is already in Results — the star's amber/grey state. */
+    kept: Boolean = false,
     /**
      * ⭐ Drop this render from the node that made it.
      *
@@ -1153,7 +1215,9 @@ private fun FullscreenImage(
 ) {
     var confirmingDelete by remember { mutableStateOf(false) }
     var saved by remember { mutableStateOf(false) }
-    var kept by remember { mutableStateOf(false) }
+    // ⚠ Passed in now — see the star below. A local latch could not express
+    // un-starring, and could not know the picture was already kept.
+    
     // ⚠⚠ BACK CLOSES THE VIEWER. Without this the system back went to the
     // activity, which has no back stack -- so the one gesture every Android user
     // makes to leave a fullscreen picture QUIT THE APP, losing the canvas
@@ -1275,15 +1339,18 @@ private fun FullscreenImage(
                 }
             }
             onKeep?.let { keep ->
-                IconButton(onClick = { keep(); kept = true }) {
+                IconButton(onClick = keep) {
                     Icon(
                         Icons.Filled.Star,
-                        contentDescription = if (kept) stringResource(R.string.cd_kept_in_results) else stringResource(R.string.cd_keep_with_flow),
-                        // ⚠ One glyph at two alphas rather than Star/StarBorder:
-                        // `material-icons-core` has no outlined star, and the
-                        // extended set costs ~55 MB of dex for it
-                        // (`app/build.gradle.kts`).
-                        tint = if (kept) Color.White else Color.White.copy(alpha = 0.45f),
+                        contentDescription =
+                            if (kept) stringResource(R.string.cd_kept_in_results) else stringResource(R.string.cd_keep_with_flow),
+                        // ⚠⚠ The REAL kept state, passed in, not a local latch.
+                        // This was `var kept` flipped to true on click: it never
+                        // went back, so un-starring left a filled star, and
+                        // reopening the viewer on an already-kept picture showed
+                        // an empty one. Reported from the phone 2026-09-11.
+                        tint = if (kept) com.abrah.nightmare.ui.StarKept
+                        else com.abrah.nightmare.ui.StarIdle,
                     )
                 }
             }

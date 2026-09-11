@@ -20,6 +20,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import com.abrah.nightmare.R
 import androidx.compose.material3.Text
@@ -108,6 +111,15 @@ data class RunLogState(
     val step: Pair<Int, Int>? = null,
     val startedAtMs: Long = 0L,
     val totalMs: Long? = null,
+    /**
+     * ⭐⭐ How many pictures this run filed into Results, or 0.
+     *
+     * ⚠⚠ A sweep keeps EVERY run, and the canvas only shows the last one — so
+     * without this the other seven are invisible and read as lost. The run log
+     * already says what happened; this says where it went, and offers to take
+     * you there. Asked for from the phone, 2026-09-11.
+     */
+    val keptCount: Int = 0,
 ) {
     val running: Boolean get() = startedAtMs > 0L
     val idle: Boolean get() = !running && lines.isEmpty() && totalMs == null
@@ -136,6 +148,8 @@ fun RunLogPanel(
      * "forever", and it sits over the canvas's bottom edge.
      */
     onClose: () -> Unit = {},
+    /** ⭐ Open the Results tab — the destination of the "kept" row. */
+    onResults: () -> Unit = {},
     /**
      * ⭐⭐ The seed pinned onto the sampler, or null when it rolls each Run.
      *
@@ -408,6 +422,17 @@ fun RunLogPanel(
                     state.now != null && state.step != null && state.step.second > 0 ->
                         "${state.now}  ${state.step.first * 100 / state.step.second}%"
                     state.now != null -> "${state.now}…"
+                    // ⚠⚠ **A run that has STARTED but has no node yet is not
+                    // "done".** `now` is null both before the first node begins
+                    // and after the last one ends, and this arm read the second
+                    // meaning into both -- so pressing Run showed "done"
+                    // immediately, for as long as it took to get going. That
+                    // gap is not small: it covers `ensureBackend()`, which
+                    // launches the backend and waits for /health, 4-5 s cold.
+                    // Reported from the phone 2026-09-11.
+                    // ⚠ `totalMs` is what separates them: it is written only
+                    // when the run finishes.
+                    state.running && state.totalMs == null -> stringResource(R.string.run_starting)
                     // ⚠ Named as finished rather than left showing the last
                     // node, or a completed run reads as one still in progress.
                     else -> stringResource(R.string.r2_run_done)
@@ -512,6 +537,42 @@ fun RunLogPanel(
         // ⇒ Bounded by HEIGHT rather than by line count. That is what keeps Run
         // on screen mid-render — the reason the cap existed — while letting one
         // long line take the two rows it needs instead of losing its tail.
+        // ⭐⭐ Where the pictures went — and a way to get there.
+        //
+        // ⚠⚠ A sweep keeps every run but the canvas shows only the LAST one,
+        // so without this the other seven are invisible and read as lost. Shown
+        // only once the run is over: mid-sweep the count is still climbing and
+        // a moving number invites a tap onto a half-finished set.
+        if (state.keptCount > 0 && !state.running) {
+            Surface(
+                onClick = onResults,
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        pluralStringResource(
+                            R.plurals.kept_in_results, state.keptCount, state.keptCount,
+                        ),
+                        style = LogTextStyle,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    // ⚠ A chevron rather than a button label: the whole row is
+                    // the target, which is what makes it easy to hit.
+                    Text(
+                        "›",
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
+        }
         val lines = state.lines.takeLast(MAX_LINES)
         if (lines.isNotEmpty()) {
             val scroll = rememberScrollState()

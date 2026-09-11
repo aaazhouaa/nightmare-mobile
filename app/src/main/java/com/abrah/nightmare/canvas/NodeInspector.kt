@@ -31,6 +31,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -40,6 +42,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,6 +62,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.graphics.ImageBitmap
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
@@ -61,6 +73,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
+import com.abrah.nightmare.ModelCatalog
 import com.abrah.nightmare.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -102,7 +115,12 @@ fun NodeInspector(
     onEditMask: (node: String, (com.abrah.nightmare.MaskState) -> com.abrah.nightmare.MaskState) -> Unit =
         { _, _ -> },
     onDelete: (String) -> Unit,
+    /** ⭐ Rename a node — see [NodeInspectorBody.onRename]. */
+    onRename: (from: String, to: String) -> Unit = { _, _ -> },
     onDismiss: () -> Unit,
+    /** ⭐ Graph-wide, not per-node — see [NodeInspectorBody.onSetResolution]. */
+    onSetResolution: (com.abrah.nightmare.Res) -> Unit = {},
+    onSetAspect: (String) -> Unit = {},
     imageFor: (String) -> ImageBitmap? = { null },
     onViewFullscreen: (String) -> Unit = {},
     /**
@@ -118,6 +136,7 @@ fun NodeInspector(
     /** ⭐ Hand a node's picture to another app. */
     onShareImage: (String) -> Unit = {},
     onKeepImage: (String) -> Unit = {},
+    isKept: (String) -> Boolean = { false },
     onClearOutput: (String) -> Unit = {},
 ) {
     val nodeId = state.editing ?: return
@@ -144,6 +163,14 @@ fun NodeInspector(
             }
         NodeInspectorBody(
             nodeId, node, type, onSetParam, onSetParams, onEditMask, onDelete,
+            onRename = onRename,
+            // ⚠ Read HERE, like `demand` above and for the same reason: the body
+            // must stay a function of its arguments so the goldens can render
+            // it, and this list is a cached disk scan.
+            focusField = state.focusField,
+            resolutions = com.abrah.nightmare.SelectedModel.resolutions,
+            onSetResolution = onSetResolution,
+            onSetAspect = onSetAspect,
             preview = shownId?.let(imageFor),
             onViewFullscreen = { shownId?.let(onViewFullscreen) },
             cropSource = if (node.type == "image.crop") sourceId?.let(imageFor) else null,
@@ -157,6 +184,7 @@ fun NodeInspector(
             onShareImage = { previewId?.let(onShareImage) },
             onKeepImage = previewId?.takeIf { node.type != "image.load" }
                 ?.let { id -> { onKeepImage(id) } },
+            kept = previewId?.let(isKept) == true,
             onClearOutput = previewId?.takeIf { node.type != "image.load" }
                 ?.let { { onClearOutput(nodeId) } },
             demand = demand,
@@ -189,6 +217,47 @@ internal fun NodeInspectorBody(
     onEditMask: (node: String, (com.abrah.nightmare.MaskState) -> com.abrah.nightmare.MaskState) -> Unit =
         { _, _ -> },
     onDelete: (String) -> Unit,
+    /**
+     * ⭐ Rename a node. **Not a param write** -- the id is what every wire
+     * points at, so this goes through `CanvasState.renameNode`, which moves
+     * every wire, position, size and preview with it.
+     */
+    onRename: (from: String, to: String) -> Unit = { _, _ -> },
+    /**
+     * ⭐⭐ Open with this field focused and the keyboard up — set by a tap on
+     * that prompt's box on the canvas.
+     *
+     * ⚠ Null for every other route in, so opening the sheet the ordinary way
+     * does not throw a keyboard over it.
+     */
+    focusField: String? = null,
+    /**
+     * ⭐⭐ The sizes the selected model can actually render, for the size chips
+     * on a context-key node.
+     *
+     * ⚠⚠ **Passed in, never read from [SelectedModel] here.** This body is what
+     * the goldens render and it must stay a function of its arguments; the list
+     * is also a disk scan behind a cache, which has no business inside a
+     * recomposition. ⚠ Fewer than two entries draws no control — a lone chip
+     * that cannot be unselected is furniture.
+     */
+    resolutions: List<com.abrah.nightmare.Res> = emptyList(),
+    /**
+     * ⭐ Choose the render size. **Not [onSetParam]**: a size is a third of the
+     * [ContextKey], so choosing one rewrites every backend node in the graph
+     * rather than this node alone (`HarnessViewModel.selectResolution`).
+     * Writing it per-node would leave a graph naming two keys, which the
+     * executor refuses.
+     */
+    onSetResolution: (com.abrah.nightmare.Res) -> Unit = {},
+    /**
+     * ⭐ Choose the output shape on a fixed-canvas family. Graph-wide for the
+     * same reason as [onSetResolution], though for a different one underneath:
+     * the sampler uses the ratio to place the rectangle it paints and the
+     * decoder uses it to cut that rectangle out, so the two disagreeing crops
+     * the wrong region of a correctly rendered picture.
+     */
+    onSetAspect: (String) -> Unit = {},
     /** The picture this node is showing, if any. */
     preview: ImageBitmap? = null,
     onViewFullscreen: () -> Unit = {},
@@ -201,6 +270,8 @@ internal fun NodeInspectorBody(
     /** ⭐ Hand this node's picture to another app. */
     onShareImage: () -> Unit = {},
     onKeepImage: (() -> Unit)? = null,
+    /** ⚠ Filled star when true. The action toggles, so the icon must say which way. */
+    kept: Boolean = false,
     onClearOutput: (() -> Unit)? = null,
     /**
      * What the graph demands of this node's output, for a node whose size is
@@ -223,6 +294,9 @@ internal fun NodeInspectorBody(
     // ⚠ Local: an unanswered confirm is not something to persist, same as every
     // other one in the app.
     var confirmingDelete by remember { mutableStateOf(false) }
+    // ⚠ Null when not renaming. Keyed on the node so opening another node's
+    // sheet cannot leave a half-typed name from the last one behind.
+    var renaming by remember(nodeId) { mutableStateOf<TextFieldValue?>(null) }
 
     Column(
         Modifier
@@ -238,19 +312,62 @@ internal fun NodeInspectorBody(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.Bottom,
         ) {
-            // ⚠ The DISPLAY name + counter, the same string the canvas header
-            // draws: this sheet slides up over the node it edits, so both must
-            // name it alike. The type line below keeps the raw qualified name
-            // for matching against logs and the palette.
-            Text(
-                nodeDisplayName(node.type) + nodeCounterSuffix(nodeId, node.type),
-                fontWeight = FontWeight.SemiBold, fontSize = 20.sp,
-            )
-            Text(
-                node.type,
-                style = LogTextStyle,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // ⭐⭐ **Double-tap the name to rename the node.**
+            //
+            // ⚠ A node's id is its title on the canvas, and it was fixed at
+            // creation: `freeId` hands out `upscale`, `upscale2`, so a graph of
+            // six nodes read as a list of TYPES rather than of steps. Asked for
+            // from the phone 2026-09-11.
+            //
+            // ⚠⚠ The whole name is SELECTED when the field opens, so the first
+            // keystroke replaces it -- renaming `clip_encode` to `prompt` should
+            // not begin with deleting eleven characters. That is what the
+            // `TextRange(0, length)` does.
+            //
+            // ⚠ DOUBLE tap, not single: the title sits above a sheet people
+            // scroll, and a rename opening on a stray touch would put a keyboard
+            // over the knobs they were reaching for.
+            val editingName = renaming
+            if (editingName == null) {
+                Text(
+                    nodeId,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 20.sp,
+                    modifier = Modifier.pointerInput(nodeId) {
+                        detectTapGestures(
+                            onDoubleTap = {
+                                renaming = TextFieldValue(nodeId, TextRange(0, nodeId.length))
+                            }
+                        )
+                    },
+                )
+                Text(
+                    node.type,
+                    style = LogTextStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                val focus = remember { FocusRequester() }
+                // ⚠ Requested once the field EXISTS. Asking before it is
+                // composed does nothing, and the user gets a selected field with
+                // no keyboard.
+                LaunchedEffect(Unit) { focus.requestFocus() }
+                OutlinedTextField(
+                    value = editingName,
+                    onValueChange = { renaming = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.rename_node)) },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    // ⚠⚠ Commit through [onRename], never as a param write: the
+                    // id is what every wire points at, so renaming the node
+                    // alone would disconnect the graph.
+                    keyboardActions = KeyboardActions(onDone = {
+                        onRename(nodeId, editingName.text)
+                        renaming = null
+                    }),
+                    modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                )
+            }
         }
 
         // ⭐⭐ The crop node's real interface. Its four params are the rectangle;
@@ -328,6 +445,8 @@ internal fun NodeInspectorBody(
         // ⚠ Which knob's batch popup is open, or null. Local: an unanswered
         // popup is not something to persist.
         var batching by remember(nodeId) { mutableStateOf<Widget?>(null) }
+        // ⚠ Null when not renaming. Keyed on the node so opening another
+        // node's sheet cannot leave a half-typed name from the last one.
 
         val widgets = type?.widgets.orEmpty()
         // ⚠ Only when there is a frame to explain: on a `crop` with no input
@@ -392,8 +511,19 @@ internal fun NodeInspectorBody(
                     IconButton(onClick = keep) {
                         Icon(
                             Icons.Filled.Star,
-                            contentDescription = stringResource(R.string.cd_keep_with_flow),
-                            tint = MaterialTheme.colorScheme.primary,
+                            contentDescription =
+                                if (kept) stringResource(R.string.cd_kept_in_results) else stringResource(R.string.cd_keep_with_flow),
+                            // ⚠⚠ The TINT carries the state, because the action is
+                            // a TOGGLE now and a star that looked the same
+                            // before and after gave no clue that a second tap
+                            // would undo it -- or that the first had done
+                            // anything.
+                            // ⚠ Tint rather than an outline glyph: `StarBorder`
+                            // lives in material-icons-EXTENDED, and pulling that
+                            // artifact in for one outline is several MB of icons
+                            // nothing else would use.
+                            tint = if (kept) com.abrah.nightmare.ui.StarKept
+                            else com.abrah.nightmare.ui.StarIdle,
                         )
                     }
                 }
@@ -491,8 +621,53 @@ internal fun NodeInspectorBody(
         // outright, because there is nothing left to choose.
         val sized = demand as? SizeDemand.Exactly
         val conflict = demand as? SizeDemand.Conflict
+
+        // ⭐⭐ **The render size, as ONE control where the node carries two
+        // params.** `width` and `height` stay separate params -- that is what a
+        // saved workflow stores and what `backendContextKey` reads -- but they
+        // are never two knobs to a person: nobody wants 768 wide and 512 tall
+        // as independent choices, because only the PAIRS a patch file exists
+        // for can be rendered at all.
+        //
+        // ⚠⚠ Chips of the reachable sizes, never number fields. A typed 640
+        // has no `640.patch`, and `BackendProcess.start` would refuse the launch
+        // -- correctly, but only after the user had already committed to it.
+        val sizeKnob = type?.widgets.orEmpty()
+            .count { it.contextKey && (it.name == "width" || it.name == "height") } == 2
+        if (sizeKnob && resolutions.size > 1) {
+            val current = com.abrah.nightmare.Res(
+                node.params["width"]?.toIntOrNull() ?: 0,
+                node.params["height"]?.toIntOrNull() ?: 0,
+            ).toString()
+            val labels = resolutions.map { it.toString() }
+            // ⚠ Same threshold as every other choice in this sheet: past four,
+            // chips become a scrolling strip that can hide the current value.
+            // Seven resolutions is exactly the case that motivated the rule.
+            if (labels.size > CHIP_LIMIT) {
+                ChoiceDropdown(
+                    label = stringResource(R.string.resolution),
+                    hint = stringResource(R.string.resolution_reloads),
+                    options = labels,
+                    current = current,
+                    onPick = { l -> com.abrah.nightmare.Res.fromLabel(l)?.let(onSetResolution) },
+                )
+            } else {
+                ChoiceRow(
+                    label = stringResource(R.string.resolution),
+                    hint = stringResource(R.string.resolution_reloads),
+                    options = labels,
+                    current = current,
+                    onPick = { l -> com.abrah.nightmare.Res.fromLabel(l)?.let(onSetResolution) },
+                )
+            }
+        }
+
         for (w in widgets) {
             if (w.name == picked) continue
+            // ⚠ Drawn above as one size control, or not at all. A node whose
+            // model serves a single size has nothing to choose, and two locked
+            // number fields saying 512 would be noise on every node in the graph.
+            if (sizeKnob && (w.name == "width" || w.name == "height")) continue
             // ⚠ Already drawn, under the framing view it belongs to.
             if (w === padWidget) continue
             if (w.name == "aspect" && sized != null) continue
@@ -505,7 +680,112 @@ internal fun NodeInspectorBody(
             // ⭐ A short fixed set of values is a row of chips, not a text box
             // that accepts "Black", "mirrored" and a typo that fails at Run.
             val options = w.options
+            // ⚠⚠ `aspect` is graph-wide, every other chip row is per-node. The
+            // sampler places the rectangle and the decoder cuts it out, so two
+            // nodes holding different ratios crops the wrong region of a
+            // correctly rendered picture -- with nothing to report it, because
+            // both nodes did exactly what they were told.
+            val pick: (String) -> Unit =
+                if (w.name == "aspect") ({ v -> onSetAspect(v) })
+                else ({ v -> onSetParam(nodeId, w.name, v) })
             if (options != null) {
+                // ⭐⭐ **An armed CHOICE says what it will sweep, exactly as an
+                // armed slider does.**
+                //
+                // ⚠⚠ A slider replaced itself with "Batching 4 values: …" when
+                // armed, but a chips/dropdown knob kept rendering its single
+                // parked value with only the toggle icon changing state — so
+                // `scheduler`, the one batchable knob that is a CHOICE, showed
+                // no armed status and never said which samplers were picked.
+                // Reported from the phone 2026-09-11. A control parked on one
+                // value under a batch that will run four is two answers to
+                // "what will this run with", and the parked one is wrong.
+                val armedChoice = if (
+                    com.abrah.nightmare.BatchParams.isBatchable(node.type, w.name)
+                ) com.abrah.nightmare.BatchParams.armed(node, w.name) else null
+                if (armedChoice != null) {
+                    val picked = com.abrah.nightmare.BatchParams.valuesOf(w.name, armedChoice)
+                        // ⚠ Named, not raw: the sweep list must read the same
+                        // way the picker above it does, or the user sees
+                        // "dpm_sde_karras" listed for a sampler they chose as
+                        // "DPM++ 2M SDE".
+                        .map { if (w.name == "scheduler") ModelCatalog.schedulerLabel(it) else it }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(w.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Batching " + picked.size + " values: " +
+                                    picked.joinToString(", "),
+                                style = LogTextStyle,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                        BatchToggle(armed = armedChoice, onClick = { batching = w })
+                    }
+                    continue
+                }
+                // ⭐⭐ **The sampler is FIVE names and a Karras toggle**, not nine
+                // raw ids — `local-dream`'s own presentation, and the upstream
+                // this project follows (`CLAUDE.md`). The four `_karras` values
+                // are the same four samplers with Karras sigmas, so listing them
+                // separately asked the user to scan `dpm_sde_karras` out of a
+                // dropdown to find a thing they know as "DPM++ 2M SDE".
+                // ⚠ The stored param is untouched — still one of the nine wire
+                // values, so a saved workflow and a bug report carry what the
+                // backend actually receives.
+                if (w.name == "scheduler") {
+                    val cur = node.params[w.name] ?: w.default.orEmpty()
+                    val (base, karras) = ModelCatalog.splitScheduler(cur)
+                    ChoiceDropdown(
+                        label = w.name,
+                        hint = w.hint,
+                        options = ModelCatalog.SAMPLERS.map { it.second },
+                        current = ModelCatalog.SAMPLERS.firstOrNull { it.first == base }?.second
+                            ?: base,
+                        onPick = { label ->
+                            val id = ModelCatalog.SAMPLERS.first { it.second == label }.first
+                            pick(ModelCatalog.joinScheduler(id, karras))
+                        },
+                    )
+                    // ⚠ Disabled rather than hidden for LCM: a checkbox that
+                    // vanishes reads as a bug, where a greyed one with the
+                    // sampler's name beside it says the variant does not exist.
+                    // ⚠⚠ And it must not merely be greyed — the VALUE has to drop
+                    // too, or switching to LCM with Karras armed would send
+                    // `lcm_karras`, which the backend's comparison chain does
+                    // not know and silently renders as `dpm`.
+                    val canKarras = ModelCatalog.karrasSupported(base)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = karras && canKarras,
+                            enabled = canKarras,
+                            onCheckedChange = { on ->
+                                pick(ModelCatalog.joinScheduler(base, on))
+                            },
+                        )
+                        Text(
+                            if (canKarras) stringResource(R.string.karras_sigmas)
+                            else stringResource(R.string.karras_unavailable),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (canKarras) MaterialTheme.colorScheme.onSurface
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        // ⚠ The REAL armed state, not a hardcoded null. It is
+                        // always null on this path today -- an armed knob is
+                        // drawn by the branch above and never reaches here --
+                        // but writing the literal made that ordering
+                        // load-bearing and invisible, and the icon would have
+                        // lied the moment the branches moved.
+                        if (com.abrah.nightmare.BatchParams.isBatchable(node.type, w.name)) {
+                            BatchToggle(
+                                armed = com.abrah.nightmare.BatchParams.armed(node, w.name),
+                                onClick = { batching = w },
+                            )
+                        }
+                    }
+                    continue
+                }
                 // ⚠⚠ Chips do not scale. `pad` has two values and reads as a
                 // pair of buttons; `scheduler` has NINE, which becomes a
                 // horizontally-scrolling strip where the current value can be
@@ -517,7 +797,7 @@ internal fun NodeInspectorBody(
                         hint = w.hint,
                         options = options,
                         current = node.params[w.name] ?: w.default.orEmpty(),
-                        onPick = { onSetParam(nodeId, w.name, it) },
+                        onPick = { pick(it) },
                         optionText = { optionLabel(w.name, it) },
                     )
                 } else {
@@ -526,7 +806,7 @@ internal fun NodeInspectorBody(
                         hint = w.hint,
                         options = options,
                         current = node.params[w.name] ?: w.default.orEmpty(),
-                        onPick = { onSetParam(nodeId, w.name, it) },
+                        onPick = { pick(it) },
                         optionText = { optionLabel(w.name, it) },
                     )
                 }
@@ -617,11 +897,69 @@ internal fun NodeInspectorBody(
             // to one rendering path instead of to the thing it acts on.
             Row(verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.weight(1f)) {
+            // ⚠ The two fields that hold sentences rather than a value.
+            val isProse = w.name == "prompt" || w.name == "negative"
+            // ⭐⭐ The field a canvas tap asked for. Focus is requested ONCE per
+            // open (keyed on the node and name), so scrolling the sheet or
+            // editing another knob does not drag the keyboard back up.
+            val wanted = w.name == focusField
+            val fieldFocus = remember(w.name) { FocusRequester() }
+            val current = node.params[w.name] ?: w.default.orEmpty()
+            // ⭐⭐ **The cursor starts at the END of the text, not the start.**
+            //
+            // ⚠⚠ A plain `String` value carries no selection, so focusing one
+            // puts the caret at offset 0 — tap a prompt on the canvas and you
+            // are typing in FRONT of what is already there, which is never what
+            // anyone means. Reported from the phone, 2026-09-11.
+            //
+            // ⚠ A [TextFieldValue] is the only way to say where the caret goes,
+            // and it is used ONLY for the field being focused: every other field
+            // here stays a plain String, because a locally-held TextFieldValue
+            // stops reflecting a param written from outside (the image picker
+            // sets `uri`, a model switch rewrites `steps`).
+            val seeded = remember(nodeId, w.name) {
+                mutableStateOf(TextFieldValue(current, TextRange(current.length)))
+            }
+            if (wanted) {
+                LaunchedEffect(nodeId, w.name) { fieldFocus.requestFocus() }
+            }
+            if (wanted) {
+                OutlinedTextField(
+                    value = seeded.value,
+                    onValueChange = { v ->
+                        seeded.value = v
+                        if (why == null) {
+                            onSetParam(
+                                nodeId, w.name,
+                                if (v.text.isBlank() && w.numeric) w.default.orEmpty() else v.text,
+                            )
+                        }
+                    },
+                    readOnly = why != null,
+                    enabled = why == null,
+                    label = { Text(if (why != null) "${w.name}  (locked)" else w.name) },
+                    supportingText = {
+                        Text(
+                            why ?: w.hint.orEmpty(),
+                            style = LogTextStyle,
+                            color = if (why != null) MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    singleLine = !isProse,
+                    minLines = if (isProse) 3 else 1,
+                    maxLines = if (isProse) 8 else 1,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = if (w.numeric) KeyboardType.Number else KeyboardType.Text,
+                    ),
+                    modifier = Modifier.fillMaxWidth().focusRequester(fieldFocus),
+                )
+            } else {
             OutlinedTextField(
                 // ⚠ The manifest default when the graph carries nothing, so
                 // the field shows what the node will actually RUN with
                 // rather than an empty box that means "0.5".
-                value = node.params[w.name] ?: w.default.orEmpty(),
+                value = current,
                 onValueChange = {
                     // ⚠⚠ An emptied NUMERIC field writes its default rather
                     // than "", because "" is not a number: `seed` blank made
@@ -653,12 +991,22 @@ internal fun NodeInspectorBody(
                 },
                 // ⚠ Only Text Encode has these now, and a prompt is the one
                 // field people paste paragraphs into.
-                singleLine = w.name != "prompt" && w.name != "negative",
+                singleLine = !isProse,
+                // ⚠⚠ **minLines, not just `singleLine = false`.** Without a floor
+                // the box OPENS one line tall and grows as you type, which reads
+                // as a single-line field that happens to wrap — you cannot see
+                // the prompt you already have without scrolling inside it. Three
+                // lines up front makes it a text area; eight caps it so a long
+                // negative cannot push the rest of the sheet off screen.
+                // Asked for from the phone, 2026-09-11.
+                minLines = if (isProse) 3 else 1,
+                maxLines = if (isProse) 8 else 1,
                 keyboardOptions = KeyboardOptions(
                     keyboardType = if (w.numeric) KeyboardType.Number else KeyboardType.Text,
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
+            }
             }
             if (batchable) {
                 BatchToggle(
@@ -744,6 +1092,9 @@ internal fun NodeInspectorBody(
  */
 private const val CHIP_LIMIT = 4
 
+/** Below this, a [Widget.fine] knob keeps two decimals. The distilled-model band. */
+private const val FINE_EDGE = 2f
+
 /**
  * One value out of a list too long for chips.
  *
@@ -813,7 +1164,12 @@ private fun SliderRow(widget: Widget, current: String, onSet: (String) -> Unit) 
     // ⚠ Decimals follow the RANGE, not the type. One decimal is right for cfg
     // over 1..20 and useless for feather over 0..0.2, where every value a user
     // can pick rounds to "0.0" — which reads as a slider that does nothing.
-    val decimals = if (max - min <= 1f) 2 else 1
+    // ⚠ Decimals follow the VALUE for a [Widget.fine] knob: two below 2.0,
+    // where a distilled model lives and 1.02 differs visibly from 1.2, and one
+    // above it, where nobody is choosing between 7.4 and 7.45.
+    fun decimalsAt(v: Float) =
+        if (widget.fine) (if (v < FINE_EDGE) 2 else 1)
+        else if (max - min <= 1f) 2 else 1
     // ⚠ Falls back to the DEFAULT, not to `min`: a param that failed to parse
     // is a bug, and pinning the slider to the low end of the range would
     // quietly change what the node renders with.
@@ -821,17 +1177,37 @@ private fun SliderRow(widget: Widget, current: String, onSet: (String) -> Unit) 
         ?: widget.default?.toFloatOrNull()
         ?: min
     val shown = value.coerceIn(min, max)
+    // ⭐⭐ A [Widget.fine] slider is NOT linear in its value: the track position
+    // is the square root of the normalised value, so the bottom of the range
+    // gets far more travel. On cfg 1..20 that turns the 1.0-2.0 band from 5% of
+    // the track into ~23% -- enough to land 1.02 on with a finger, which is the
+    // whole point of the request.
+    //
+    // ⚠ Monotonic and exactly invertible, so the thumb sits where the value
+    // says it does; a piecewise mapping would have a visible kink at the joint.
+    // ⚠ The VALUE written to the graph is unchanged by any of this -- the
+    // curve is presentation, and the param stays a plain number.
+    fun toTrack(v: Float): Float =
+        if (!widget.fine || max <= min) v
+        else min + (max - min) * sqrt(((v - min) / (max - min)).coerceIn(0f, 1f))
+    fun fromTrack(t: Float): Float {
+        if (!widget.fine || max <= min) return t
+        val n = ((t - min) / (max - min)).coerceIn(0f, 1f)
+        return min + (max - min) * n * n
+    }
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(
             "${widgetLabel(widget.name)}   " +
-                if (isInt) shown.roundToInt().toString() else fixed(shown, decimals),
+                if (isInt) shown.roundToInt().toString()
+                else fixed(shown, decimalsAt(shown)),
             style = MaterialTheme.typography.bodyMedium,
         )
         Slider(
             colors = nightmareSliderColors(),
-            value = shown,
-            onValueChange = {
-                onSet(if (isInt) it.roundToInt().toString() else fixed(it, decimals))
+            value = toTrack(shown),
+            onValueChange = { t ->
+                val v = fromTrack(t)
+                onSet(if (isInt) v.roundToInt().toString() else fixed(v, decimalsAt(v)))
             },
             valueRange = min..max,
             // ⚠⚠ CONTINUOUS, even for an int knob — the snapping is done in

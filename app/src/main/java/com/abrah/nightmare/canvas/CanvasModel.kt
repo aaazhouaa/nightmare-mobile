@@ -44,6 +44,17 @@ data class Workflow(
      * disagree and stretch the image, which is the thing resizing exists to fix.
      */
     val sizes: Map<String, Float> = emptyMap(),
+    /**
+     * ⭐⭐ Node id -> how many LINES each of its prose boxes may show.
+     *
+     * ⚠⚠ **Lines, not pixels.** A node's height is otherwise derived (ports
+     * plus a picture at its own aspect), and storing a height beside that would
+     * let the two disagree -- the exact reason [sizes] is width-only. A line
+     * count composes with the derivation instead of fighting it: the box grows
+     * by whole lines, and the node's height follows from the total as it always
+     * has.
+     */
+    val proseLines: Map<String, Int> = emptyMap(),
 ) {
     fun moved(id: String, to: Pt) = copy(positions = positions + (id to to))
 
@@ -51,7 +62,13 @@ data class Workflow(
     fun resized(id: String, width: Float) =
         copy(sizes = sizes + (id to width.coerceIn(Sizes.NODE_WIDTH, Sizes.NODE_MAX_WIDTH)))
 
+    /** ⚠ Clamped to a readable band; see [Sizes.PROSE_MAX_LINES]. */
+    fun proseResized(id: String, lines: Int) =
+        copy(proseLines = proseLines + (id to lines.coerceIn(1, Sizes.PROSE_MAX_LINES)))
+
     fun widthOf(id: String): Float = sizes[id] ?: Sizes.NODE_WIDTH
+
+    fun proseLinesOf(id: String): Int = proseLines[id] ?: Sizes.PROSE_DEFAULT_LINES
 }
 
 /**
@@ -86,6 +103,32 @@ object Sizes {
     const val PORT_HIT_RADIUS = 26f
 
     /**
+     * ⭐ Prose in a node body — see [NodeBox.Prose].
+     *
+     * ⚠ [PROSE_CHAR_WIDTH] is an APPROXIMATION of one monospace character at
+     * the drawn size, used only to guess how many lines the text will take.
+     * `layout()` is Compose-free and unit-tested, so it cannot measure; the
+     * renderer clips to whatever this predicts, which makes an under-estimate
+     * an ellipsis rather than an overflow.
+     */
+    const val PROSE_CHAR_WIDTH = 6.2f
+    const val PROSE_LINE_HEIGHT = 15f
+
+    /** ⚠ A cap, so one pasted paragraph cannot make a node taller than the canvas. */
+    const val PROSE_MAX_LINES = 12
+
+    /**
+     * Lines a prose box shows before the user drags it taller.
+     *
+     * ⚠ Two, not one: a one-line box is a thin strip to aim a finger at, and
+     * a tap on it is what opens the prompt for editing.
+     */
+    const val PROSE_DEFAULT_LINES = 2
+
+    /** Inset of the text inside its box, top and bottom. */
+    const val PROSE_BOX_PAD = 4f
+
+    /**
      * ⚠ Smaller than a port's, deliberately. A wire passes THROUGH the space
      * around a node, so a fat hit radius would swallow taps meant for the node
      * behind it — and a wire is tested after nodes for the same reason.
@@ -115,6 +158,22 @@ object Sizes {
     /** Tall enough for the busier side, plus a little body. */
     fun nodeHeight(inputs: Int, outputs: Int): Float =
         HEADER_HEIGHT + PORT_TOP + maxOf(inputs, outputs, 1) * PORT_SPACING + BODY_PADDING
+
+    /**
+     * ⭐⭐ How far down the last PORT actually reaches — the anchor for a body
+     * block, as opposed to [nodeHeight]'s minimum body.
+     *
+     * ⚠⚠ [nodeHeight] reserves a whole [PORT_SPACING] *past* the last port so
+     * an empty node is not a sliver. For a node that HAS a body that reservation
+     * is pure slack, and it showed up as a gap: a prompt node drew `cond` at 74
+     * and its first prompt 66 further down, with nothing in between. Reported
+     * from the phone 2026-09-11 ("too much top space above prompt").
+     *
+     * ⇒ A body block starts just below the last port row instead.
+     */
+    fun portsExtent(inputs: Int, outputs: Int): Float =
+        HEADER_HEIGHT + PORT_TOP + (maxOf(inputs, outputs, 1) - 1) * PORT_SPACING +
+            PORT_RADIUS + BODY_PADDING
 }
 
 /** A node laid out: where it is, how big, and where its ports are. */
@@ -133,9 +192,28 @@ data class NodeBox(
      * being squeezed into the node.
      */
     val preview: Preview? = null,
+    /** ⭐ Text drawn in the body — a prompt node's prompts. Null for every other node. */
+    val prose: Prose? = null,
 ) {
     /** The area a preview occupies, and the drag target that resizes it. */
     data class Preview(val imageId: String, val height: Float)
+
+    /**
+     * The text a node shows in its body, as (field name, value) pairs.
+     *
+     * ⚠ [height] is computed from a LINE COUNT rather than measured — see
+     * [layout]. The renderer clips to it.
+     */
+    data class Prose(
+        val fields: List<Pair<String, String>>,
+        val height: Float,
+        /**
+         * ⚠ Lines each box may use. Carried on the BOX so the renderer needs
+         * nothing but what it was handed -- and so the height above and the
+         * clipping below are computed from the same number.
+         */
+        val maxLines: Int,
+    )
 
     /** ⚠ Bottom-right, and hit BEFORE the body so a resize is not read as a drag. */
     val resizeCorner get() = Pt(right, bottom)
@@ -144,6 +222,33 @@ data class NodeBox(
         kotlin.math.hypot(p.x - right, p.y - bottom) <= Sizes.RESIZE_HIT
 
     val previewTop get() = bottom - (preview?.height ?: 0f) - Sizes.BODY_PADDING
+
+    /** ⚠ Above the picture when a node somehow has both; today nothing does. */
+    val proseTop get() = previewTop - (prose?.height ?: 0f) -
+        (if (prose != null) Sizes.BODY_PADDING else 0f)
+
+    /**
+     * ⭐⭐ Where each prose box IS, in world units — `field to (top, bottom)`.
+     *
+     * ⚠⚠ **One definition, two consumers.** The renderer draws these boxes and
+     * the canvas hit-tests them to decide which field a tap landed on; if the
+     * two computed the rect separately they would drift, and a tap would edit
+     * the field next to the one under the finger. The renderer measures its
+     * text and so is exact to the pixel, but it agrees with this because both
+     * are driven by [Prose.maxLines].
+     */
+    fun proseRects(): List<Triple<String, Float, Float>> {
+        val p = prose ?: return emptyList()
+        var y = proseTop
+        // ⚠ Every box the same height, so this is plain arithmetic and cannot
+        // disagree with what the renderer draws.
+        val boxH = p.maxLines * Sizes.PROSE_LINE_HEIGHT + 2 * Sizes.PROSE_BOX_PAD
+        return p.fields.map { (field, _) ->
+            val top = y + Sizes.PROSE_LINE_HEIGHT
+            y = top + boxH + Sizes.PROSE_BOX_PAD
+            Triple(field, top, top + boxH)
+        }
+    }
 
     val right get() = topLeft.x + width
     val bottom get() = topLeft.y + height
@@ -330,23 +435,85 @@ fun layout(
         val type = types[n.type]
         val pos = workflow.positions[n.id] ?: Pt(0f, 0f)
         val width = workflow.widthOf(n.id)
-        val ports = Sizes.nodeHeight(type?.inputs?.size ?: 0, type?.outputs?.size ?: 0)
+        val nIn = type?.inputs?.size ?: 0
+        val nOut = type?.outputs?.size ?: 0
         val shown = previews[n.id]
         // ⚠ The picture is inset from both edges, so its width is the node's
         // width less the padding -- using the full width would draw it over the
         // node's rounded corners.
         val previewWidth = width - 2 * Sizes.BODY_PADDING
+        // ⭐⭐ How many lines EACH prose box may use, from the node's own extra
+        // height. Dragging the node taller gives the prompts more room rather
+        // than padding the bottom -- which is what "make the prompt node bigger
+        // vertically" has to mean for a node whose height is otherwise derived.
+        val perFieldLines = workflow.proseLinesOf(n.id)
         val preview = shown?.let { (id, aspect) ->
             NodeBox.Preview(id, (previewWidth / aspect.coerceAtLeast(0.05f)))
         }
+        // ⭐⭐ **Prose in the body**, for a node whose whole content is text.
+        //
+        // ⚠⚠ A prompt node had nothing to show: its ports carry a
+        // conditioning, so the canvas drew a box with one output and a name,
+        // and the only way to see what it SAID was to open the inspector. Asked
+        // for from the phone 2026-09-11 ("see both prompts on it").
+        //
+        // ⚠ It uses the SAME mechanism a picture does -- a body block that
+        // adds height -- rather than a new one. That is also why this does not
+        // break the deferral in `docs/ROADMAP.md` §"Batch results INSIDE the
+        // node": that one needs N TAPPABLE thumbnails, and hit-testing against
+        // the viewport transform is the hard part. Text is drawn and never hit,
+        // so it needs none of it.
+        //
+        // ⚠ The height is counted in LINES here, not measured: this function is
+        // Compose-free and unit-tested, and a `TextMeasurer` is neither. The
+        // renderer clips to what it is given, so a long prompt ends in an
+        // ellipsis rather than overflowing the node.
+        // ⚠⚠ **EVERY declared field, blank or not.** Showing only what was
+        // typed meant an empty negative simply vanished, so a node with one
+        // prompt filled in looked like a node that has one field -- and there
+        // was no way to see that the other exists without opening the
+        // inspector. Both captions always show; an empty box reads as empty.
+        val prose = type?.prose
+            ?.takeIf { it.isNotEmpty() }
+            ?.map { field -> field to n.params[field].orEmpty() }
+            ?.let { fields ->
+                // ⚠ Wrapped against the node's own width at the drawn font size,
+                // so a WIDER node genuinely shows more -- which is what makes
+                // dragging the resize corner the way to "make it bigger".
+                // ⚠⚠ **Every box is [perFieldLines] tall, whatever it contains.**
+                //
+                // It used to be `min(wrapped, budget)`, which had two bad
+                // consequences the phone found at once: a SHORT prompt pinned
+                // the box to one line, so dragging the node taller did nothing
+                // at all (the budget went up and the minimum ignored it); and
+                // the two boxes were different heights, so the smaller one was
+                // a thin strip to aim a finger at. Reported 2026-09-11 as
+                // "vertical resize not working".
+                //
+                // ⇒ A uniform, generous target that the drag actually changes.
+                // Text longer than the box is ellipsized by the renderer.
+                val lines = fields.size * (1 + perFieldLines)
+                NodeBox.Prose(
+                    fields,
+                    lines * Sizes.PROSE_LINE_HEIGHT + fields.size * Sizes.PROSE_BOX_PAD * 2,
+                    perFieldLines,
+                )
+            }
         NodeBox(
             id = n.id,
             type = type,
             node = n,
             topLeft = pos,
             width = width,
-            height = ports + (preview?.let { it.height + Sizes.BODY_PADDING } ?: 0f),
+            // ⚠ A node with a BODY anchors it just under the last port
+            // ([Sizes.portsExtent]); one without keeps [Sizes.nodeHeight]'s
+            // minimum, so an empty node is still a comfortable box.
+            height = (if (prose != null) Sizes.portsExtent(nIn, nOut)
+                else Sizes.nodeHeight(nIn, nOut)) +
+                (preview?.let { it.height + Sizes.BODY_PADDING } ?: 0f) +
+                (prose?.let { it.height + Sizes.BODY_PADDING } ?: 0f),
             preview = preview,
+            prose = prose,
         )
     }
 

@@ -59,7 +59,20 @@ sealed interface Gesture {
      * opposite things with the same finger, and a boolean would make every
      * `drag` branch ask which it was.
      */
-    data class ResizingNode(val id: String, val startWidth: Float, val from: Pt) : Gesture
+    data class ResizingNode(
+        val id: String,
+        val startWidth: Float,
+        val from: Pt,
+        /**
+         * ⭐ The node's prose line budget when the drag began, so a VERTICAL
+         * drag on the same corner grows the prompt boxes.
+         *
+         * ⚠ Lines rather than pixels, and from the START value like
+         * [startWidth] — accumulating per-event deltas drifts, and a node that
+         * ends a size different from where the finger is looks broken.
+         */
+        val startProseLines: Int = Sizes.PROSE_DEFAULT_LINES,
+    ) : Gesture
 }
 
 /** The whole interactive state of the canvas, and the rules for changing it. */
@@ -98,6 +111,20 @@ data class CanvasState(
      * be tested at the wrong place, and taps would land on nothing.
      */
     val previews: Map<String, Pair<String, Float>> = emptyMap(),
+    /**
+     * ⭐⭐ The field the inspector should open FOCUSED on, with the keyboard up.
+     *
+     * ⚠⚠ Set by a tap on a prompt box on the canvas. Typing in place was
+     * built and then withdrawn (the user's call, 2026-09-11): a real composable
+     * floated over the drawn canvas is the option `docs/ROADMAP.md` weighed and
+     * set aside, and even for one field it meant a text cursor, a scrim and the
+     * canvas's own gestures competing for the same pixels. Opening the sheet on
+     * the right field is the same two taps' worth of intent with none of that.
+     *
+     * ⚠ Cleared once consumed, or reopening the sheet by any other route would
+     * jump the keyboard up again.
+     */
+    val focusField: String? = null,
     /**
      * True while a long press has put the canvas in multi-select.
      *
@@ -182,7 +209,9 @@ data class CanvasState(
             // ⚠ Does not select: see [selection]. Grabbing a corner is a resize,
             // not a request to enter multi-select.
             return copy(
-                gesture = Gesture.ResizingNode(box.id, workflow.widthOf(box.id), world),
+                gesture = Gesture.ResizingNode(
+                    box.id, workflow.widthOf(box.id), world, workflow.proseLinesOf(box.id),
+                ),
                 message = null,
             )
         }
@@ -272,8 +301,24 @@ data class CanvasState(
             // ⚠ From the gesture's START width and the total travel, not by
             // accumulating per-event deltas: accumulating drifts, and a node
             // that ends a size different from where the finger is looks broken.
+            // ⭐⭐ One corner, BOTH axes. Horizontal travel is the body width as
+            // it always was; vertical travel grows the prose boxes.
+            //
+            // ⚠⚠ Height is still never stored as a number. A node's height is
+            // derived (ports + picture + prose), and storing a pixel height
+            // beside that would let the two disagree — the exact reason `sizes`
+            // is width-only. What the drag sets is a LINE COUNT, which the
+            // derivation then uses. Asked for from the phone 2026-09-11.
             is Gesture.ResizingNode ->
-                copy(workflow = workflow.resized(g.id, g.startWidth + (world.x - g.from.x)))
+                copy(
+                    workflow = workflow
+                        .resized(g.id, g.startWidth + (world.x - g.from.x))
+                        .proseResized(
+                            g.id,
+                            g.startProseLines +
+                                ((world.y - g.from.y) / Sizes.PROSE_LINE_HEIGHT).toInt(),
+                        ),
+                )
 
             is Gesture.DraggingWire -> {
                 // ⭐ The refusal is computed WHILE the finger is down, so the
@@ -325,6 +370,21 @@ data class CanvasState(
             // the node opens the inspector. Tapping a preview to edit a prompt
             // is not what anyone means by tapping a picture.
             val box = boxes(types).firstOrNull { it.id == g.id }
+            // ⭐⭐ A tap on a PROMPT BOX edits that prompt, on the canvas.
+            //
+            // ⚠ Checked before the preview and before the inspector, because it
+            // is the most specific target: the box is inside the node, and
+            // falling through would open the sheet the user was avoiding.
+            // ⭐⭐ A tap on a PROMPT BOX opens the inspector ON that prompt, with
+            // the keyboard already up.
+            //
+            // ⚠ Checked before the preview and before the plain
+            // open-the-inspector below, because it is the most specific target.
+            box?.proseRects()?.firstOrNull { (_, top, bottom) ->
+                world.y in top..bottom
+            }?.let { (field, _, _) ->
+                return copy(gesture = Gesture.Idle, editing = g.id, focusField = field)
+            }
             val onPreview = box?.preview != null && world.y >= box.previewTop
             // ⚠⚠ …UNLESS the node is interactive, and the cropper is why. Its
             // picture is not something to look at, it is the control you frame
@@ -335,7 +395,7 @@ data class CanvasState(
             return if (onPreview && box!!.type?.interactive != true) {
                 copy(gesture = Gesture.Idle, viewing = box.preview!!.imageId)
             } else {
-                copy(gesture = Gesture.Idle, editing = g.id)
+                copy(gesture = Gesture.Idle, editing = g.id, focusField = null)
             }
         }
         // ⭐⭐ A long press starts multi-select on the node under the finger.
@@ -429,7 +489,7 @@ data class CanvasState(
         workflow = workflow.copy(graph = workflow.graph.withParams(nodeId, values)),
     )
 
-    fun closeInspector() = copy(editing = null)
+    fun closeInspector() = copy(editing = null, focusField = null)
 
     /**
      * ⭐ Long press on a node: enter multi-select with it chosen.
@@ -488,9 +548,60 @@ data class CanvasState(
                 graph = workflow.graph.copy(nodes = workflow.graph.nodes + node),
                 positions = workflow.positions + (id to at),
             ),
+            // ⚠⚠ **A NEW node must never inherit a picture.** [freeId] hands back
+            // the lowest unused name, so deleting `upscale` and adding another
+            // one gets the id `upscale` straight back -- and the preview map is
+            // keyed by id, so the new node opened showing the DELETED node's
+            // last output. Reported from the phone 2026-09-11: a freshly
+            // dropped upscale node already had an old render on it.
+            // ⚠ Belt and braces with [removeNode], which now drops it too. This
+            // one also covers an id freed by any other route.
+            previews = previews - id,
             editing = id,
             showPalette = false,
             message = null,
+        )
+    }
+
+    /**
+     * ⭐⭐ Rename a node. Its id IS its name on the canvas.
+     *
+     * ⚠⚠ **An id is not a label — it is what every wire points at.** So this
+     * is not a cosmetic edit: every `inputs` [Source] naming the old id has to
+     * move with it, and so does its entry in each of the maps keyed by id
+     * (positions, sizes, previews, selection, the open inspector). Renaming the
+     * node alone would silently disconnect the graph.
+     *
+     * ⚠ Refused, unchanged, when the new name is blank, already taken, or
+     * contains [Source.SEP] — `topoSort` refuses an id with a ':' by name,
+     * because the wire format reads the tail as a port.
+     */
+    fun renameNode(from: String, to: String): CanvasState {
+        val name = to.trim()
+        if (name == from) return this
+        if (name.isEmpty() || com.abrah.nightmare.Source.SEP in name) return this
+        if (workflow.graph.byId[name] != null) return this
+        if (workflow.graph.byId[from] == null) return this
+
+        val nodes = workflow.graph.nodes.map { n ->
+            val renamed = if (n.id == from) n.copy(id = name) else n
+            // ⚠ Every wire, on every node -- not just the renamed one's own.
+            val rewired = renamed.inputs.mapValues { (_, src) ->
+                if (src.node == from) src.copy(node = name) else src
+            }
+            if (rewired == renamed.inputs) renamed else renamed.copy(inputs = rewired)
+        }
+        fun <V> Map<String, V>.moveKey(): Map<String, V> =
+            if (!containsKey(from)) this else (this - from) + (name to getValue(from))
+        return copy(
+            workflow = Workflow(
+                graph = workflow.graph.copy(nodes = nodes),
+                positions = workflow.positions.moveKey(),
+                sizes = workflow.sizes.moveKey(),
+            ),
+            previews = previews.moveKey(),
+            selection = if (from in selection) selection - from + name else selection,
+            editing = if (editing == from) name else editing,
         )
     }
 
@@ -506,6 +617,9 @@ data class CanvasState(
             graph = workflow.graph.without(id),
             positions = workflow.positions - id,
         ),
+        // ⚠ The picture goes with the node. Leaving it behind makes the map
+        // grow forever, and worse, hands it to the next node that takes this id.
+        previews = previews - id,
         selection = selection - id,
         editing = if (editing == id) null else editing,
         // ⚠ A picked wire that ended on this node no longer exists.

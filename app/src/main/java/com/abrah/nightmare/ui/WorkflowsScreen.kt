@@ -226,7 +226,7 @@ fun WorkflowsScreen(
         NameDialog(
             title = stringResource(R.string.workflows_rename_title, from),
             initial = from,
-            confirm = "rename",
+            confirm = stringResource(R.string.rename),
             onDismiss = { renaming = null },
             onConfirm = { onRenameSaved(from, it); renaming = null },
         )
@@ -303,6 +303,7 @@ private fun recipeLabel(id: String, fallback: String): String = when (id) {
     "txt2img" -> stringResource(R.string.r2_recipe_txt2img_label)
     "img2img" -> stringResource(R.string.r2_recipe_img2img_label)
     "inpaint" -> stringResource(R.string.r2_recipe_inpaint_label)
+    "upscale" -> stringResource(R.string.r2_recipe_upscale_label)
     else -> fallback
 }
 
@@ -311,5 +312,6 @@ private fun recipeAbout(id: String, fallback: String): String = when (id) {
     "txt2img" -> stringResource(R.string.r2_recipe_txt2img_about)
     "img2img" -> stringResource(R.string.r2_recipe_img2img_about)
     "inpaint" -> stringResource(R.string.r2_recipe_inpaint_about)
+    "upscale" -> stringResource(R.string.r2_recipe_upscale_about)
     else -> fallback
 }

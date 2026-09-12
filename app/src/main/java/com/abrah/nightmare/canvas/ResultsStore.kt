@@ -51,7 +51,7 @@ data class Result(
     /** ⭐ What made this item different, e.g. `cfg 7.5`. Empty when it is alone. */
     val batchLabel: String = "",
 ) {
-    val label: String get() = prompt?.take(60)?.ifBlank { null } ?: "no prompt"
+    val label: String get() = prompt?.take(60)?.ifBlank { "" } ?: ""
 }
 
 /**

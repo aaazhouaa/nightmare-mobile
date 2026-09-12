@@ -328,9 +328,20 @@ internal fun NodeInspectorBody(
             // scroll, and a rename opening on a stray touch would put a keyboard
             // over the knobs they were reaching for.
             val editingName = renaming
+            // ⚠ Canvas already shows the translated type name + counter
+            // (`文本编码_8`). The inspector used to match that; merge took
+            // upstream's "title = nodeId" which put `clip_encode_8` back on
+            // the sheet. Keep the Chinese name unless the user has renamed
+            // the node away from the auto id.
+            val autoId = node.type.nodeLabel + nodeCounterSuffix(nodeId, node.type)
+            val displayTitle = if (nodeId == autoId || nodeId == node.type.nodeLabel) {
+                nodeDisplayName(node.type) + nodeCounterSuffix(nodeId, node.type)
+            } else {
+                nodeId
+            }
             if (editingName == null) {
                 Text(
-                    nodeId,
+                    displayTitle,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 20.sp,
                     modifier = Modifier.pointerInput(nodeId) {
@@ -712,10 +723,9 @@ internal fun NodeInspectorBody(
                         .map { if (w.name == "scheduler") ModelCatalog.schedulerLabel(it) else it }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(w.name, style = MaterialTheme.typography.bodyMedium)
+                            Text(widgetLabel(w.name), style = MaterialTheme.typography.bodyMedium)
                             Text(
-                                "Batching " + picked.size + " values: " +
-                                    picked.joinToString(", "),
+                                stringResource(R.string.r2_ins_batching, picked.size, picked.joinToString(", ")),
                                 style = LogTextStyle,
                                 color = MaterialTheme.colorScheme.primary,
                             )
@@ -937,7 +947,7 @@ internal fun NodeInspectorBody(
                     },
                     readOnly = why != null,
                     enabled = why == null,
-                    label = { Text(if (why != null) "${w.name}  (locked)" else w.name) },
+                    label = { Text(if (why != null) stringResource(R.string.r2_ins_locked, widgetLabel(w.name)) else widgetLabel(w.name)) },
                     supportingText = {
                         Text(
                             why ?: w.hint.orEmpty(),

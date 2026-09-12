@@ -522,7 +522,7 @@ private fun ModelCard(
                         // INFERRED from the files rather than published by us.
                         "${row.spec.family.label}  ${row.spec.native}" +
                             when {
-                                row.spec.isCustom -> "  imported"
+                                row.spec.isCustom -> "  " + stringResource(R.string.models_imported_tag)
                                 row.build != null -> "  ${row.build.tier.removePrefix("_")}"
                                 else -> ""
                             },
@@ -712,5 +712,6 @@ private fun progressPhase(phase: String): String = when {
         stringResource(R.string.r2_progress_downloading, phase.removePrefix("downloading "))
     phase.startsWith("extracting ") ->
         stringResource(R.string.r2_progress_extracting, phase.removePrefix("extracting "))
+    phase == "starting" -> stringResource(R.string.run_starting)
     else -> phase
 }

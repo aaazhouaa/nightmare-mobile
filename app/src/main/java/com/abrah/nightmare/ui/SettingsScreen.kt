@@ -142,12 +142,17 @@ private fun CommunityPage(onImportPack: (() -> Unit)? = null) {
             // stops it looping forever or allocating until the app dies
             // (`docs/ARCHITECTURE.md` §8c). Until the validation gate exists,
             // the honest place to say so is where the tap happens.
-            // ⚠ [ImportCallout] is the SAME card Models and Flows draw.
+            // ⚠ Same [ImportCallout] as Models / Flows, un-highlighted so it
+            // matches the Section cards under it.
             ImportCallout(
                 title = stringResource(R.string.flows_import_pack),
                 body = stringResource(R.string.pack_import_note),
                 warning = stringResource(R.string.flows_import_warning),
                 onImport = importPack,
+                // ⚠ Same surface as [Section] below. The tinted ImportCallout
+                // is for a list of items; here it sat in a stack of cards
+                // and read as a different colour.
+                highlighted = false,
             )
         }
         Section(R.string.community_files_title, R.string.community_files_body)

@@ -715,8 +715,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     if (missing.isEmpty()) {
                         selectModel(spec)
                     } else {
-                        modelError = "${spec.label} imported but is incomplete: " +
-                            "missing ${missing.joinToString()}"
+                        modelError = getApplication<Application>().getString(
+                            R.string.err_imported_incomplete,
+                            spec.label,
+                            missing.joinToString(),
+                        )
                     }
                     refreshModels()
                 }
@@ -725,7 +728,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     installing = null
                     installProgress = null
                     busy = false
-                    modelError = "import failed: ${e.message}"
+                    modelError = getApplication<Application>().getString(
+                        R.string.err_import_failed,
+                        e.message ?: e.javaClass.simpleName,
+                    )
                     refreshModels()
                 }
             }
@@ -743,9 +749,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // refused up front rather than after 3.5 GB.
         val build = spec.buildFor(DeviceProbe.caps())
         if (build == null) {
-            modelError = "${spec.label} needs an HTP arch of " +
-                "${spec.builds.minOf { it.minArch }} or newer; this device reports " +
-                "${DeviceProbe.caps().arch}"
+            modelError = getApplication<Application>().getString(
+                R.string.err_htp_arch,
+                spec.label,
+                spec.builds.minOf { it.minArch }.toString(),
+                DeviceProbe.caps().arch.toString(),
+            )
             installing = null
             busy = false
             return
@@ -830,9 +839,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val ctx = getApplication<Application>()
         val build = spec.buildFor(DeviceProbe.caps())
         if (build == null) {
-            modelError = "${spec.label} needs an HTP arch of " +
-                "${spec.builds.minOf { it.minArch }} or newer; this device reports " +
-                "${DeviceProbe.caps().arch}"
+            modelError = getApplication<Application>().getString(
+                R.string.err_htp_arch,
+                spec.label,
+                spec.builds.minOf { it.minArch }.toString(),
+                DeviceProbe.caps().arch.toString(),
+            )
             return
         }
         installing = spec.id
@@ -2259,11 +2271,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun runBatch(spec: BatchSpec) = run("batch") {
         val combos = spec.expand()
         if (combos.isEmpty()) {
-            runError = "nothing to sweep -- check the values"
+            runError = getApplication<Application>().getString(R.string.err_nothing_to_sweep)
             return@run
         }
         if (!ops.ensureBackend()) {
-            runError = "the backend would not start -- see Settings > Diagnostics"
+            runError = getApplication<Application>().getString(R.string.err_backend_start)
             return@run
         }
         // ⚠⚠ **Refused, not guessed.** A graph with two unconsumed image nodes
@@ -2274,9 +2286,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val terminals = terminalImageNodes(canvas.workflow.graph, typesFor(canvas.workflow.graph))
         if (terminals.size != 1) {
             runError = if (terminals.isEmpty()) {
-                "nothing to collect -- this graph makes no final picture"
+                getApplication<Application>().getString(R.string.err_nothing_to_collect)
             } else {
-                "two endings (${terminals.joinToString(", ")}) -- a sweep needs one"
+                getApplication<Application>().getString(
+                    R.string.err_two_endings,
+                    terminals.joinToString(", "),
+                )
             }
             say("batch: $runError", bad = true)
             return@run
@@ -2353,7 +2368,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     // ⚠ For a SEED sweep the override is "0" (roll me), so the
                     // useful label is which run it was — the real seed is
                     // recorded separately by `keepResult` from the run itself.
-                    batchLabel = label.ifBlank { "run ${i + 1}" },
+                    batchLabel = label.ifBlank {
+                        getApplication<Application>().getString(R.string.batch_nth_run, i + 1)
+                    },
                 )
             }
 
@@ -2634,7 +2651,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // would otherwise swallow a cancellation and report it as a
                 // crash -- and a coroutine that eats its own CancellationException
                 // leaves the scope believing the job is still alive.
-                runError = "cancelled"
+                runError = getApplication<Application>().getString(R.string.err_cancelled)
                 say("$label cancelled")
                 throw e
             } catch (e: Throwable) {

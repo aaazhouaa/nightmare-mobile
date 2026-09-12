@@ -66,9 +66,9 @@
 
     <string name="flows_import">导入</string>
     <string name="pack_import_note">JavaScript 节点包（.zip）。导入后会出现在面板里，和内置节点排在一起。</string>
-    <string name="flows_import_note">别人发给你的流程（.json），或一个节点包（.zip）</string>
-    <string name="flows_import_flow">导入</string>
-    <string name="flows_import_pack">节点</string>
+    <string name="flows_import_note">别人发给你的流程（.json），导入后会在画布上打开</string>
+    <string name="flows_import_flow">流程</string>
+    <string name="flows_import_pack">导入节点包</string>
     <string name="flows_import_warning">⚠ 节点包会运行自己的代码 — 请只导入你信任的包</string>
     <string name="flows_recommended">推荐</string>
     <string name="save">保存</string>
@@ -413,6 +413,21 @@
     <string name="r2_recipe_img2img_about">从相册选一张照片：取景后按你选择的强度重新想象它。</string>
     <string name="r2_recipe_inpaint_label">局部重绘——涂抹区域重新生成</string>
     <string name="r2_recipe_inpaint_about">涂抹照片的一部分，仅该部分会被重新生成。点按蒙版节点开始涂抹。</string>
+    <string name="r2_recipe_upscale_label">放大照片</string>
+    <string name="r2_recipe_upscale_about">从相册选一张图，放大 4 倍。不需要 checkpoint——放大器是独立的小模型，在模型页安装。</string>
+    <string name="err_nothing_to_sweep">没有可扫描的值——请检查填写</string>
+    <string name="err_nothing_to_collect">没有可收集的结果——此流程不会产出最终图片</string>
+    <string name="err_two_endings">有两个终点（%1$s）——扫描需要唯一终点</string>
+    <string name="err_cancelled">已取消</string>
+    <string name="rename">重命名</string>
+    <string name="results_n_pictures">%1$d 张图片</string>
+    <string name="results_one_picture">1 张图片</string>
+    <string name="results_no_prompt">无提示词</string>
+    <string name="batch_nth_run">第 %1$d 次</string>
+    <string name="models_imported_tag">已导入</string>
+    <string name="err_import_failed">导入失败：%1$s</string>
+    <string name="err_imported_incomplete">%1$s 已导入但不完整：缺少 %2$s</string>
+    <string name="err_htp_arch">%1$s 需要 HTP 架构 %2$s 或更新；本机报告 %3$s</string>
 
     <plurals name="kept_in_results">
         <item quantity="other">已将 %1$d 张图片保存到结果</item>

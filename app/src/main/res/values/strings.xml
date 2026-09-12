@@ -446,6 +446,21 @@
     <string name="r2_recipe_img2img_about">A photo from the gallery: frame it, then re-imagine it at the strength you choose.</string>
     <string name="r2_recipe_inpaint_label">Inpaint — paint an area to redo</string>
     <string name="r2_recipe_inpaint_about">Paint over part of a photo and only that part is re-imagined. Tap the Mask node to paint.</string>
+    <string name="r2_recipe_upscale_label">Upscale a photo</string>
+    <string name="r2_recipe_upscale_about">A picture from the gallery, enlarged 4x. No checkpoint involved — the upscaler is its own small model, installed under Models.</string>
+    <string name="err_nothing_to_sweep">nothing to sweep — check the values</string>
+    <string name="err_nothing_to_collect">nothing to collect — this graph makes no final picture</string>
+    <string name="err_two_endings">two endings (%1$s) — a sweep needs one</string>
+    <string name="err_cancelled">cancelled</string>
+    <string name="rename">Rename</string>
+    <string name="results_n_pictures">%1$d pictures</string>
+    <string name="results_one_picture">1 picture</string>
+    <string name="results_no_prompt">no prompt</string>
+    <string name="batch_nth_run">run %1$d</string>
+    <string name="models_imported_tag">imported</string>
+    <string name="err_import_failed">import failed: %1$s</string>
+    <string name="err_imported_incomplete">%1$s imported but is incomplete: missing %2$s</string>
+    <string name="err_htp_arch">%1$s needs an HTP arch of %2$s or newer; this device reports %3$s</string>
 
     <plurals name="kept_in_results">
         <item quantity="one">%1$d picture saved to Results</item>

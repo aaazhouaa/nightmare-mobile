@@ -644,8 +644,8 @@ private fun BatchCard(
     ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ResultCardHeader(
-                title = "${group.size} pictures",
-                label = cover.label,
+                title = stringResource(R.string.results_n_pictures, group.size),
+                label = cover.label.ifBlank { stringResource(R.string.results_no_prompt) },
                 meta = listOfNotNull(cover.model, "${cover.width}×${cover.height}")
                     .joinToString("  "),
                 onDelete = { onDelete(group) },
@@ -744,8 +744,8 @@ private fun ResultCard(
     ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ResultCardHeader(
-                title = "1 picture",
-                label = result.label,
+                title = stringResource(R.string.results_one_picture),
+                label = result.label.ifBlank { stringResource(R.string.results_no_prompt) },
                 // ⚠ The seed has left this line — it is its own control below,
                 // because it is the one piece of metadata people want to TAKE
                 // rather than read.

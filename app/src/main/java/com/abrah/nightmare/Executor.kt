@@ -392,8 +392,7 @@ private fun aspectWidget(): Array<Widget> =
         Widget(
             "aspect", "string", ModelCatalog.DEFAULT_ASPECT,
             options = ModelCatalog.ASPECTS,
-            hint = "this family renders a fixed ${SelectedModel.spec.native} and crops to shape -- " +
-                "it costs no reload, but a wider picture is not a bigger one",
+            hint = "此模型按固定 ${SelectedModel.spec.native} 渲染并裁剪成比例，无需重新加载——更宽不等于更大",
         )
     )
 

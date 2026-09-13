@@ -206,3 +206,28 @@ dependencies {
     testImplementation("io.github.takahirom.roborazzi:roborazzi-junit-rule:1.26.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
+
+// ⭐ aarch64 沙箱适配：后端与 QNN 库是 gitignore 的暂存输入（见
+// tools/stage_backend.sh）。曾经只有 tools/assemble-release.sh 知道要先
+// 暂存，裸跑 assembleDebug 会拿旧库或干脆空库出包——零报错，装机后
+// 死在 BackendProcess 的启动检查上。把同一支暂存挂到每个 merge 任务
+// 之前，所有变体的 APK 内容都以 $QNN_LIBS_PATH 当前内容为准。源目录
+// 不存在的机器（Windows 开发机用 .ps1 暂存）静默跳过。
+val stageBackend = tasks.register("stageBackend") {
+    description = "Refresh assets/qnnlibs + jniLibs from QNN_LIBS_PATH (default /opt/QNN/qnnlibs)."
+    onlyIf { File(System.getenv("QNN_LIBS_PATH") ?: "/opt/QNN/qnnlibs").isDirectory }
+    doLast {
+        val result = project.exec {
+            workingDir = rootProject.projectDir
+            commandLine("sh", rootProject.file("tools/stage_backend.sh").absolutePath)
+            isIgnoreExitValue = true
+        }
+        if (result.exitValue != 0) {
+            logger.warn("stageBackend failed -- APK may package stale or missing backend/QNN libs")
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") &&
+        (it.name.endsWith("Assets") || it.name.endsWith("JniLibFolders")) }
+    .configureEach { dependsOn(stageBackend) }

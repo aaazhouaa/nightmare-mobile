@@ -33,8 +33,15 @@ else
     echo "==> WARN: $QNN_SRC absent; skipping backend staging (app runs UI-only)" >&2
 fi
 
-OUT="$ROOT/nightmare-mobile-1.4.14-release-signed.apk"
-UNSIGNED_FALLBACK="$ROOT/nightmare-mobile-1.4.14-release-unsigned.apk"
+# Artifact name follows versionName (repo rule: patch bumps on every push),
+# so this line cannot rot on the next release; APP_VERSION=... overrides.
+APP_VERSION="${APP_VERSION:-$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' "$ROOT/app/build.gradle.kts" | head -1)}"
+if [ -z "$APP_VERSION" ]; then
+    echo "==> ERROR: cannot read versionName from app/build.gradle.kts; set APP_VERSION" >&2
+    exit 1
+fi
+OUT="$ROOT/nightmare-mobile-$APP_VERSION-release-signed.apk"
+UNSIGNED_FALLBACK="$ROOT/nightmare-mobile-$APP_VERSION-release-unsigned.apk"
 
 # 2g heap / 512m metaspace / parallel GC: measured 14Gi RAM, previous
 # daemon reported 682MiB effective heap and expired on Metaspace.

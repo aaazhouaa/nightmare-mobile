@@ -1,9 +1,10 @@
 // ⚠ Versions are pinned to what is ALREADY in this machine's Gradle cache
-// (AGP 8.7.3, Kotlin 2.0.21, Gradle 8.13) -- the same set DreamUI uses -- so the
-// first build needs minimal downloads and a failure is attributable to our code
-// rather than to dependency resolution.
+// (AGP 8.9.1, Kotlin 2.0.21, Gradle 8.14.2) -- verified working on this
+// aarch64 container (probe: /opt/probe-agp891-robo416) -- so the first build
+// needs minimal downloads and a failure is attributable to our code rather
+// than to dependency resolution.
 plugins {
-    id("com.android.application") version "8.7.3" apply false
+    id("com.android.application") version "8.9.1" apply false
     id("org.jetbrains.kotlin.android") version "2.0.21" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
     // ⭐ The inner loop (docs/UI.md §3). Renders composables to PNG on the JVM

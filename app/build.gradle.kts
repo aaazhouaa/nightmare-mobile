@@ -34,7 +34,7 @@ val keystoreProps = Properties().apply {
 android {
     namespace = "com.abrah.nightmare"
     compileSdk = 35
-    // ⭐ aarch64 沙箱适配：AGP 8.7.3 默认 buildTools 34.0.0 未安装，对齐本地 35.0.0
+    // ⭐ aarch64 沙箱适配：AGP 默认 buildTools 34.0.0 未安装，对齐本地 35.0.0
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
@@ -199,7 +199,7 @@ dependencies {
 
     // Roborazzi: composables to PNG on the JVM, no device, no IDE.
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("org.robolectric:robolectric:4.16")
     testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("io.github.takahirom.roborazzi:roborazzi:1.26.0")
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.26.0")

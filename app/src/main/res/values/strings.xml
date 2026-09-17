@@ -688,4 +688,25 @@
     <string name="log_derived_sizes">  sizes: %1$s</string>
 
     <!-- v1.5.0: the video split nodes narrate themselves (canvas run log). -->
+
+    <!-- v1.5.0: the node names and port labels the canvas draws. -->
+    <string name="node_core_prompt">Prompt</string>
+    <string name="node_core_image">Image</string>
+    <string name="node_image_mask_crop">Mask crop</string>
+    <string name="node_image_paste">Paste</string>
+    <string name="node_mask_segment_model">Segment model</string>
+    <string name="node_nd_first_frame">First frame</string>
+    <string name="node_sd_sample_legacy">Sample (legacy)</string>
+    <string name="port_cut">cut</string>
+    <string name="port_frame">frame</string>
+    <string name="port_frame_cond">frame cond</string>
+    <string name="port_media">media</string>
+    <string name="port_original">original</string>
+    <string name="port_patch">patch</string>
+    <string name="port_prompt">prompt</string>
+    <string name="port_segmenter">segmenter</string>
+    <string name="port_video">video</string>
+    <string name="param_upscale">upscale</string>
+    <string name="node_nd_sample">Video</string>
+    <string name="node_sd_inpaint">Inpaint</string>
 </resources>

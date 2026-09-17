@@ -656,4 +656,25 @@
     <string name="log_derived_sizes">  尺寸：%1$s</string>
 
     <!-- v1.5.0：视频拆分节点运行时的自述（画布运行日志）。-->
+
+    <!-- v1.5.0：画布绘制的节点名与端口标签。-->
+    <string name="node_core_prompt">提示词</string>
+    <string name="node_core_image">图像</string>
+    <string name="node_image_mask_crop">蒙版裁剪</string>
+    <string name="node_image_paste">拼接</string>
+    <string name="node_mask_segment_model">分割模型</string>
+    <string name="node_nd_first_frame">首帧</string>
+    <string name="node_sd_sample_legacy">采样（旧版）</string>
+    <string name="port_cut">裁剪</string>
+    <string name="port_frame">取景框</string>
+    <string name="port_frame_cond">取景框条件</string>
+    <string name="port_media">媒体</string>
+    <string name="port_original">原图</string>
+    <string name="port_patch">补丁</string>
+    <string name="port_prompt">提示词</string>
+    <string name="port_segmenter">分割器</string>
+    <string name="port_video">视频</string>
+    <string name="param_upscale">放大</string>
+    <string name="node_nd_sample">视频</string>
+    <string name="node_sd_inpaint">重绘</string>
 </resources>

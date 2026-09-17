@@ -2,6 +2,7 @@ package com.abrah.nightmare.canvas
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.res.stringResource
+import com.abrah.nightmare.NodeType
 import com.abrah.nightmare.R
 
 /**
@@ -41,6 +42,7 @@ fun widgetLabel(name: String): String = when (name) {
     "grow" -> stringResource(R.string.param_grow)
     "feather" -> stringResource(R.string.param_feather)
     "upscaler" -> stringResource(R.string.param_upscaler)
+    "upscale" -> stringResource(R.string.param_upscale)
     else -> name
 }
 
@@ -97,37 +99,118 @@ fun portLabelMap(): Map<String, String> = mapOf(
     "mask" to stringResource(R.string.port_mask),
     "base" to stringResource(R.string.port_base),
     "repaint" to stringResource(R.string.port_repaint),
+    // ⚠⚠ v1.5.0 新增的节点带来了这些端口。缺映射时 [GraphCanvas] 会回退到裸名
+    // （`viewport`／`frame_cond`），那是内部词，不是用户学过的任何说法。
+    "prompt" to stringResource(R.string.port_prompt),
+    "segmenter" to stringResource(R.string.port_segmenter),
+    "video" to stringResource(R.string.port_video),
+    "media" to stringResource(R.string.port_media),
+    "frame" to stringResource(R.string.port_frame),
+    "frame_cond" to stringResource(R.string.port_frame_cond),
+    "original" to stringResource(R.string.port_original),
+    "cut" to stringResource(R.string.port_cut),
+    "patch" to stringResource(R.string.port_patch),
 )
 
 /**
- * The id's COUNTER suffix (`clip_encode_8` → `_8`), or "" when the id has
+ * The id's COUNTER suffix (`sdxl_inpaint_2` → `_2`), or "" when the id has
  * none. The suffix is the only thing that tells same-type nodes apart, so
- * every display name carries it along: 文本编码(clip)_8.
+ * every display name carries it along: 局部重绘(sdxl)_2.
+ *
+ * ⚠⚠ It matches against the base [NodeType.defaultId] actually hands to
+ * [Graph.freeId] ("sdxl_inpaint"), NOT the display [nodeLabel] ("inpaint").
+ *
+ * ⚠⚠⚠ Those two parted company long before this — `defaultId` predates
+ * v1.4.97 — and the counter silently stopped working the moment they did: a
+ * node was created as `sdxl_inpaint_2` while the regex looked for
+ * `^inpaint(_\d+)$`, so EVERY id missed and the number never appeared. The
+ * canvas then showed two identical `局部重绘` headers with nothing to tell them
+ * apart, which is the exact thing this suffix exists to prevent.
+ *
+ * ⚠ The old attempt lowercased `nodeLabel`, which is also why an id holding
+ * uppercase could never match. Using the id's own base sidesteps both.
+ * ⚠ It is NOT @Composable: [GraphCanvas.drawNode] calls it from a DrawScope,
+ * which cannot enter composition. It reads no resources — only the id and the
+ * type's own base name — so there is nothing here to resolve.
  */
-fun nodeCounterSuffix(id: String, qualifiedType: String): String {
-    val base = qualifiedType.nodeLabel.lowercase()
-    return Regex("^${Regex.escape(base)}(_\\d+)$").find(id)?.groupValues?.get(1).orEmpty()
+fun nodeCounterSuffix(id: String, type: NodeType?): String {
+    val base = type?.defaultId ?: type?.name?.nodeLabel ?: return ""
+    return Regex("^${Regex.escape(base)}(_\\d+)$")
+        .find(id)?.groupValues?.get(1).orEmpty()
 }
 
 /**
  * The node's display name, from its qualified type (`sd.clip_encode`).
  * Shared by the palette (where a node is picked) and the canvas (where the
  * picked node's header is drawn) so the two never disagree about a name.
+ *
+ * ⚠⚠⚠ Keyed on the FULL type name, NOT on [nodeLabel]. They are not
+ * interchangeable, and using the label here was a real bug: [LABEL_OVERRIDES]
+ * maps `sd.clip_encode` — and `nd.clip_encode` — to `prompt`, which is the same
+ * label `core.prompt` produces. A `when` on the label cannot tell a text
+ * encoder from the prompt node, so whichever branch came first swallowed both.
+ * The label is a DISPLAY shortening; the type name is the identity, and only
+ * the identity is unique.
+ *
+ * ⚠ A name that is not a built-in (a plugin's `com.example.pack:Thing`) falls
+ * back to its label, which is what the palette taught the user.
  */
-@Composable
-fun nodeDisplayName(qualifiedName: String): String = when (qualifiedName.nodeLabel) {
-    "sample" -> stringResource(R.string.node_sd_sample)
-    "vae_decode" -> stringResource(R.string.node_sd_vae_decode)
-    "vae_encode" -> stringResource(R.string.node_sd_vae_encode)
-    "clip_encode" -> stringResource(R.string.node_sd_clip_encode)
-    "latent_blend" -> stringResource(R.string.node_sd_latent_blend)
-    "load" -> stringResource(R.string.node_image_load)
-    "output" -> stringResource(R.string.node_image_output)
+/**
+ * ⭐⭐ The resource a node type's display name comes from, or **null** to fall
+ * back to its label.
+ *
+ * ⚠⚠⚠ Split out of [nodeDisplayName] so it can be TESTED. Left inline, the only
+ * way to exercise it was through a `@Composable`, which cannot be called from a
+ * plain JVM test on this container (no linux-aarch64 Skia) — and the first
+ * attempt at a test ended up restating the table instead of reading it, which
+ * passes whatever the real function does. That is a test that cannot fail, and
+ * it very nearly shipped.
+ *
+ * ⚠ Keyed on the FULL type name, NOT on [nodeLabel]. They are not
+ * interchangeable, and using the label here was a real bug: [LABEL_OVERRIDES]
+ * maps `sd.clip_encode` and `nd.clip_encode` to `prompt`, which is the same
+ * label `core.prompt` produces. A `when` on the label cannot tell a text
+ * encoder from the prompt node. The label is a display shortening; the type
+ * name is the identity, and only the identity is unique.
+ *
+ * ⚠ NOT `@Composable` — it reads no resources, it only names one.
+ */
+fun nodeNameRes(typeName: String): Int? = when (typeName) {
+    "sd.sample_legacy" -> R.string.node_sd_sample_legacy
+    "sd.vae_decode" -> R.string.node_sd_vae_decode
+    "sd.vae_encode" -> R.string.node_sd_vae_encode
+    "sd.clip_encode", "nd.clip_encode" -> R.string.node_sd_clip_encode
+    "sd.latent_blend" -> R.string.node_sd_latent_blend
+    "core.prompt" -> R.string.node_core_prompt
+    "core.image" -> R.string.node_image_load
+    "core.output", "image.output", "video.output" -> R.string.node_image_output
     // ⚠⚠ v1.5.0 删除了 `image.crop` 节点类型（`WorkflowIo.migrateCropNodes` 会
     // 重建仍引用它的存档）。这一条留着是为了**未迁移的旧存档**：若某个 flow 里
     // 还残留该类型的节点，它仍会画出一个可读的名字，而不是裸的 "crop"。
-    "crop" -> stringResource(R.string.node_image_crop)
-    "mask" -> stringResource(R.string.node_image_mask)
-    "upscale" -> stringResource(R.string.node_image_upscale)
-    else -> qualifiedName.nodeLabel
+    "image.crop" -> R.string.node_image_crop
+    "image.mask" -> R.string.node_image_mask
+    "image.mask_crop" -> R.string.node_image_mask_crop
+    "image.paste" -> R.string.node_image_paste
+    "image.upscale" -> R.string.node_image_upscale
+    "mask.segment_model" -> R.string.node_mask_segment_model
+    "nd.first_frame" -> R.string.node_nd_first_frame
+    // ⭐ SD 采样器与视频采样器是一族名字（family.slug + 用途），按后缀归类。
+    else -> when {
+        typeName.startsWith("nd.sample") -> R.string.node_nd_sample
+        typeName.endsWith(".sample") -> R.string.node_sd_sample
+        typeName.endsWith(".inpaint") -> R.string.node_sd_inpaint
+        else -> null
+    }
 }
+
+/**
+ * The node's display name, from its qualified type (`sd.clip_encode`).
+ * Shared by the palette (where a node is picked) and the canvas (where the
+ * picked node's header is drawn) so the two never disagree about a name.
+ *
+ * ⚠ A name that is not a built-in (a plugin's `com.example.pack:Thing`) falls
+ * back to its label, which is what the palette taught the user.
+ */
+@Composable
+fun nodeDisplayName(qualifiedName: String): String =
+    nodeNameRes(qualifiedName)?.let { stringResource(it) } ?: qualifiedName.nodeLabel

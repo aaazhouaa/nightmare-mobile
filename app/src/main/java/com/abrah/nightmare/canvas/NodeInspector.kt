@@ -588,9 +588,11 @@ internal fun NodeInspectorBody(
             // upstream's "title = nodeId" which put `clip_encode_8` back on
             // the sheet. Keep the Chinese name unless the user has renamed
             // the node away from the auto id.
-            val autoId = node.type.nodeLabel + nodeCounterSuffix(nodeId, node.type)
+            // ⚠ `node.type` 是类型名（String），`type` 才是 NodeType——
+            // 计数基名只能从后者取（`defaultId`），从名字取不出。
+            val autoId = node.type.nodeLabel + nodeCounterSuffix(nodeId, type)
             val displayTitle = if (nodeId == autoId || nodeId == node.type.nodeLabel) {
-                nodeDisplayName(node.type) + nodeCounterSuffix(nodeId, node.type)
+                nodeDisplayName(node.type) + nodeCounterSuffix(nodeId, type)
             } else {
                 nodeId
             }

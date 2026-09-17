@@ -549,9 +549,10 @@ private fun DrawScope.drawNode(
     // nodes apart — so the suffix after the type's base name is appended:
     // 文本编码(clip)_8. A renamed or foreign id that does not fit the
     // `<base>_<n>` shape falls back to the id itself.
-    val counter = nodeCounterSuffix(box.node.id, box.node.type)
+    val counter = nodeCounterSuffix(box.node.id, box.type)
+    val titleString = nodeNames[box.node.type]?.let { it + counter } ?: box.node.id
     val title = measurer.measure(
-        (nodeNames[box.node.type]?.let { it + counter }) ?: box.node.id, titleStyle,
+        titleString, titleStyle,
         overflow = TextOverflow.Ellipsis,
         maxLines = 1,
         constraints = Constraints(maxWidth = room),
@@ -565,9 +566,16 @@ private fun DrawScope.drawNode(
     // readable from the stripe colour and the ports.
     // ⭐ The node's own title when its type gives one (`SDXL Inpaint`), so the
     // canvas says what the node DOES rather than the type's id.
+    //
+    // ⚠⚠⚠ This is the SUBTITLE's value, and it must stay that way. A merge kept
+    // this branch's older line here — which measured `nodeNames[...]` a second
+    // time — while upstream had already changed the subtitle to `typeLabel`.
+    // The title and the subtitle then drew the SAME string, so every node read
+    // `inpaint / inpaint`, and `titleFor`'s whole point (`SDXL 局部重绘` under the
+    // header) never appeared on the canvas at all.
     val typeLabel = box.type?.titleFor(box.node) ?: box.node.type.nodeLabel
     val subtitle = measurer.measure(
-        nodeNames[box.node.type] ?: box.node.type.nodeLabel,
+        typeLabel,
         TextStyle(
             color = CanvasColors.label,
             fontSize = (10f * textZoom).sp,
@@ -581,7 +589,7 @@ private fun DrawScope.drawNode(
     // and `sample / sample` are a line saying nothing twice; the type earns the
     // line where the id does not already say it (`frame / crop`, a renamed
     // `a / sample`). The user's call in the design review, 2026-09-15.
-    val showType = typeLabel != box.node.id &&
+    val showType = typeLabel != box.node.id && typeLabel != titleString &&
         pad + title.size.height + subtitle.size.height <= headerH
     if (showType) {
         drawText(title, topLeft = Offset(tl.x + inset, tl.y + pad))

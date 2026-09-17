@@ -1664,46 +1664,49 @@ private fun ModelSwapDialog(
     var takeRecipe by remember(swap) { mutableStateOf(true) }
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("Switch to ${swap.spec.label}") },
+        title = { Text(stringResource(R.string.swap_title, swap.spec.label)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 swap.fromFamily?.let { from ->
                     Text(
-                        "${swap.spec.label} is ${swap.spec.family.label}, not ${from.label}. " +
-                            "The sampler changes family — every wire is kept — and it " +
-                            "renders at ${swap.spec.native}.",
+                        stringResource(
+                            R.string.swap_family,
+                            swap.spec.label, swap.spec.family.label, from.label,
+                            swap.spec.native.toString(),
+                        ),
                         style = LogTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 swap.promptNode?.let { id ->
                     SwapChoice(
-                        heading = "Prompt on “$id”",
+                        heading = stringResource(R.string.swap_prompt_heading, id),
                         takeTheirs = takePrompt,
                         onChange = { takePrompt = it },
-                        theirs = "Use ${swap.spec.label}’s prompts (recommended)",
+                        theirs = stringResource(R.string.swap_prompt_theirs, swap.spec.label),
                         // ⚠ Both fields, because the negative is half of a
                         // checkpoint's style and is the one nobody re-reads.
-                        detail = swap.prompt + "\n— " + swap.negative.ifBlank { "no negative" },
-                        mine = "Keep the prompt I have",
+                        detail = swap.prompt + "\n— " +
+                            swap.negative.ifBlank { stringResource(R.string.swap_no_negative) },
+                        mine = stringResource(R.string.swap_prompt_mine),
                     )
                 }
                 swap.recipe?.let { r ->
                     SwapChoice(
-                        heading = "Sampling settings",
+                        heading = stringResource(R.string.swap_recipe_heading),
                         takeTheirs = takeRecipe,
                         onChange = { takeRecipe = it },
-                        theirs = "Use ${swap.spec.label}’s settings (recommended)",
+                        theirs = stringResource(R.string.swap_recipe_theirs, swap.spec.label),
                         detail = r,
-                        mine = "Keep my steps, CFG and scheduler",
+                        mine = stringResource(R.string.swap_recipe_mine),
                     )
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(swap, takeRecipe, takePrompt) }) { Text("Switch") }
+            TextButton(onClick = { onConfirm(swap, takeRecipe, takePrompt) }) { Text(stringResource(R.string.swap_confirm)) }
         },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
     )
 }
 

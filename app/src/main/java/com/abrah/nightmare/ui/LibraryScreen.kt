@@ -161,7 +161,7 @@ fun BrandHeader(onClose: () -> Unit, modifier: Modifier = Modifier) {
         androidx.compose.material3.IconButton(onClick = onClose) {
             androidx.compose.material3.Icon(
                 androidx.compose.material.icons.Icons.Filled.Close,
-                contentDescription = "close — back to the canvas",
+                contentDescription = stringResource(R.string.cd_close_back, "Nightmare"),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

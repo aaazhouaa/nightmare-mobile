@@ -102,20 +102,20 @@ object VideoSampleNode : NodeType {
         // beyond that.
         Widget(
             "seed", "int", "0",
-            hint = "0 = a new clip every Run. Type the seed shown on the node to get it back.",
+            hint = "0 = 每次运行都生成新片段。输入节点上显示的种子值即可复现那一段。",
         ),
         Widget(
             "upscale", "bool", "true",
             // ⚠ 1024x640 / 512x320 — width first, which is the way round the
             // frames actually come out. Neodragon's docs use (h, w).
-            hint = "2x to 1024x640 with QuickSRNet. Off renders 512x320 and is a little faster.",
+            hint = "使用 QuickSRNet 放大至 1024x640。关闭则渲染 512x320，速度稍快。",
         ),
         // ⭐⭐ The framing, exactly as the SD samplers carry it — `image.crop`'s
         // own param names, so `CropEditor` drives this node too with no second
         // spelling. ⚠ The crop NODE is gone from the i2v recipe: the sampler
         // fits whatever it is given, which is the rule the image path already
         // follows (docs/ARCHITECTURE.md §5.7).
-        Widget("x", "float", "0.0", 0.0, 1.0, hint = "drag the frame on the picture"),
+        Widget("x", "float", "0.0", 0.0, 1.0, hint = "在上方图片上拖动取景框"),
         Widget("y", "float", "0.0", 0.0, 1.0),
         Widget("w", "float", "1.0", 0.0, 1.0),
         Widget("h", "float", "1.0", 0.0, 1.0),
@@ -436,7 +436,7 @@ object VideoOutputNode : NodeType {
     override val widgets = listOf(
         Widget(
             "save", "bool", "true",
-            hint = "write an MP4 to Movies/Nightmare, which outlives the app's cache",
+            hint = "写出 MP4 到 Movies/Nightmare，不会随应用缓存被清除",
         ),
         Widget("name", "string", "nightmare"),
     )

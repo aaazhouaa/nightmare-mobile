@@ -1865,9 +1865,8 @@ object MaskCropNode : NodeType {
     override val widgets = listOf(
         Widget(
             ONLY_MASKED, "bool", "true",
-            hint = "Generate over a crop around the mask: more detail where you painted, " +
-                "and the rest of the picture keeps its full resolution. Ignored when the " +
-                "mask covers most of the picture.",
+            hint = "围绕蒙版区域单独渲染一块：涂过的地方细节更多，画面其余部分保持完整分辨率。" +
+                "当蒙版覆盖了画面大部分区域时此项无效。",
         ),
         Widget("out_w", "int", "0", 0.0, 8192.0),
         Widget("out_h", "int", "0", 0.0, 8192.0),
@@ -2000,8 +1999,7 @@ object PasteNode : NodeType {
     override val widgets = listOf(
         Widget(
             STITCH, "bool", "false",
-            hint = "Off: the result is the frame you chose. On: it is pasted back into the " +
-                "whole original photo, at the photo's own size.",
+            hint = "关：结果就是你选的取景框。开：贴回整张原图，按原图尺寸。",
         ),
     )
 

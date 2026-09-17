@@ -304,7 +304,7 @@ fun ResultsScreen(
                 // ⚠ 40dp targets (DreamUI's own minimum) so six controls and the
                 // count fit one row on a 360dp phone without pushing any off.
                 val small = Modifier.size(40.dp)
-                TextButton(onClick = onSelectAll, contentPadding = PaddingValues(horizontal = 8.dp)) { Text("All") }
+                TextButton(onClick = onSelectAll, contentPadding = PaddingValues(horizontal = 8.dp)) { Text(stringResource(R.string.all)) }
                 // ⭐ Star the selection — no confirm, a star is one tap to undo.
                 val allStarred = all.filter { it.id in selected }.let { sel -> sel.isNotEmpty() && sel.all { it.favourite } }
                 IconButton(onClick = onStarSelected, modifier = small) {
@@ -315,16 +315,16 @@ fun ResultsScreen(
                     )
                 }
                 IconButton(onClick = { deletingSelection = true }, modifier = small) {
-                    Icon(Icons.Filled.Delete, contentDescription = "delete the selected", tint = MaterialTheme.colorScheme.error)
+                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.cd_delete_selected_results), tint = MaterialTheme.colorScheme.error)
                 }
                 IconButton(onClick = { confirmingDownload = true }, modifier = small) {
-                    Icon(DownloadIcon, contentDescription = "save the selected to the gallery", tint = onSurface)
+                    Icon(DownloadIcon, contentDescription = stringResource(R.string.cd_save_selected), tint = onSurface)
                 }
                 IconButton(onClick = { sharing = selected.toList() }, modifier = small) {
-                    Icon(ShareIcon, contentDescription = "share the selected", tint = onSurface)
+                    Icon(ShareIcon, contentDescription = stringResource(R.string.cd_share_selected), tint = onSurface)
                 }
                 IconButton(onClick = onClearSelection, modifier = small) {
-                    Icon(Icons.Filled.Close, contentDescription = "stop selecting", tint = onSurface)
+                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_stop_selecting), tint = onSurface)
                 }
             } else {
                 IconButton(onClick = { deleting = shown }) {
@@ -342,10 +342,10 @@ fun ResultsScreen(
                     )
                 }
                 IconButton(onClick = { onSave(shown) }) {
-                    Icon(DownloadIcon, contentDescription = "save to the gallery", tint = onSurface)
+                    Icon(DownloadIcon, contentDescription = stringResource(R.string.cd_save_gallery), tint = onSurface)
                 }
                 IconButton(onClick = { sharing = listOf(shown.id) }) {
-                    Icon(ShareIcon, contentDescription = "share", tint = onSurface)
+                    Icon(ShareIcon, contentDescription = stringResource(R.string.cd_share_picture), tint = onSurface)
                 }
                 // ⚠ Always SHOWN, refusing by name (the user's call, 2026-09-17):
                 // a button that vanishes on a clip teaches nothing.
@@ -362,12 +362,12 @@ fun ResultsScreen(
                     }
                 }) {
                     Icon(
-                        UpscaleIcon, contentDescription = "upscale this picture",
+                        UpscaleIcon, contentDescription = stringResource(R.string.cd_upscale_picture),
                         tint = onSurface.copy(alpha = if (upscaling == null) 1f else 0.38f),
                     )
                 }
                 IconButton(onClick = { info = shown }) {
-                    Icon(Icons.Filled.Info, contentDescription = "what made this picture", tint = onSurface)
+                    Icon(Icons.Filled.Info, contentDescription = stringResource(R.string.cd_what_made_this), tint = onSurface)
                 }
                 Spacer(Modifier.weight(1f))
                 // ⚠ The flow ICON in the filled button, as it always was — not a
@@ -418,11 +418,11 @@ fun ResultsScreen(
     upscalingPick?.let { r ->
         AlertDialog(
             onDismissRequest = { upscalingPick = null },
-            title = { Text("Upscale") },
+            title = { Text(stringResource(R.string.upscale)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "The enlarged picture is kept as a new item; this one stays.",
+                        stringResource(R.string.upscale_keeps_both),
                         style = LogTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -433,7 +433,7 @@ fun ResultsScreen(
                                 Text(u.spec.about, style = LogTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                             }
                             when {
-                                u.installed -> Button(onClick = { upscalingPick = null; onUpscale(r, u.spec.id) }) { Text("Use") }
+                                u.installed -> Button(onClick = { upscalingPick = null; onUpscale(r, u.spec.id) }) { Text(stringResource(R.string.use)) }
                                 u.progress != null -> Text("${u.progress.done shr 20} / ${u.progress.total shr 20} MB", style = LogTextStyle)
                                 u.build != null -> OutlinedButton(onClick = { onInstallUpscaler(u.spec) }) {
                                     Text("${u.build.bytes shr 20} MB")
@@ -475,15 +475,17 @@ fun ResultsScreen(
     if (confirmingDownload) {
         AlertDialog(
             onDismissRequest = { confirmingDownload = false },
-            title = { Text("Save ${selected.size} to the gallery?") },
+            title = { Text(stringResource(R.string.save_n_to_gallery, selected.size)) },
             text = {
                 Text(
-                    "Each is written to Pictures/${com.abrah.nightmare.ImageSaver.FOLDER} as a full-size " +
-                        "file — a large selection can take a while and a lot of space."
+                    stringResource(
+                        R.string.save_n_body,
+                        com.abrah.nightmare.ImageSaver.FOLDER,
+                    )
                 )
             },
             confirmButton = {
-                Button(onClick = { confirmingDownload = false; onSaveSelected() }) { Text("Save ${selected.size}") }
+                Button(onClick = { confirmingDownload = false; onSaveSelected() }) { Text(stringResource(R.string.save_n, selected.size)) }
             },
             dismissButton = { TextButton(onClick = { confirmingDownload = false }) { Text(stringResource(R.string.cancel)) } },
         )
@@ -494,10 +496,9 @@ fun ResultsScreen(
     // user's call, 2026-09-15 — one word). `docs/UI.md` §8.2.
     deletingBatch?.let { g ->
         ConfirmDelete(
-            title = "Delete this batch?",
-            body = "All ${g.size} pictures and the flows that made them go, and " +
-                "this cannot be undone.\n\nCopies saved to the gallery are not affected.",
-            confirmLabel = "Delete ${g.size}",
+            title = stringResource(R.string.results_forget_batch_title),
+            body = stringResource(R.string.r2_results_forget_batch_body, g.size),
+            confirmLabel = stringResource(R.string.results_forget_n, g.size),
             onConfirm = { onDeleteGroup(g) },
             onDismiss = { deletingBatch = null },
         )
@@ -771,7 +772,7 @@ fun ResultViewer(
             IconButton(onClick = { onSave(current) }) {
                 Icon(
                     com.abrah.nightmare.ui.DownloadIcon,
-                    contentDescription = "save to the gallery",
+                    contentDescription = stringResource(R.string.cd_save_gallery),
                     tint = androidx.compose.ui.graphics.Color.White,
                 )
             }
@@ -1260,7 +1261,7 @@ private fun HistoryThumb(
             ) {
                 Icon(
                     androidx.compose.material.icons.Icons.Filled.PlayArrow,
-                    contentDescription = "a clip",
+                    contentDescription = stringResource(R.string.cd_a_clip),
                     tint = Color.White,
                     modifier = Modifier.size(20.dp),
                 )
@@ -1291,7 +1292,7 @@ fun ResultInfoDialog(details: List<Pair<String, String>>, onClose: () -> Unit) {
     val all = details.joinToString("\n") { (k, v) -> "$k: $v" }
     AlertDialog(
         onDismissRequest = onClose,
-        title = { Text("Info") },
+        title = { Text(stringResource(R.string.info)) },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
@@ -1315,10 +1316,10 @@ fun ResultInfoDialog(details: List<Pair<String, String>>, onClose: () -> Unit) {
             TextButton(onClick = { clip.setText(androidx.compose.ui.text.AnnotatedString(all)) }) {
                 Icon(CopyIcon, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.size(6.dp))
-                Text("Copy all")
+                Text(stringResource(R.string.copy_all))
             }
         },
-        confirmButton = { TextButton(onClick = onClose) { Text("Close") } },
+        confirmButton = { TextButton(onClick = onClose) { Text(stringResource(R.string.close)) } },
     )
 }
 

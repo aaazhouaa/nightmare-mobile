@@ -967,7 +967,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
                     DownloadNotice.done(ctx, spec.label, ok = false, detail = modelError)
-                    toast("${spec.label} failed — $modelError")
+                    toast(getApplication<Application>().getString(R.string.toast_failed, spec.label, modelError))
                     say("install failed — $modelError", bad = true)
                 }
             } finally {
@@ -1221,11 +1221,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val wf = com.abrah.nightmare.canvas.Workflow(g, emptyMap())
         run("upscale") {
             upscalingResult = spec.label
-            toast("Upscaling with ${spec.label}…")
+            toast(getApplication<Application>().getString(R.string.toast_upscaling, spec.label))
             try {
                 if (!ops.ensureBackendFor(g, nodeTypes)) {
                     say("upscale: no backend", bad = true)
-                    toast("could not start the backend to upscale")
+                    toast(getApplication<Application>().getString(R.string.toast_upscale_no_backend))
                     return@run
                 }
                 val r = ops.runWorkflow(wf)
@@ -1235,11 +1235,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     // ⚠ Logged AND toasted: a toast alone left nothing to read
                     // when this failed on the phone (2026-09-17).
                     say("upscale failed — $why", bad = true)
-                    toast("upscale failed — $why")
+                    toast(getApplication<Application>().getString(R.string.toast_upscale_failed, why))
                     return@run
                 }
                 keepResult(img.id, flow = wf)
-                toast("Upscaled — kept as a new result")
+                toast(getApplication<Application>().getString(R.string.toast_upscaled))
             } finally {
                 upscalingResult = null
             }
@@ -2918,7 +2918,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // there is the whole reason `ResultsStore` copies it ([Result.videoPath]).
         keptClip(id)?.let { clip ->
             runCatching { Share.video(getApplication(), clip, "nightmare-" + id) }
-                .onFailure { toast("Could not share: " + it.message) }
+                .onFailure { toast(getApplication<Application>().getString(R.string.toast_share_failed, it.message ?: "null")) }
             return
         }
         val png = results.fullBytes(id)
@@ -3170,7 +3170,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 com.abrah.nightmare.Share.many(ctx, entries, mime, "Share")
             }
-        }.onFailure { toast("Could not share: " + it.message) }
+        }.onFailure { toast(getApplication<Application>().getString(R.string.toast_share_failed, it.message ?: "null")) }
     }
 
     fun viewResult(r: com.abrah.nightmare.canvas.Result) {
@@ -4052,7 +4052,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // saying nothing then is the same silence in a different disguise.
         if (r.error == null) {
             val bad = r.runs.firstOrNull { it.outcome == Outcome.FAILED }
-            if (bad != null) runError = "${bad.id}: ${bad.detail}"
+            if (bad != null) runError = getApplication<Application>().getString(R.string.run_failed_node, bad.id, bad.detail)
         }
     }
 
@@ -4181,13 +4181,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // from the canvas. "already running" was true and useless: nothing was
         // running that they had started or could find.
         if (installing != null) {
-            val what = if (installing == VIDEO_INSTALL_ID) "the video models"
-                else ModelCatalog.byId(installing.orEmpty())?.label ?: "a model"
-            runError = "$what is downloading — Run once it has finished"
-            say("$label ignored — $what is downloading", bad = true)
+            val what = if (installing == VIDEO_INSTALL_ID) getApplication<Application>().getString(R.string.downloading_video_models)
+                else ModelCatalog.byId(installing.orEmpty())?.label ?: getApplication<Application>().getString(R.string.a_model)
+            runError = getApplication<Application>().getString(R.string.run_downloading, what)
+            say(getApplication<Application>().getString(R.string.log_ignored_downloading, label, what), bad = true)
             return
         }
-        if (busy) { say("$label ignored — already running", bad = true); return }
+        if (busy) { say(getApplication<Application>().getString(R.string.log_ignored_running, label), bad = true); return }
         busy = true
         // ⚠ Both ends, for the same reason [applyNodeModel] does it: the
         // readout must stop saying "idle" the moment Run is pressed, not up to

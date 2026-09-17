@@ -184,7 +184,7 @@ fun WorkflowsScreen(
                                     IconButton(onClick = { deleting = w.name }) {
                                         Icon(
                                             Icons.Filled.Delete,
-                                            contentDescription = "delete \"${w.name}\"",
+                                            contentDescription = stringResource(R.string.cd_delete_named, w.name),
                                             tint = MaterialTheme.colorScheme.error,
                                         )
                                     }
@@ -240,12 +240,10 @@ fun WorkflowsScreen(
 
     deleting?.let { name ->
         ConfirmDelete(
-            title = "Delete \"$name\"?",
+            title = stringResource(R.string.delete_quoted, name),
             // ⚠ Names what goes and what does not (`docs/UI.md` §7.5) — "this
             // cannot be undone" alone is the ceremony that rule forbids.
-            body = "The saved flow goes and cannot be brought back. Pictures kept in " +
-                "Results keep their own copy of the flow that made them, and the " +
-                "canvas is not touched.",
+            body = stringResource(R.string.flows_delete_body),
             onConfirm = { onDeleteSaved(name) },
             onDismiss = { deleting = null },
         )

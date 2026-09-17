@@ -60,11 +60,11 @@ object PromptNode : NodeType {
     override val widgets get() = listOf(
         Widget(
             "prompt", "string", SelectedModel.spec.starterPrompt,
-            hint = "what to draw",
+            hint = "要画的内容",
         ),
         Widget(
             "negative", "string", SelectedModel.spec.starterNegative,
-            hint = "what to keep out of the picture",
+            hint = "要从画面中排除的内容",
         ),
     )
 
@@ -262,14 +262,14 @@ class SdSampler(
         // rather than returning the cached picture unchanged.
         Widget(
             "seed", "int", "0",
-            hint = "0 = a new picture every Run. Type the seed shown on the node to get that one back.",
+            hint = "0 = 每次运行都生成新图。输入节点上显示的种子值即可复现那一张。",
         ),
         // ⚠ Read only when a picture is wired AND `start_from` is `image`.
         Widget("denoise", "float", "0.6", 0.0, 1.0),
         Widget(
             "scheduler", "string", defaultSpec().scheduler,
             options = ModelCatalog.schedulersFor(family),
-            hint = "the sampler; a distilled model usually needs the one its author published",
+            hint = "采样器；蒸馏模型通常需要用其作者发布的配套采样器",
         ),
         // ⚠⚠ **No `start from` knob.** The user's call, 2026-09-15: *"start from
         // is decided by whether an image is connected, simple as that."* It
@@ -288,7 +288,7 @@ class SdSampler(
         // and [CropEditor] work on this node with no second spelling to keep in
         // step. ⚠ Normalised so a saved flow re-pointed at a photo of a
         // different size still means the same framing.
-        Widget("x", "float", "0.0", 0.0, 1.0, hint = "drag the frame on the picture"),
+        Widget("x", "float", "0.0", 0.0, 1.0, hint = "在上方图片上拖动取景框"),
         Widget("y", "float", "0.0", 0.0, 1.0),
         Widget("w", "float", "1.0", 0.0, 1.0),
         Widget("h", "float", "1.0", 0.0, 1.0),
@@ -303,7 +303,7 @@ class SdSampler(
         Widget(
             CropNode.PAD, "string", CropNode.PAD_BLACK,
             options = listOf(CropNode.PAD_BLACK, CropNode.PAD_BLUR),
-            hint = "what fills the frame where it runs off the photo",
+            hint = "图片无法填满取景框时，空白处用什么填充",
         ),
         // ⭐ The painting itself — `image.mask`'s params, moved. ⚠ A real param
         // rather than editor state, because it is what a saved workflow stores.
@@ -311,17 +311,17 @@ class SdSampler(
         // hashed into the cache key, so leaving these on a `sample` node would
         // put a mask nobody can edit into the key of every render it makes.
         *(if (!inpaint) emptyArray() else arrayOf(
-            Widget(MaskNode.OPS, "string", "", hint = "paint the area to redo"),
-            Widget("grow", "float", "0.0", 0.0, 0.2, hint = "spread the mask outward"),
-            Widget("feather", "float", "0.02", 0.0, 0.2, hint = "soften the mask edge"),
+            Widget(MaskNode.OPS, "string", "", hint = "在上方图片上涂抹要重绘的区域"),
+            Widget("grow", "float", "0.0", 0.0, 0.2, hint = "将蒙版向外扩张"),
+            Widget("feather", "float", "0.02", 0.0, 0.2, hint = "柔化蒙版边缘"),
             // ⭐⭐ DreamUI's two inpaint toggles, unchanged in meaning.
             Widget(
                 MaskCropNode.ONLY_MASKED, "bool", "true",
-                hint = "render a crop around the mask: more detail where you painted",
+                hint = "围绕蒙版区域单独渲染一块：涂过的地方细节更多",
             ),
             Widget(
                 PasteNode.STITCH, "bool", "false",
-                hint = "off: the result is the frame you chose. on: it is pasted back into the whole photo",
+                hint = "关：结果就是你选的取景框。开：贴回整张照片中",
             ),
         )),
         // ⚠⚠ **No `encode seed`.** A VAE latent is mean + std * noise, so this
@@ -603,7 +603,7 @@ object MediaOutputNode : NodeType {
     override val widgets = listOf(
         // ⭐ ON by default: placing this node IS the statement that this is the
         // result you want back, and Results is private to the app.
-        Widget(AUTOSAVE, "bool", "true", hint = "keep every Run in Results"),
+        Widget(AUTOSAVE, "bool", "true", hint = "每次运行都保留到结果"),
         // ⚠⚠ **No `name` box.** It was the filename prefix for the gallery
         // write this node used to do, and that write is gone — autosave keeps
         // into Results, which names things by seed and prompt. A text box whose

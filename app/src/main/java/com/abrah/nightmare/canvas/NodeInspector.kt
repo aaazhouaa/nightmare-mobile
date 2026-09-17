@@ -654,7 +654,7 @@ internal fun NodeInspectorBody(
                 // ⚠ Not in the inpaint popup: its tab already says Crop, and the
                 // popup has no lock at all (the user's call, 2026-09-17).
                 if (!popup) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Crop", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Text(stringResource(R.string.r2_ins_crop_section), style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     IconButton(onClick = {
                         onSetParam(nodeId, com.abrah.nightmare.CropNode.LOCKED, (!cropLocked).toString())
                     }) {
@@ -730,7 +730,7 @@ internal fun NodeInspectorBody(
         val maskPanel: @Composable () -> Unit = {
             // ⭐⭐ The mask node's real interface.
             maskSource?.let { raw ->
-                if (!popup) Text("Mask", style = MaterialTheme.typography.titleSmall)
+                if (!popup) Text(stringResource(R.string.r2_ins_mask_section), style = MaterialTheme.typography.titleSmall)
                 // ⭐⭐⭐ **Painted on the FRAMED picture, and it follows the crop.**
                 //
                 // Asked for 2026-09-15: *"mask should track the crop and update
@@ -1549,7 +1549,7 @@ private fun CheckpointPicker(
             value = here?.label ?: currentId,
             onValueChange = {},
             readOnly = true,
-            label = { Text("Checkpoint" + (here?.family?.let { " · ${it.label}" } ?: "")) },
+            label = { Text(stringResource(R.string.checkpoint) + (here?.family?.let { " · ${it.label}" } ?: "")) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = open) },
             modifier = Modifier
                 .fillMaxWidth()
@@ -1590,7 +1590,7 @@ private fun CheckpointPicker(
             // which is a refusal the user did not ask for.
             if (here == null && currentId.isNotBlank()) {
                 DropdownMenuItem(
-                    text = { Text("$currentId · not installed") },
+                    text = { Text(stringResource(R.string.not_installed_suffix, currentId)) },
                     onClick = {},
                     enabled = false,
                 )
@@ -1826,7 +1826,7 @@ private fun InpaintEditors(
                 Text(labels[i], style = MaterialTheme.typography.titleSmall)
                 androidx.compose.foundation.Image(
                     bitmap = thumb,
-                    contentDescription = "edit the ${labels[i].lowercase()}",
+                    contentDescription = stringResource(R.string.cd_edit_the, labels[i].lowercase()),
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1906,7 +1906,7 @@ private fun InpaintPopupBody(
                 }
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Filled.Close, contentDescription = "close")
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_close_dialog))
             }
         }
         Column(
@@ -1967,7 +1967,7 @@ private fun MaskParamSlider(
                 Text(param.label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
                 Icon(
                     androidx.compose.material.icons.Icons.Filled.ArrowDropDown,
-                    contentDescription = "choose what the slider sets",
+                    contentDescription = stringResource(R.string.cd_choose_slider_param),
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -2721,7 +2721,7 @@ internal fun SeedRow(
             IconButton(onClick = { clipboard.setText(AnnotatedString(value)) }) {
                 Icon(
                     painterResource(R.drawable.ic_copy),
-                    contentDescription = "copy the seed",
+                    contentDescription = stringResource(R.string.cd_copy_seed),
                     tint = tint ?: MaterialTheme.colorScheme.primary,
                 )
             }

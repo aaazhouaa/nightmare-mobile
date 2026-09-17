@@ -631,21 +631,21 @@ private fun MissingModelDialog(m: HarnessViewModel.MissingModel, vm: HarnessView
     androidx.compose.material3.AlertDialog(
         onDismissRequest = { vm.dismissMissingModel() },
         title = {
-            Text(if (done) "${m.label} is ready" else "This flow needs a model")
+            Text(
+                if (done) stringResource(R.string.missing_ready, m.label)
+                else stringResource(R.string.missing_title)
+            )
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     when {
-                        done -> "Downloaded. Run the flow now?"
+                        done -> stringResource(R.string.missing_downloaded_run)
                         m is HarnessViewModel.MissingModel.Checkpoint && m.substitute && m.wanted.isNotBlank() ->
-                            "\"${m.wanted}\" is not on this phone and has no download — it was " +
-                                "imported somewhere else. Download ${m.label} ($size) and use it " +
-                                "for this flow instead?"
+                            stringResource(R.string.missing_substitute, m.wanted, m.label, size)
                         m is HarnessViewModel.MissingModel.Segment ->
-                            "${m.label} is not installed — this flow's Segment model node needs it. " +
-                                "Download it ($size)?"
-                        else -> "${m.label} is not installed. Download it ($size)?"
+                            stringResource(R.string.missing_segment, m.label, size)
+                        else -> stringResource(R.string.missing_generic, m.label, size)
                     }
                 )
                 if (progress != null) {
@@ -654,11 +654,14 @@ private fun MissingModelDialog(m: HarnessViewModel.MissingModel, vm: HarnessView
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "${progress.done shr 20} of ${progress.total shr 20} MB · ${progress.phase}",
+                        stringResource(
+                            R.string.missing_progress,
+                            progress.done shr 20, progress.total shr 20, progress.phase,
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                     )
                 } else if (!done) {
-                    Text("Use Wi-Fi.", style = MaterialTheme.typography.bodySmall)
+                    Text(stringResource(R.string.use_wifi), style = MaterialTheme.typography.bodySmall)
                 }
                 vm.modelError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -668,22 +671,22 @@ private fun MissingModelDialog(m: HarnessViewModel.MissingModel, vm: HarnessView
                 done -> androidx.compose.material3.Button(onClick = {
                     vm.dismissMissingModel()
                     vm.runCanvasOrBatch()
-                }) { Text("Run") }
+                }) { Text(stringResource(R.string.run)) }
                 progress != null -> androidx.compose.material3.TextButton(onClick = { vm.dismissMissingModel() }) {
-                    Text("Hide")
+                    Text(stringResource(R.string.hide))
                 }
                 else -> androidx.compose.material3.Button(onClick = { vm.downloadMissingModel() }) {
-                    Text("Download")
+                    Text(stringResource(R.string.download))
                 }
             }
         },
         dismissButton = {
             if (progress != null) {
                 androidx.compose.material3.TextButton(onClick = { vm.cancelModelInstall(); vm.dismissMissingModel() }) {
-                    Text("Cancel download")
+                    Text(stringResource(R.string.cancel_download))
                 }
             } else if (!done) {
-                androidx.compose.material3.TextButton(onClick = { vm.dismissMissingModel() }) { Text("Not now") }
+                androidx.compose.material3.TextButton(onClick = { vm.dismissMissingModel() }) { Text(stringResource(R.string.not_now)) }
             }
         },
     )

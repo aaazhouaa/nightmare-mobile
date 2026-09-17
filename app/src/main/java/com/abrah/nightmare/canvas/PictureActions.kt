@@ -12,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
+import com.abrah.nightmare.R
 import com.abrah.nightmare.ui.ConfirmDelete
 
 /** ⚠ Long enough to swallow a double tap, short enough not to block a retry. */
@@ -79,14 +81,14 @@ fun PictureActions(
     // viewer on a new picture is a new download.
     var lastDownload by remember { mutableStateOf(0L) }
     var confirming by remember { mutableStateOf(false) }
-    val what = if (isClip) "clip" else "picture"
+    val what = if (isClip) stringResource(R.string.clip) else stringResource(R.string.picture)
 
     // ⚠⚠ **CLEAR, not delete** (the user's call, 2026-09-17): on a node this
     // empties the node; the picture is gone only if nothing else holds it. An
     // AUTOSAVED History copy goes with it; a hand-kept one stays.
     onDelete?.let {
         IconButton(onClick = { confirming = true }) {
-            Icon(Icons.Filled.Delete, contentDescription = "clear this $what", tint = deleteTint)
+            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.cd_clear_this, what), tint = deleteTint)
         }
     }
     // ⭐ 💾 Keep — into Results, with the flow that made it.
@@ -136,21 +138,23 @@ fun PictureActions(
         ) {
             Icon(
                 com.abrah.nightmare.ui.DownloadIcon,
-                contentDescription = "save this $what to the gallery",
+                contentDescription = stringResource(R.string.cd_save_this_gallery, what),
                 tint = tint,
             )
         }
     }
     onShare?.let { share ->
         IconButton(onClick = share) {
-            Icon(com.abrah.nightmare.ui.ShareIcon, contentDescription = "share this $what", tint = tint)
+            Icon(com.abrah.nightmare.ui.ShareIcon, contentDescription = stringResource(R.string.cd_share_this, what), tint = tint)
         }
     }
     onStar?.let { star ->
         IconButton(onClick = star) {
             Icon(
                 Icons.Filled.Star,
-                contentDescription = if (favourite) "remove from favourites" else "keep and favourite",
+                contentDescription = stringResource(
+                    if (favourite) R.string.cd_remove_favourite else R.string.cd_keep_favourite,
+                ),
                 // ⚠⚠ The TINT carries the state, and it follows FAVOURITE rather
                 // than kept: the star's own job is the flag now, and one that lit
                 // up because the disk had been tapped would say the wrong thing.
@@ -161,14 +165,13 @@ fun PictureActions(
 
     if (confirming && onDelete != null) {
         ConfirmDelete(
-            title = "Clear this $what?",
-            confirmLabel = "Clear",
+            title = stringResource(R.string.clear_this_title, what),
+            confirmLabel = stringResource(R.string.clear),
             // ⚠ Says whether there is another copy — the render is often the only one.
-            body = "The node goes back to empty. " + when {
-                downloaded -> "You saved it to the gallery, so that copy stays."
-                kept -> "If autosave kept it, it goes from History too; a copy you kept or starred stays."
-                else -> "It has NOT been saved to the gallery, and Run will make a " +
-                    "different one unless the seed is locked."
+            body = when {
+                downloaded -> stringResource(R.string.clear_downloaded)
+                kept -> stringResource(R.string.clear_kept)
+                else -> stringResource(R.string.clear_unsaved)
             },
             onConfirm = onDelete,
             onDismiss = { confirming = false },

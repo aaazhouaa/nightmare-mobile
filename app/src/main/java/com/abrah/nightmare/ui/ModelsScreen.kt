@@ -227,7 +227,7 @@ fun ModelsScreen(
         // each; a list of choices is content.
         AlertDialog(
             onDismissRequest = onCancelUse,
-            title = { Text("Use ${p.spec.label}") },
+            title = { Text(stringResource(R.string.use_named, p.spec.label)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // ⚠⚠ The warning first, and ONLY when it is true. A dialog
@@ -278,7 +278,7 @@ fun ModelsScreen(
             },
             // ⚠ ONE action button. Choosing a flow IS the confirmation, so
             // there is nothing for a confirm button to do.
-            confirmButton = { TextButton(onClick = onCancelUse) { Text("Cancel") } },
+            confirmButton = { TextButton(onClick = onCancelUse) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
@@ -482,13 +482,11 @@ fun ModelsScreen(
     deletingUpscaler?.let { spec ->
         val row = upscalers.firstOrNull { it.spec.id == spec.id }
         ConfirmDelete(
-            title = "Delete ${spec.label}?",
-            body = "Frees ${mb(row?.onDisk ?: 0L)} MB. Getting it back is a " +
-                "${mb(row?.build?.bytes ?: 0L)} MB download. " +
+            title = stringResource(R.string.delete_named, upscalerLabel(spec.id, spec.label)),
+            body = stringResource(R.string.r2_models_delete_frees, mb(row?.onDisk ?: 0L)) +
                 // ⚠ Says what else changes, as the checkpoint dialog does —
                 // here it is a FLOW that breaks, not a selection.
-                "Any flow with an Upscale node set to it will fail until " +
-                "you install it again.",
+                stringResource(R.string.r2_models_upscaler_restore, mb(row?.build?.bytes ?: 0L)),
             onConfirm = { onDeleteUpscaler(spec) },
             onDismiss = { deletingUpscaler = null },
         )
@@ -496,10 +494,9 @@ fun ModelsScreen(
 
     if (deletingSegmenter && segmenter != null) {
         ConfirmDelete(
-            title = "Delete ${segmenter.label}?",
-            body = "Frees ${mb(segmenter.onDisk)} MB. Getting it back is a " +
-                "${mb(segmenter.bytes)} MB download. Any flow with a tapped mask " +
-                "will refuse to run until you install it again.",
+            title = stringResource(R.string.delete_named, segmenter.label),
+            body = stringResource(R.string.r2_models_delete_frees, mb(segmenter.onDisk)) +
+                stringResource(R.string.r2_models_segmenter_restore, mb(segmenter.bytes)),
             onConfirm = onDeleteSegmenter,
             onDismiss = { deletingSegmenter = false },
         )
@@ -527,22 +524,22 @@ fun ModelsScreen(
     deleting?.let { spec ->
         val row = rows.firstOrNull { it.spec.id == spec.id }
         ConfirmDelete(
-            title = "Delete ${spec.label}?",
+            title = stringResource(R.string.delete_named, spec.label),
             body = buildString {
-                append("Frees ${mb(row?.onDisk ?: 0L)} MB. ")
+                append(stringResource(R.string.r2_models_delete_frees, mb(row?.onDisk ?: 0L)))
                 // ⚠⚠ A custom model has NO archive -- there is no URL that
                 // could produce it again. The user's own zip is the only way
                 // back, and they have to still have it.
                 val bytes = row?.build?.bytes ?: spec.best?.bytes
                 if (spec.isCustom || bytes == null) {
-                    append("You imported it, so getting it back means importing the zip again.")
+                    append(stringResource(R.string.r2_models_custom_restore))
                 } else {
-                    append("Getting it back is a ${mb(bytes)} MB download.")
+                    append(stringResource(R.string.r2_models_redownload, mb(bytes)))
                 }
                 // ⚠ Says what ELSE changes. The selection moving is not
                 // something a user would predict from "delete".
                 if (row?.selected == true) {
-                    append("\n\nIt is the model in use, so another will be selected.")
+                    append("\n\n" + stringResource(R.string.r2_models_in_use_note))
                 }
             },
             onConfirm = { onDelete(spec) },

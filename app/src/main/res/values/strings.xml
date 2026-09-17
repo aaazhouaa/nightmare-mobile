@@ -104,6 +104,12 @@
     <string name="open_flow">Open flow</string>
     <string name="close">Close</string>
     <string name="cd_delete_result">Delete this picture</string>
+    <string name="cd_delete_selected_results">delete the selected</string>
+    <string name="cd_share_selected">share the selected</string>
+    <string name="cd_stop_selecting">stop selecting</string>
+    <string name="cd_upscale_picture">upscale this picture</string>
+    <string name="cd_what_made_this">what made this picture</string>
+    <string name="cd_a_clip">a clip</string>
     <string name="cd_open_fullscreen">Tap to see it full screen</string>
 
     <!-- Models and upscalers. -->
@@ -276,6 +282,16 @@
     <string name="starting_backend">starting the backend for the first render…</string>
     <string name="flows_saved_title">Saved</string>
     <string name="flows_empty">Nothing saved yet — build a graph on the canvas, then press Save there.</string>
+    <string name="swap_title">Switch to %1$s</string>
+    <string name="swap_family">%1$s is %2$s, not %3$s. The sampler changes family — every wire is kept — and it renders at %4$s.</string>
+    <string name="swap_prompt_heading">Prompt on “%1$s”</string>
+    <string name="swap_prompt_theirs">Use %1$s’s prompts (recommended)</string>
+    <string name="swap_prompt_mine">Keep the prompt I have</string>
+    <string name="swap_no_negative">no negative</string>
+    <string name="swap_recipe_heading">Sampling settings</string>
+    <string name="swap_recipe_theirs">Use %1$s’s settings (recommended)</string>
+    <string name="swap_recipe_mine">Keep my steps, CFG and scheduler</string>
+    <string name="swap_confirm">Switch</string>
     <string name="canvas_delete_body">Every wire into or out of them goes too, and this cannot be undone.</string>
     <string name="r2_main_op_encode_text">encode text</string>
     <string name="r2_main_op_vae_decode">vae decode</string>
@@ -298,6 +314,13 @@
 
     <!-- Results screen. -->
     <string name="cd_save_selected">save the selected pictures to the gallery</string>
+    <string name="upscale_keeps_both">The enlarged picture is kept as a new item; this one stays.</string>
+    <string name="upscale">Upscale</string>
+    <string name="info">Info</string>
+    <string name="copy_all">Copy all</string>
+    <string name="save_n_to_gallery">Save %1$d to the gallery?</string>
+    <string name="save_n">Save %1$d</string>
+    <string name="save_n_body">Each is written to Pictures/%1$s as a full-size file — a large selection can take a while and a lot of space.</string>
     <string name="cd_star_selected">star the selected</string>
     <string name="cd_unstar_selected">unstar the selected</string>
     <string name="cd_forget_selected">forget the selected pictures</string>
@@ -361,6 +384,8 @@
     <string name="r2_models_hint_sd15">About 1 GB each. Use Wi-Fi.</string>
     <string name="r2_models_hint_anima">About 4.3 GB each, and ~9 GB free while it unpacks. Slow: about 80 s a picture. Close other apps while it renders. Use Wi-Fi.</string>
     <string name="r2_models_hint_sdxl">About 3.5 GB each, and ~7.5 GB free while it unpacks. Use Wi-Fi.</string>
+    <string name="use_named">Use %1$s</string>
+    <string name="r2_models_segmenter_restore">Getting it back is a %1$d MB download. Any flow with a tapped mask will refuse to run until you install it again.</string>
     <string name="r2_models_delete_frees">Frees %1$d MB. </string>
     <string name="r2_models_upscaler_restore">Getting it back is a %1$d MB download. Any flow with an Upscale node set to it will fail until you install it again.</string>
     <string name="r2_models_custom_restore">You imported it, so getting it back means importing the zip again.</string>
@@ -497,4 +522,48 @@
     <string name="tools">Tools</string>
     <string name="tools_note">Small helpers that run on the phone\'s CPU. Wire one into a flow to use it.</string>
     <string name="segmenter_about">Tap an object in an Inpaint mask to select it. Wire a Segment model node into Inpaint.</string>
+    <string name="cd_clear_this">clear this %1$s</string>
+    <string name="cd_save_this_gallery">save this %1$s to the gallery</string>
+    <string name="cd_share_this">share this %1$s</string>
+    <string name="cd_remove_favourite">remove from favourites</string>
+    <string name="cd_keep_favourite">keep and favourite</string>
+    <string name="clip">clip</string>
+    <string name="picture">picture</string>
+    <string name="clear_this_title">Clear this %1$s?</string>
+    <string name="clear">Clear</string>
+    <string name="clear_downloaded">The node goes back to empty. You saved it to the gallery, so that copy stays.</string>
+    <string name="clear_kept">The node goes back to empty. If autosave kept it, it goes from History too; a copy you kept or starred stays.</string>
+    <string name="clear_unsaved">The node goes back to empty. It has NOT been saved to the gallery, and Run will make a different one unless the seed is locked.</string>
+    <string name="r2_ins_crop_section">Crop</string>
+    <string name="r2_ins_mask_section">Mask</string>
+    <string name="checkpoint">Checkpoint</string>
+    <string name="not_installed_suffix">%1$s · not installed</string>
+    <string name="flows_delete_body">The saved flow goes and cannot be brought back. Pictures kept in Results keep their own copy of the flow that made them, and the canvas is not touched.</string>
+    <string name="delete_quoted">Delete \"%1$s\"?</string>
+    <string name="cd_edit_the">edit the %1$s</string>
+    <string name="cd_close_dialog">close</string>
+    <string name="cd_choose_slider_param">choose what the slider sets</string>
+    <string name="missing_ready">%1$s is ready</string>
+    <string name="missing_title">This flow needs a model</string>
+    <string name="missing_downloaded_run">Downloaded. Run the flow now?</string>
+    <string name="missing_substitute">"%1$s" is not on this phone and has no download — it was imported somewhere else. Download %2$s (%3$s) and use it for this flow instead?</string>
+    <string name="missing_segment">%1$s is not installed — this flow\'s Segment model node needs it. Download it (%2$s)?</string>
+    <string name="missing_generic">%1$s is not installed. Download it (%2$s)?</string>
+    <string name="missing_progress">%1$d of %2$d MB · %3$s</string>
+    <string name="use_wifi">Use Wi-Fi.</string>
+    <string name="hide">Hide</string>
+    <string name="cancel_download">Cancel download</string>
+    <string name="not_now">Not now</string>
+    <string name="toast_failed">%1$s failed — %2$s</string>
+    <string name="toast_upscaling">Upscaling with %1$s…</string>
+    <string name="toast_upscale_no_backend">could not start the backend to upscale</string>
+    <string name="toast_upscale_failed">upscale failed — %1$s</string>
+    <string name="toast_upscaled">Upscaled — kept as a new result</string>
+    <string name="toast_share_failed">Could not share: %1$s</string>
+    <string name="run_failed_node">%1$s: %2$s</string>
+    <string name="run_downloading">%1$s is downloading — Run once it has finished</string>
+    <string name="log_ignored_downloading">%1$s ignored — %2$s is downloading</string>
+    <string name="log_ignored_running">%1$s ignored — already running</string>
+    <string name="downloading_video_models">the video models</string>
+    <string name="a_model">a model</string>
 </resources>

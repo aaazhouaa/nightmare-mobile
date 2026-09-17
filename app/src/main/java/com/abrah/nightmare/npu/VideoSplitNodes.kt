@@ -151,7 +151,7 @@ object VideoClipEncodeNode : VideoNode() {
     override val widgets = listOf(
         Widget(
             "prompt", "string", "a cat walking through tall grass, cinematic",
-            hint = "what to animate",
+            hint = "要生成动画的内容",
         ),
     )
 
@@ -223,7 +223,7 @@ object VideoFirstFrameNode : VideoNode() {
     override val outputs = listOf(Port("image", "IMAGE"))
 
     override val widgets = listOf(
-        Widget("seed", "int", "0", hint = "0 = a new first frame every Run. Type the seed shown on the node to get that one back."),
+        Widget("seed", "int", "0", hint = "0 = 每次运行都生成新的首帧。输入节点上显示的种子值即可复现那一张。"),
     )
 
     /** ⚠ It makes exactly the size the video path animates. */
@@ -270,7 +270,7 @@ object VideoVaeEncodeNode : VideoNode() {
     override val outputs = listOf(Port("latent", "VIDEO_LATENT"))
 
     override val widgets = listOf(
-        Widget("seed", "int", "0", hint = "encoding noise, not the clip seed — it changes the result only slightly, so leave it fixed. The sample node's seed is the one that matters."),
+        Widget("seed", "int", "0", hint = "这是编码噪声的种子，而非片段种子——只轻微影响结果，保持固定即可。真正起作用的是采样节点的种子。"),
     )
 
     override fun requiredInputSize(node: Node, port: String): Pair<Int, Int>? =
@@ -320,7 +320,7 @@ object VideoSampleSplitNode : VideoNode() {
     override val outputs = listOf(Port("latent", "VIDEO_LATENT"))
 
     override val widgets = listOf(
-        Widget("seed", "int", "0", hint = "0 = a new clip every Run. Type the seed shown on the node to get that one back."),
+        Widget("seed", "int", "0", hint = "0 = 每次运行都生成新片段。输入节点上显示的种子值即可复现那一段。"),
     )
 
     override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value =
@@ -394,7 +394,7 @@ object VideoVaeDecodeNode : VideoNode() {
     override val widgets = listOf(
         Widget(
             "upscale", "bool", "true",
-            hint = "2x to 1024x640 with QuickSRNet. Off renders 512x320 and is a little faster.",
+            hint = "使用 QuickSRNet 放大至 1024x640。关闭则渲染 512x320，速度稍快。",
         ),
     )
 

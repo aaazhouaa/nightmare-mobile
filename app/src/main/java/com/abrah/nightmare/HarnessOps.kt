@@ -106,7 +106,14 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // ⚠ The Context is for OutputNode, which writes to MediaStore. Nothing
         // else in the executor touches the platform, and the parameter is
         // nullable so the JVM tests can build one without Android.
-        Executor(images = images, types = plugins.types, android = ctx)
+        Executor(
+            images = images, types = plugins.types, android = ctx,
+            // ⭐⭐ The relaunch, mid-graph. The executor decides WHEN a different
+            // checkpoint is needed; this is the layer that already knows how to
+            // start one and wait for /health.
+            switchKey = { key -> ensureBackend(key) },
+            loadedKey = { BackendProcess.launchedKey },
+        )
     }
 
     /**
@@ -136,6 +143,10 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             "canvas_run" -> canvasRun()
             "workflow_io" -> workflowRoundTrip()
             "save_image" -> saveImage()
+            // ⭐ The reported upscale-save bug, isolated. `--es arg 4096`.
+            "save_big" -> saveBig(arg)
+            // ⭐⭐ …and the REAL flow: a picture upscaled, then saved.
+            "save_upscaled" -> saveUpscaled(arg)
             "vae_roundtrip" -> vaeRoundTrip()
             "img2img" -> img2img()
             "graph_img2img" -> graphImg2Img()
@@ -156,8 +167,492 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             "model_import" -> importModels()
             "latent_blend" -> latentBlend()
             "plugin_latent" -> pluginLatentGraph()
+            // ⭐ The in-process NPU runner, on the phone, with nothing else
+            // required: no backend process, no checkpoint, no 8.5 GB download.
+            "npu_canary" -> npuCanary()
+            // ⭐ The whole video recipe, headless. `--es arg "a dog running"`.
+            "npu_video" -> npuVideo(arg)
+            // ⭐⭐ What the video path is still missing, and fetching it.
+            "video_models" -> videoModels()
+            "video_install" -> videoInstall()
+            // ⭐ Image to video: animate the newest saved picture.
+            "npu_i2v" -> npuI2v(arg)
+            "inpaint" -> inpaint(arg)
+            "inpaint_ab" -> inpaintAb()
+            // ⭐ Tap to select, headless (docs/SEGMENTER.md §5).
+            // `--es arg "0.5,0.5"` or `--es arg "0.5,0.5,/sdcard/Download/x.jpg"`.
+            "segmenter_install" -> segmenterInstall()
+            "segment" -> segmentProbe(arg)
             else -> say("unknown intent op \"$op\"", bad = true)
         }
+    }
+
+    // ---- the NPU runner (docs/NEODRAGON.md) ------------------------------
+
+    /**
+     * ⭐⭐ Does this phone run a QNN context binary **in our own process**?
+     *
+     * ⚠⚠ This is the first milestone of the video port and it deliberately
+     * proves the thing that could sink it, before anything is built on top: the
+     * app already reaches the NPU through a separate PROCESS
+     * (`libstable_diffusion_core.so`), and `../Neodragon` measured that an
+     * executable exec'd out of an APK is denied the Hexagon fastrpc device.
+     * In-process `dlopen` is the route that works — but "works in Neodragon's
+     * app" is not "works in this one", and the difference is one `am` command.
+     *
+     * ⚠ It reports the SNR, not just pass/fail. A canary that loads and returns
+     * garbage is the failure mode that matters (fp16 with no fp32 upcast in the
+     * layer norm), and a bare "ok" would hide it.
+     */
+    /**
+     * ⭐⭐ What this device has of the video path, in bytes rather than files.
+     *
+     * ⚠ A file count reads as nearly-done when the one absent graph is 1.5 GB
+     * of a 8.5 GB set, which is the number a user actually waits on.
+     */
+    /**
+     * ⭐⭐ **Image to video, driven for the first time.**
+     *
+     * ⚠⚠ The port has existed since the node was written and nothing in this
+     * app had ever supplied it — `docs/NEODRAGON.md` §7, *"i2v is wired but
+     * never run"*. A port whose only evidence is that it compiles is a port
+     * that has not been tested.
+     *
+     * ⚠ It takes the newest picture in `Pictures/Nightmare`, so the fixture is
+     * something this app made. `Video.bitmapToChw` centre-crops and scales, so
+     * the photo's own size does not matter.
+     *
+     * ⚠⚠ It also exercises the CHEAPER path: with an image supplied, SSD1B
+     * never runs and `clipl` / `ssd1bunet` / `ssd1bvaedec` (1.68 GB) are never
+     * required to be present at all. A device missing exactly those three
+     * should still be able to run this, which is the claim
+     * [com.abrah.nightmare.npu.VideoSampleNode.FIRST_FRAME_ONLY] makes.
+     */
+    private suspend fun npuI2v(arg: String?) {
+        val uri = newestSavedImage()
+        if (uri == null) {
+            say("i2v: nothing in Pictures/${ImageSaver.FOLDER} yet — run `save_image` first",
+                bad = true)
+            return
+        }
+        say("i2v: animating $uri")
+        // ⚠ The same recipe a person gets, not a hand-built variant — only the
+        // photo is substituted, so this op tests what the Flows tab ships.
+        val w0 = com.abrah.nightmare.canvas.imageToVideoWorkflow()
+        val g = w0.graph.copy(
+            nodes = w0.graph.nodes.map {
+                when {
+                    it.type == "core.image" -> it.copy(params = it.params + ("uri" to uri))
+                    it.type == "nd.clip_encode" && !arg.isNullOrBlank() ->
+                        it.copy(params = it.params + ("prompt" to arg))
+                    else -> it
+                }
+            }
+        )
+        // ⚠ `runWorkflow`, the same entry the canvas uses — it is what rolls
+        // `seed = 0` BEFORE the cache key is computed, and a bare `Executor.run`
+        // here would be served the first clip on every later run.
+        val r = runWorkflow(
+            com.abrah.nightmare.canvas.Workflow(g, emptyMap()),
+            onNode = { n ->
+                say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} " +
+                    "${n.ms} ms  ${n.detail}", bad = n.outcome == Outcome.FAILED)
+            },
+        )
+        if (r.error != null) {
+            say("i2v: refused — ${r.error}", bad = true)
+            return
+        }
+        val clip = r.outputs["decode"] as? com.abrah.nightmare.Value.Video
+        if (clip == null) {
+            say("i2v: the graph produced no clip", bad = true)
+            return
+        }
+        say("i2v: ${clip.frames} frames ${clip.w}x${clip.h} from a still")
+    }
+
+    /**
+     * ⭐⭐ The Inpaint recipe, headless: the newest picture in Pictures/Nightmare,
+     * a blob painted off-centre, "Only masked" on, and — with `--es arg stitch` —
+     * "Stitch to original" on.
+     *
+     * ⚠ It checks the two things a person would look at: the CUT is the render
+     * size and is a crop rather than the whole frame, and the PASTE is the size
+     * of the frame (or of the photo, stitched) rather than a 512 thumbnail. The
+     * three pictures are written to `files/inpaint/` so they can be pulled and
+     * LOOKED at, which is the only check of a seam there is.
+     */
+    private suspend fun inpaint(arg: String?) {
+        // ⚠ A photo pushed to `files/inpaint/source.jpg` wins: scoped storage
+        // shows this app only the gallery pictures IT saved, and those are all
+        // renders at the model's size — too small for "Only masked" to crop.
+        val pushed = java.io.File(ctx.getExternalFilesDir(null), "inpaint/source.jpg")
+        // ⚠ A plain PATH, not `file://`: `image.load` reads anything that is not
+        // `content://` as a file name.
+        val uri = if (pushed.canRead()) pushed.absolutePath else newestSavedImage()
+        if (uri == null) {
+            say("inpaint: nothing in Pictures/${ImageSaver.FOLDER} yet — run `save_image` first", bad = true)
+            return
+        }
+        val stitch = arg == "stitch"
+        // A small blob up and to the left: small enough that "Only masked" must crop.
+        val mask = MaskState(
+            ops = listOf(
+                MaskOp.Stroke(MaskStrokeData(listOf(0.30f to 0.35f, 0.38f to 0.40f), 0.04f)),
+            ),
+        )
+        val w0 = com.abrah.nightmare.canvas.inpaintWorkflow()
+        val types = nodeTypes()
+        val g = deriveSizes(
+            w0.graph.copy(
+                nodes = w0.graph.nodes.map {
+                    when (it.type) {
+                        "core.image" -> it.copy(params = it.params + ("uri" to uri))
+                        // ⚠⚠ The mask, the paste and the framing are all params
+                        // on the SAMPLER now (docs/ARCHITECTURE.md §5.7). Left
+                        // pointed at `image.mask` this op silently rendered a
+                        // plain img2img and called it an inpaint — the mask
+                        // never reached anything.
+                        in com.abrah.nightmare.SD_SAMPLER_TYPES -> it.copy(
+                            params = it.params + mapOf(
+                                MaskNode.OPS to mask.encode(),
+                                PasteNode.STITCH to stitch.toString(),
+                                "seed" to "4242",
+                            ) + (
+                                // ⚠ Stitching is only a test when the frame is
+                                // SMALLER than the photo — a whole-photo frame
+                                // maps 1:1 and a wrong parent rect would still
+                                // land in the right place.
+                                if (!stitch) emptyMap()
+                                else mapOf(
+                                    "fit_x" to "0.25", "fit_y" to "0.2",
+                                    "fit_w" to "0.5", "fit_h" to "0.6",
+                                )
+                            )
+                        )
+                        else -> it
+                    }
+                }
+            ),
+            types,
+        )
+        val key = contextKeyModels(g, types).singleOrNull()?.let { m ->
+            contextKeyResolutions(g, types).singleOrNull()?.let { res ->
+                ContextKey(ModelCatalog.backendTypeOf(m), m, res.width, res.height)
+            }
+        }
+        if (!ensureBackend(key)) {
+            say("inpaint: no backend", bad = true)
+            return
+        }
+        val r = runWorkflow(
+            com.abrah.nightmare.canvas.Workflow(g, emptyMap()),
+            onNode = { n ->
+                say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} ${n.ms} ms  ${n.detail}",
+                    bad = n.outcome == Outcome.FAILED)
+            },
+        )
+        if (r.error != null) {
+            say("inpaint: refused — ${r.error}", bad = true)
+            return
+        }
+        val dir = java.io.File(ctx.getExternalFilesDir(null), "inpaint").apply { mkdirs() }
+        fun dump(id: String, v: Value?) {
+            val img = v as? Value.Image ?: return say("  $id: no image", bad = true)
+            val png = images.png(img.id) ?: return say("  $id: evicted", bad = true)
+            java.io.File(dir, "$id.png").writeBytes(png)
+            say("  $id: ${img.w}x${img.h}  region=${img.region}")
+        }
+        dump("sample", r.outputs["sample"])
+        say("inpaint: stitch=$stitch — pictures in ${dir.absolutePath}")
+    }
+
+    /**
+     * ⭐⭐⭐ **The fused sampler against the ten nodes it replaced, one seed.**
+     *
+     * `docs/ARCHITECTURE.md` §5.7 claims the fusion moved no pixels. That claim
+     * is only checkable while BOTH paths exist, which is the whole reason the
+     * old types are still registered (`NodeType.hidden`) for this one build.
+     *
+     * ⚠⚠ Generation is seed-reproducible, so a single-run A/B is valid — but
+     * only if every input is pinned: the same photo, the same mask, the same
+     * seed, the same encode seed, the same denoise. Anything left to a default
+     * on one side and written on the other makes the comparison meaningless.
+     *
+     * ⚠ It reports the mean absolute difference per channel rather than
+     * pass/fail. Two paths that agree exactly give 0.0; a small non-zero is a
+     * real answer (the VAE round trip is not bit-exact across a different call
+     * order) and a large one means the fusion changed the picture.
+     */
+    private suspend fun inpaintAb() {
+        val pushed = java.io.File(ctx.getExternalFilesDir(null), "inpaint/source.jpg")
+        val uri = if (pushed.canRead()) pushed.absolutePath else newestSavedImage()
+        if (uri == null) {
+            say("inpaint_ab: no source picture", bad = true)
+            return
+        }
+        val mask = MaskState(
+            ops = listOf(
+                MaskOp.Stroke(MaskStrokeData(listOf(0.30f to 0.35f, 0.38f to 0.40f), 0.04f)),
+            ),
+        )
+        val ops = mask.encode()
+        val types = nodeTypes()
+        val model = SelectedModel.id
+        val res = SelectedModel.res
+        val ctxParams = mapOf(
+            "model" to model,
+            "width" to res.width.toString(), "height" to res.height.toString(),
+        )
+        val seed = "4242"
+        val denoise = "0.85"
+
+        // --- the NEW graph: four nodes -----------------------------------
+        val fresh = Graph(
+            listOf(
+                Node("prompt", "core.prompt", mapOf("prompt" to "a cat", "negative" to "blurry")),
+                Node("photo", "core.image", mapOf("uri" to uri)),
+                Node(
+                    "sample", com.abrah.nightmare.SdSampler.SD15.name,
+                    ctxParams + mapOf(
+                        "seed" to seed, "denoise" to denoise, "steps" to "8", "cfg" to "7.5",
+                        MaskNode.OPS to ops, "encode_seed" to "42",
+                        MaskCropNode.ONLY_MASKED to "true", PasteNode.STITCH to "false",
+                    ),
+                    sources("prompt" to "prompt", "image" to "photo"),
+                ),
+            )
+        )
+
+        // --- the OLD graph: the ten it replaced ---------------------------
+        val legacy = deriveSizes(
+            Graph(
+                listOf(
+                    Node("prompt", "sd.clip_encode", mapOf("prompt" to "a cat", "negative" to "blurry")),
+                    Node("photo", "core.image", mapOf("uri" to uri)),
+                    Node("frame", "image.crop",
+                        mapOf("x" to "0.0", "y" to "0.0", "w" to "1.0", "h" to "1.0"),
+                        sources("image" to "photo")),
+                    Node("mask", "image.mask",
+                        mapOf(MaskNode.OPS to ops, "grow" to "0.0", "feather" to "0.02"),
+                        sources("image" to "frame")),
+                    Node("cut", "image.mask_crop", mapOf(MaskCropNode.ONLY_MASKED to "true"),
+                        sources("image" to "frame", "mask" to "mask")),
+                    Node("encode", "sd.vae_encode", ctxParams + mapOf("seed" to "42"),
+                        sources("image" to "cut:image")),
+                    Node("old", "sd.sample_legacy",
+                        ctxParams + mapOf(
+                            "seed" to seed, "denoise" to denoise, "steps" to "8", "cfg" to "7.5",
+                        ),
+                        sources("cond" to "prompt", "latent" to "encode")),
+                    Node("blend", "sd.latent_blend", ctxParams,
+                        sources("base" to "encode", "repaint" to "old", "mask" to "cut:mask")),
+                    Node("decode", "sd.vae_decode", ctxParams, sources("latent" to "blend")),
+                    Node("paste", "image.paste", mapOf(PasteNode.STITCH to "false"),
+                        sources(
+                            "patch" to "decode", "cut" to "cut:image", "mask" to "cut:mask",
+                            "frame" to "frame", "original" to "photo",
+                        )),
+                )
+            ),
+            types,
+        )
+
+        val key = ContextKey(ModelCatalog.backendTypeOf(model), model, res.width, res.height)
+        if (!ensureBackend(key)) {
+            say("inpaint_ab: no backend", bad = true)
+            return
+        }
+
+        suspend fun run(label: String, g: Graph, want: String): android.graphics.Bitmap? {
+            val r = runWorkflow(com.abrah.nightmare.canvas.Workflow(g, emptyMap()))
+            if (r.error != null) {
+                say("$label: refused — ${r.error}", bad = true)
+                return null
+            }
+            say("$label: ${r.ran} ran, ${r.cached} cached, ${r.totalMs} ms")
+            val img = r.outputs[want] as? Value.Image
+                ?: return null.also { say("$label: no picture on \"$want\"", bad = true) }
+            say("  $label -> ${img.w}x${img.h}")
+            return images.get(img.id)
+        }
+
+        // ⚠ The OLD one first, so the fused run cannot be served a cond or a
+        // latent the legacy graph left resident and call it agreement.
+        val a = run("old(10 nodes)", legacy, "paste") ?: return
+        val b = run("new(3 nodes) ", fresh, "sample") ?: return
+
+        if (a.width != b.width || a.height != b.height) {
+            say("DIFFERENT SIZE: ${a.width}x${a.height} vs ${b.width}x${b.height}", bad = true)
+            return
+        }
+        var sum = 0L
+        var worst = 0
+        for (y in 0 until a.height) {
+            for (x in 0 until a.width) {
+                val pa = a.getPixel(x, y)
+                val pb = b.getPixel(x, y)
+                for (sh in intArrayOf(16, 8, 0)) {
+                    val d = kotlin.math.abs(((pa shr sh) and 0xFF) - ((pb shr sh) and 0xFF))
+                    sum += d
+                    if (d > worst) worst = d
+                }
+            }
+        }
+        val mean = sum.toDouble() / (a.width.toLong() * a.height * 3)
+        say("A/B: mean |diff| %.3f / 255, worst %d".format(mean, worst))
+        say(if (mean < 1.0) "A/B: the fusion moved no pixels worth seeing" else "A/B: THE PICTURE CHANGED")
+    }
+
+    private fun videoModels() {
+        val vi = com.abrah.nightmare.npu.VideoInstaller
+        val have = vi.installedBytes(ctx)
+        val missing = vi.missing(ctx)
+        val assets = vi.missingAssets(ctx)
+        say(
+            "video models: %.2f/%.2f GB".format(have / 1e9, vi.totalBytes / 1e9) +
+                "  (${missing.size} graph(s) missing, ${assets.size} host weight(s) missing)"
+        )
+        if (missing.isNotEmpty()) say("  graphs: ${missing.joinToString()}")
+        if (assets.isNotEmpty()) say("  weights: ${assets.joinToString()}")
+        if (vi.isComplete(ctx)) say("video: ready")
+    }
+
+    /**
+     * ⭐⭐ Fetch every missing graph from the public repo.
+     *
+     * ⚠⚠ **8.5 GB.** `CLAUDE.md` says to check Wi-Fi before a large push and
+     * that applies far more here than to an APK; the op reports the plan and
+     * the connection before it starts rather than after.
+     */
+    private suspend fun videoInstall() {
+        val vi = com.abrah.nightmare.npu.VideoInstaller
+        val missing = vi.missing(ctx)
+        val assets = vi.missingAssets(ctx)
+        if (missing.isEmpty() && assets.isEmpty()) {
+            say("video: already complete — nothing to download")
+            return
+        }
+        say("video: fetching ${missing.size} graph(s) and ${assets.size} weight file(s)")
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                var lastPct = -1
+                vi.install(ctx, { p ->
+                    val pct = (p.fraction * 100).toInt()
+                    // ⚠ Throttled to whole percent: `fetch` reports per MB and
+                    // 8500 log lines is not a progress report.
+                    if (pct != lastPct) {
+                        lastPct = pct
+                        sink.progress(pct to 100)
+                        if (pct % 5 == 0) say("  ${p.phase} — $pct%")
+                    }
+                })
+            }.fold(
+                onSuccess = { say("video: install complete") },
+                onFailure = { say("video install: ${it.message}", bad = true) },
+            )
+            sink.progress(null)
+        }
+    }
+
+    private fun npuCanary() {
+        val runner = com.abrah.nightmare.npu.QnnRunner(ctx)
+        say("npu: ${com.abrah.nightmare.DeviceProbe.caps()}")
+        val t0 = System.currentTimeMillis()
+        val r = com.abrah.nightmare.npu.NpuCanary.run(ctx, runner)
+        val ms = System.currentTimeMillis() - t0
+        when (r) {
+            is com.abrah.nightmare.npu.NpuCanary.Result.Ok ->
+                say("npu canary OK — ${"%.2f".format(r.snrDb)} dB in $ms ms")
+            is com.abrah.nightmare.npu.NpuCanary.Result.Unsupported ->
+                say("npu canary REFUSED in $ms ms — ${r.detail}", bad = true)
+            is com.abrah.nightmare.npu.NpuCanary.Result.Fp16Suspect ->
+                say("npu canary ran but fp16 is suspect: ${"%.2f".format(r.snrDb)} dB", bad = true)
+            is com.abrah.nightmare.npu.NpuCanary.Result.Inconclusive ->
+                say("npu canary inconclusive in $ms ms — ${r.detail}", bad = true)
+        }
+        say("  downloads allowed: ${r.canDownload}")
+        // ⚠ Released, not left resident: this op can be run repeatedly while
+        // something else holds memory, and a canary is not worth 58 KB of it.
+        runner.releaseAll()
+    }
+
+    /**
+     * ⭐⭐ The `Text to video` recipe, end to end, with nothing on screen.
+     *
+     * ⚠⚠ Through the EXECUTOR and the real recipe, not by calling the pipeline
+     * directly — the same rule [canvasRun] is built on. An op that drove
+     * `Video.generate` itself would prove the port works and prove nothing
+     * about the graph the user actually runs: the node's model check, its
+     * content-addressed file name, the wire into `video.output` and the poster
+     * frame are all things only the graph exercises.
+     *
+     * ⚠ **No backend is started.** This graph names no context key, which is the
+     * property that makes the video path independent of the checkpoint picker;
+     * starting a server here would hide a regression in exactly that.
+     */
+    private suspend fun npuVideo(arg: String?) {
+        val ctxDir = com.abrah.nightmare.npu.NpuFiles.ctxDir(ctx)
+        val wf0 = com.abrah.nightmare.canvas.textToVideoWorkflow()
+        // ⚠ The prompt is overridable so a second run differs visibly; the seed
+        // stays whatever the recipe says (0 = roll), because a fixed one here
+        // would make every run return the CACHED clip and report success for a
+        // pipeline that never ran.
+        // ⚠⚠ That is exactly what `seed = 0` ITSELF did until 2026-09-12: the
+        // roll happened inside the node, after the cache key had hashed "0", so
+        // two runs of this op returned one clip. `runRolled` rolls it now.
+        // ⚠ `save = true` is FORCED here and the recipe ships it true as well,
+        // so this line is belt and braces rather than an override -- it is what
+        // keeps the op honest if the default ever moves back.
+        val wf = com.abrah.nightmare.canvas.Workflow(
+            wf0.graph.copy(
+                nodes = wf0.graph.nodes.map {
+                    when {
+                        // ⭐ `--es arg "a dog running|12345"` pins the seed, which is
+                        // what makes two builds COMPARABLE: without it every run
+                        // rolls and no numerical change can be told from a new
+                        // seed. Used to prove the phase extraction was identical.
+                        it.type == "nd.clip_encode" && !arg.isNullOrBlank() ->
+                            it.copy(params = it.params + ("prompt" to arg.substringBefore('|')))
+                        // ⚠⚠ BOTH seeded nodes, or pinning one still leaves the
+                        // other rolling and the clip is not reproducible.
+                        it.type in com.abrah.nightmare.SAMPLER_TYPES &&
+                            !arg.isNullOrBlank() &&
+                            arg.substringAfter('|', "").isNotBlank() ->
+                            it.copy(params = it.params + ("seed" to arg.substringAfter('|')))
+                        else -> it
+                    }
+                }
+            ),
+            wf0.positions,
+        )
+        val have = ctxDir.listFiles()?.count { it.isFile } ?: 0
+        say("video: $have context binaries in $ctxDir")
+        val missing = com.abrah.nightmare.npu.NpuFiles.missing(
+            ctx, com.abrah.nightmare.npu.Video.requiredModels()
+        )
+        if (missing.isNotEmpty()) say("  missing: ${missing.joinToString()}", bad = true)
+        val missingAssets = com.abrah.nightmare.npu.NpuFiles.missingAssets(ctx)
+        if (missingAssets.isNotEmpty()) say("  missing weights: ${missingAssets.joinToString()}", bad = true)
+
+        val t0 = System.currentTimeMillis()
+        val r = runWorkflow(wf, onNode = { n ->
+            say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} " +
+                "${n.ms} ms  ${n.detail}", bad = n.outcome == Outcome.FAILED)
+        })
+        if (r.error != null) {
+            say("video: refused — ${r.error}", bad = true)
+            return
+        }
+        val clip = r.outputs["decode"] as? Value.Video
+        if (clip == null) {
+            say("video: the graph produced no clip", bad = true)
+            return
+        }
+        say("video: ${clip.frames} frames ${clip.w}x${clip.h} in " +
+            "${(System.currentTimeMillis() - t0) / 1000} s")
+        say("  ${clip.path} (${java.io.File(clip.path).length() / 1024} KB)")
+        images.get(clip.posterId)?.let { sink.image(it) }
     }
 
     // ---- models ----------------------------------------------------------
@@ -235,7 +730,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                     if (missing.isEmpty()) {
                         "ok  ${spec.bytesOnDisk(ctx) shr 20} MB"
                     } else {
-                        "INCOMPLETE -- missing ${missing.joinToString()}"
+                        "INCOMPLETE — missing ${missing.joinToString()}"
                     },
             )
             if (spec.label != spec.id) say("       label \"${spec.label}\" (from config.json)")
@@ -263,7 +758,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (lines.isEmpty()) {
             // ⚠ Names the directory and the extension. The likely mistakes are
             // pushing to the models dir instead, and pushing an unzipped tree.
-            say("nothing to import -- put a .zip in $inbox", bad = true)
+            say("nothing to import — put a .zip in $inbox", bad = true)
             return
         }
         for (line in lines) say("  $line", bad = line.startsWith("FAIL"))
@@ -283,7 +778,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 // holding some of the files reads as "installed" to anything
                 // that only checks the directory exists, and then fails at
                 // launch with a path.
-                else -> "PARTIAL -- missing ${missing.joinToString()}"
+                else -> "PARTIAL — missing ${missing.joinToString()}"
             }
             // ⚠ Wide enough for the longest id in the catalogue --
             // `sdxl_cyberrealistic` is 19 characters, and a column that only
@@ -339,7 +834,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             val secs = (System.nanoTime() - t0) / 1_000_000_000
             say("  ok   ${spec.id} installed in ${secs}s, ${spec.bytesOnDisk(ctx) shr 20} MB on disk")
         } catch (e: Exception) {
-            say("  install FAILED -- ${e.message}", bad = true)
+            say("  install FAILED — ${e.message}", bad = true)
         }
     }
 
@@ -350,7 +845,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             ModelInstaller.delete(ctx, spec)
             say("deleted ${spec.id}")
         } catch (e: Exception) {
-            say("delete refused -- ${e.message}", bad = true)
+            say("delete refused — ${e.message}", bad = true)
         }
     }
 
@@ -372,8 +867,8 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // ⚠ The UI path does this too (`HarnessViewModel.selectModel`); the two
         // front ends share this file precisely so they cannot drift, and this
         // op having omitted it was that drift.
-        if (was != spec.id && Backend.get("/health").code == 200) {
-            say("  stopping the backend -- it was launched for $was")
+        if (was != spec.id && Backend.probe("/health").code == 200) {
+            say("  stopping the backend — it was launched for $was")
             stopBackend()
         }
         // ⚠ It does NOT retarget the canvas, where `HarnessViewModel.selectModel`
@@ -422,7 +917,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val spec = SelectedModel.spec
         val ok = spec.availableResolutions(ctx)
         if (want !in ok) {
-            say("${spec.label} cannot render $want -- it serves ${ok.joinToString(", ")}", bad = true)
+            say("${spec.label} cannot render $want — it serves ${ok.joinToString(", ")}", bad = true)
             return
         }
         val was = SelectedModel.res
@@ -430,14 +925,14 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         say("resolution $want")
         // ⚠ Same reasoning as [useModel]: `--patch` binds at launch, so a
         // process started at the old size will not reload into the new one.
-        if (was != want && Backend.get("/health").code == 200) {
-            say("  stopping the backend -- it was launched at $was")
+        if (was != want && Backend.probe("/health").code == 200) {
+            say("  stopping the backend — it was launched at $was")
             stopBackend()
         }
     }
 
     suspend fun health() {
-        val r = Backend.get("/health")
+        val r = Backend.probe("/health")
         when {
             r.code == 200 -> {
                 sink.backend(BackendState.UP)
@@ -516,7 +1011,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      */
     suspend fun sample() {
         val steps = 20
-        say("sample: $steps steps, seed $sampleSeed -- streaming")
+        say("sample: $steps steps, seed $sampleSeed — streaming")
         val s = when (val r = Ops.sample(
             prompt = "a cat on grass",
             negative = "blurry, lowres",
@@ -539,7 +1034,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
         sink.progress(null)
         sink.backend(BackendState.UP)
-        say("sample ${s.serverMs} ms (wire ${s.wireMs} ms) -- ${s.handle}")
+        say("sample ${s.serverMs} ms (wire ${s.wireMs} ms) — ${s.handle}")
         say("  latent_sha ${s.latentSha}  ${s.progressEvents} progress frames")
         say("  first frame +${s.firstProgressMs} ms, last +${s.lastProgressMs} ms")
         if (s.firstProgressMs in 0 until s.serverMs / 2) {
@@ -549,7 +1044,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // stream is a transport finding, and calling it a sample failure
             // would send the next session to look in the wrong place.
             say("  BUFFERED? first frame at +${s.firstProgressMs} ms of a " +
-                "${s.serverMs} ms render -- the client is not streaming", bad = true)
+                "${s.serverMs} ms render — the client is not streaming", bad = true)
         }
 
         // The other half of the graph. A handle that cannot be decoded is a
@@ -562,13 +1057,13 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                         "refused", bad = true)
                 } else {
                     sink.image(bmp)
-                    say("vae_decode ${d.value.serverMs} ms -- ${bmp.width}x${bmp.height} " +
+                    say("vae_decode ${d.value.serverMs} ms — ${bmp.width}x${bmp.height} " +
                         "sha ${d.value.rgbSha}")
                     // ⭐ And LOOK at it. graph_smoke.sh exists because a random
                     // latent decodes just as deterministically as a sampled one
                     // (backend-patches/README.md); only the picture tells them
                     // apart, and this puts it on the screen.
-                    say("  ^ that image is the check -- a cat, not beige blobs")
+                    say("  ^ that image is the check — a cat, not beige blobs")
                 }
             }
             is Ops.Result.Err -> {
@@ -601,7 +1096,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         onProgress: (String, Int, Int) -> Unit = { _, _, _ -> },
         /** ⭐ Which node is being reached — what the canvas's run log names. */
         onStart: (String, String) -> Unit = { _, _ -> },
-    ): GraphRun = runRolled(workflow, onNode, onProgress, onStart)
+        /** ⭐ A node narrating itself while it runs. [com.abrah.nightmare.NodeCtx.say]. */
+        onLog: (String, String) -> Unit = { _, _ -> },
+    ): GraphRun = runRolled(workflow, onNode, onProgress, onStart, onLog)
 
     /**
      * ⭐ Rolls every `seed = 0` before running, then executes.
@@ -612,9 +1109,17 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * CACHED latent and the roll would change nothing -- the exact complaint
      * ("Run gives the same picture") in a subtler form.
      *
-     * ⚠ Only `sample`. `vae_encode`'s seed is what makes the same image encode
-     * to the same latent, which is what lets everything downstream of it cache;
-     * rolling that one would make every img2img graph full price every Run.
+     * ⚠ Only a [SAMPLER_TYPES] node. `vae_encode`'s seed is what makes the same
+     * image encode to the same latent, which is what lets everything downstream
+     * of it cache; rolling that one would make every img2img graph full price
+     * every Run.
+     *
+     * ⚠⚠ **`nd.video_sample` is one of them, and leaving it out was the bug the
+     * paragraph above predicted.** It rolled its own seed INSIDE `run` — after
+     * the cache key had been computed from `seed = 0` — so the second Run of a
+     * video graph was served the first clip and the roll changed nothing.
+     * Reported from the phone, 2026-09-12: *"video player seed 0 is cached, it
+     * should be random"*.
      *
      * ⚠ The user's graph is NOT modified -- a rolled copy is run, so the node
      * still reads 0 and still rolls next time.
@@ -624,7 +1129,27 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         onNode: (NodeRun) -> Unit,
         onProgress: (String, Int, Int) -> Unit,
         onStart: (String, String) -> Unit = { _, _ -> },
+        onLog: (String, String) -> Unit = { _, _ -> },
     ): GraphRun {
+        // ⚠⚠⚠ **Consumer-derived sizes are settled HERE, before anything
+        // runs.** `image.crop` carries no `out_w`/`out_h` of its own — they are
+        // derived from whatever consumes it — and until 2026-09-13 that
+        // derivation happened ONLY on a canvas edit. A recipe opened and Run
+        // without touching anything, or any graph built by a harness op, reached
+        // the executor with an underived crop and the node passed its input
+        // through unchanged. Measured on the image-to-video recipe: the crop ran
+        // in 4 ms and emitted the photo at 1024x640 where the encoder wanted
+        // 512x320.
+        //
+        // ⚠ It did not FAIL, which is why it needed measuring rather than
+        // reasoning about: `Video.bitmapToChw` centre-crops as a backstop, so the
+        // render succeeded and simply ignored the user's framing.
+        //
+        // ⇒ One place, on the path every Run takes.
+        val settled = runCatching {
+            workflow.copy(graph = com.abrah.nightmare.deriveSizes(workflow.graph, nodeTypes()))
+        }.getOrDefault(workflow)
+        @Suppress("NAME_SHADOWING") val workflow = settled
         // ⚠⚠ Checked BEFORE the sampling, because a size mismatch renders
         // successfully and looks like a quality problem — see [sizeMismatches].
         for (why in sizeMismatches(workflow.graph, nodeTypes())) {
@@ -632,9 +1157,13 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
         val rolled = mutableMapOf<String, Int>()
         val nodes = workflow.graph.nodes.map { n ->
-            val wantsRoll = n.type == "sd.sample" &&
-                (n.params["seed"] ?: SampleNode.widgets.first { it.name == "seed" }.default).orEmpty()
-                    .trim().toIntOrNull() == 0
+            // ⚠ The DEFAULT comes from the node's own type, not from
+            // `SampleNode`: two samplers declare a `seed` widget and hardcoding
+            // one of them would read the wrong default for the other.
+            val seedDefault = nodeTypes()[n.type]?.widgets
+                ?.firstOrNull { it.name == "seed" }?.default
+            val wantsRoll = isSampler(n.type) &&
+                (n.params["seed"] ?: seedDefault).orEmpty().trim().toIntOrNull() == 0
             if (!wantsRoll) return@map n
             // ⚠ Never 0, or the next run would read it back as "roll again" if
             // this value were ever written into a workflow.
@@ -652,6 +1181,13 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 sink.progress(step to total)
                 onProgress(id, step, total)
             },
+            // ⭐ A node narrating itself reaches BOTH front ends: the harness log
+            // (so `--es op npu_video` shows the same lines the canvas does) and
+            // the caller's own sink.
+            onLog = { id, text ->
+                say("  $text")
+                onLog(id, text)
+            },
             // ⚠ The rolled seed is shown on the node, or a user watching a
             // picture change every Run has no way to learn WHICH seed made the
             // one they liked.
@@ -661,7 +1197,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // MODEL rather than from anything written in the graph. This line
             // is the only place the four ever appear together.
             onNode = { n ->
-                val recipe = if (n.type == "sd.sample") {
+                val recipe = if (n.type in com.abrah.nightmare.SD_SAMPLER_TYPES) {
                     workflow.graph.byId[n.id]
                         ?.let { runCatching { SampleNode.effectiveParams(it) }.getOrNull() }
                         ?.let { p ->
@@ -758,7 +1294,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             SelectedModel.res.width,
             SelectedModel.res.height,
         )
-        if (Backend.get("/health").code == 200) {
+        if (Backend.probe("/health").code == 200) {
             val have = BackendProcess.launchedKey
             // ⚠ A null launch key with a live /health is a backend this app did
             // not start -- a leftover from a previous process, or one launched
@@ -766,8 +1302,8 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // replaced rather than trusted.
             if (have == target) return true
             say(
-                if (have == null) "the running backend was not started by this app -- relaunching"
-                else "the backend is serving $have but this graph needs $target -- relaunching"
+                if (have == null) "the running backend was not started by this app — relaunching"
+                else "the backend is serving $have but this graph needs $target — relaunching"
             )
             stopBackend()
         }
@@ -778,6 +1314,25 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
         say("正在为 ${target.model} 启动后端（${target.width}x${target.height}）…")
         return launchBackend(target)
+    }
+
+    /**
+     * ⭐⭐ Bring the backend up for THIS graph — the one pre-run launch, shared by
+     * the Run button, the sweep and the headless op so they cannot drift.
+     *
+     * ⚠⚠ The key is [launchKeyFor]'s: the first the schedule reaches, starting
+     * from what is loaded. Never the global selection — that is the bug it
+     * replaced (a relaunch on every Run whenever a node named a different
+     * checkpoint). ⚠ A graph naming no key gets a server with no model.
+     */
+    suspend fun ensureBackendFor(
+        graph: Graph,
+        /** ⚠ The caller's registry — the VM avoids building the plugin host for a plugin-free graph. */
+        types: Map<String, NodeType> = nodeTypes(),
+    ): Boolean {
+        val namesNoKey = runCatching { contextKeyModels(graph, types).isEmpty() }.getOrDefault(false)
+        if (namesNoKey) return ensureBackend(noModel = true)
+        return ensureBackend(launchKeyFor(graph, types, BackendProcess.launchedKey))
     }
 
     suspend fun canvasRun() {
@@ -804,32 +1359,13 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // [HarnessViewModel.adoptGraphModel] does when a workflow is opened --
         // a saved graph at 768² would otherwise be run against a backend
         // launched at whatever the picker last said.
-        var namesNoKey = false
-        val want = try {
-            val types = nodeTypes()
-            val models = contextKeyModels(wf.graph, types)
-            // ⚠⚠ EMPTY is a different answer from "could not resolve one".
-            // A graph naming two models also yields a null `want`, and launching
-            // a model-free server for THAT would replace a clear refusal
-            // ("needs 2 backend contexts") with a confusing one.
-            namesNoKey = models.isEmpty()
-            val m = models.singleOrNull()
-            val res = contextKeyResolutions(wf.graph, types).singleOrNull()
-            if (m != null && res != null) {
-                ContextKey(ModelCatalog.backendTypeOf(m), m, res.width, res.height)
-            } else null
-        } catch (e: Throwable) {
-            null
-        }
-        // ⚠ No context key means no checkpoint is needed — an upscale-only or
-        // all-app-side graph gets a server with no model loaded.
-        if (!ensureBackend(want, noModel = namesNoKey)) return
+        if (!ensureBackendFor(wf.graph)) return
         val r = runWorkflow(wf, onNode = { n ->
             say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} " +
                 "${n.ms} ms  ${n.detail}", bad = n.outcome == Outcome.FAILED)
         })
         if (r.error != null) {
-            say("canvas: refused -- ${r.error}", bad = true)
+            say("canvas: refused — ${r.error}", bad = true)
             return
         }
         say("canvas: ran ${r.ran}, cached ${r.cached}, failed ${r.failed} in ${r.totalMs} ms")
@@ -877,7 +1413,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
     suspend fun loadImageGraph() {
         val uri = newestSavedImage()
         if (uri == null) {
-            say("load_image: nothing in Pictures/${ImageSaver.FOLDER} yet -- run " +
+            say("load_image: nothing in Pictures/${ImageSaver.FOLDER} yet — run " +
                 "`save_image` first", bad = true)
             return
         }
@@ -886,7 +1422,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val g = Graph(
             listOf(
                 Node(
-                    "src", "image.load",
+                    "src", "core.image",
                     params = mapOf("uri" to uri) + ctxKey().filterKeys { it != "model" },
                 ),
                 textNode(prompt = "a dog on snow"),
@@ -896,7 +1432,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                     inputs = sources("image" to "src"),
                 ),
                 Node(
-                    "redo", "sd.sample",
+                    "redo", com.abrah.nightmare.SdSampler.SD15.name,
                     params = mapOf(
                         "steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to "7",
                         "denoise" to "0.6",
@@ -930,7 +1466,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (srcRun?.outcome == Outcome.RAN) {
             say("  ok   the loader re-read the file while everything downstream stayed cached")
         } else {
-            say("  FAIL load_image was ${srcRun?.outcome} -- a file can change behind its " +
+            say("  FAIL load_image was ${srcRun?.outcome} — a file can change behind its " +
                 "URI, so it must not be cached", bad = true)
         }
 
@@ -987,7 +1523,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
         say("cond_wire: dog ${dog.latentSha}, cat ${cat.latentSha}")
         if (dog.latentSha == cat.latentSha) {
-            say("  FAIL the two prompts produced the same latent -- the fixture is " +
+            say("  FAIL the two prompts produced the same latent — the fixture is " +
                 "not distinguishing anything", bad = true)
             return
         }
@@ -1000,7 +1536,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
 
         val mixed = when (val r = render("a cat on grass", cond = condDog.handle)) {
             is Ops.Result.Err -> {
-                say("cond_wire: mixed FAILED http ${r.code} -- ${r.body.take(160)}", bad = true)
+                say("cond_wire: mixed FAILED http ${r.code} — ${r.body.take(160)}", bad = true)
                 return
             }
             is Ops.Result.Ok -> r.value
@@ -1012,16 +1548,16 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 say("  ok   identical to the dog render: the conditioning is what reached " +
                     "the UNet, not the prompt")
             mixed.latentSha == cat.latentSha ->
-                say("  FAIL identical to the CAT render -- the conditioning handle was " +
+                say("  FAIL identical to the CAT render — the conditioning handle was " +
                     "ignored", bad = true)
             else ->
-                say("  FAIL matched neither render -- something else differs too", bad = true)
+                say("  FAIL matched neither render — something else differs too", bad = true)
         }
 
         // ⚠ And the handle must still differ from the dog's, because the prompt
         // string is part of the key. Same picture, different request.
         if (mixed.handle != dog.handle) {
-            say("  ok   different handle, same latent -- the key covers the prompt as well")
+            say("  ok   different handle, same latent — the key covers the prompt as well")
         } else {
             say("  FAIL the two requests collided on one handle", bad = true)
         }
@@ -1053,7 +1589,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val cat = textNode("text_cat", "a cat on grass")
         val dog = textNode("text_dog", "a dog on snow")
         fun sampler(id: String, seed: Int, cond: String, from: String? = null) = Node(
-            id, "sd.sample",
+            id, com.abrah.nightmare.SdSampler.SD15.name,
             params = mapOf(
                 "steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to seed.toString(),
                 "denoise" to "0.6",
@@ -1108,7 +1644,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (encMs > 0 && midMs > 0) {
             say("  ok   the latent route skips a real cost, not a nominal one")
         } else {
-            say("  FAIL the VAE nodes reported no time -- were they cached?", bad = true)
+            say("  FAIL the VAE nodes reported no time — were they cached?", bad = true)
         }
 
         (rb.outputs["out"] as? Value.Image)?.let { img ->
@@ -1150,7 +1686,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 steps = 8, seed = 7, latentHandle = base.handle, denoise = denoise,
             )) {
                 is Ops.Result.Err -> {
-                    say("  denoise $denoise FAILED http ${r.code} -- ${r.body.take(160)}",
+                    say("  denoise $denoise FAILED http ${r.code} — ${r.body.take(160)}",
                         bad = true)
                     return
                 }
@@ -1169,7 +1705,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             previous?.let {
                 if (diff <= it) {
                     say("  FAIL denoise $denoise moved LESS far than the previous " +
-                        "strength -- the strength is not being applied", bad = true)
+                        "strength — the strength is not being applied", bad = true)
                     return
                 }
             }
@@ -1180,7 +1716,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // ⚠ And fewer steps are actually run: denoise 0.3 of 8 steps starts at
         // step 5, so it must be quicker than a full render. A backend that
         // silently ran all 8 would still pass the diff check above.
-        say("  (a low denoise should also be quicker -- compare the ms above)")
+        say("  (a low denoise should also be quicker — compare the ms above)")
     }
 
     /**
@@ -1210,7 +1746,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
 
         val encoded = when (val e = Ops.vaeEncode(first.png, seed = 42)) {
             is Ops.Result.Err -> {
-                say("vae_roundtrip: encode FAILED http ${e.code} -- ${e.body.take(160)}", bad = true)
+                say("vae_roundtrip: encode FAILED http ${e.code} — ${e.body.take(160)}", bad = true)
                 return
             }
             is Ops.Result.Ok -> e.value
@@ -1225,7 +1761,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (again is Ops.Result.Ok && again.value.latentSha == encoded.latentSha) {
             say("  ok   encoding the same image twice gives the same latent")
         } else {
-            say("  FAIL a second encode differed -- the op is not deterministic", bad = true)
+            say("  FAIL a second encode differed — the op is not deterministic", bad = true)
         }
 
         val second = when (val d = Ops.vaeDecode(latentHandle = encoded.handle)) {
@@ -1248,7 +1784,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // encode+decode is one full trip. Well past that means the normalisation
         // or the latent space is wrong, not that the VAE is lossy.
         if (diff < 12.0) say("  ok   within what a VAE round trip costs")
-        else say("  FAIL ${"%.1f".format(diff)} is far more than a round trip should cost -- " +
+        else say("  FAIL ${"%.1f".format(diff)} is far more than a round trip should cost — " +
             "suspect the pixel range or the latent space", bad = true)
     }
 
@@ -1260,18 +1796,162 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * one would silently save nothing and the user would press Run twice for one
      * picture. The count of files before and after is the evidence.
      */
-    suspend fun saveImage() {
-        val wf = com.abrah.nightmare.canvas.defaultWorkflow()
-        val withOutput = com.abrah.nightmare.canvas.Workflow(
-            graph = Graph(
-                wf.graph.nodes + Node(
-                    "out", "image.output",
-                    params = mapOf("save" to "true", "name" to "smoke"),
-                    inputs = sources("image" to "decode"),
-                )
-            ),
-            positions = wf.positions + ("out" to com.abrah.nightmare.canvas.Pt(24f, 560f)),
+    /**
+     * ⭐⭐ **Exactly what the node's Save button does**, so a failure here is
+     * the failure a user reported rather than a different code path that
+     * happens to save a file.
+     *
+     * ⚠⚠ `HarnessViewModel.saveImage` reads the store's PNG and hands it to
+     * [ImageSaver]; both halves are attempted here and reported separately,
+     * because "no PNG" and "MediaStore refused" are different bugs with the
+     * same toast.
+     */
+    private fun saveLikeTheButton(what: String, imageId: String) {
+        val bmp = images.get(imageId)
+        say("  $what: ${bmp?.width}x${bmp?.height} in the store")
+        val png = try {
+            images.png(imageId)
+        } catch (e: Throwable) {
+            // ⚠⚠ Throwable, not Exception: encoding a 4096² PNG is where an
+            // OutOfMemoryError would land, and an Error slipping past a catch
+            // is how this would look like "nothing happened".
+            say("  $what: PNG encode threw ${e.javaClass.simpleName}: ${e.message}", bad = true)
+            null
+        }
+        if (png == null) {
+            say("  $what: no PNG bytes — this is what the button reports as " +
+                "\"no longer in memory\"", bad = true)
+            return
+        }
+        say("  $what: ${png.size / 1024} KB of PNG")
+        try {
+            val uri = ImageSaver.savePng(ctx, png, "harness-$what")
+            say("  $what: saved to $uri")
+        } catch (e: Throwable) {
+            say("  $what: MediaStore threw ${e.javaClass.simpleName}: ${e.message}", bad = true)
+        }
+    }
+
+    /**
+     * ⭐⭐ **The reported bug, isolated**: *"for sdxl after upscale, save to
+     * gallery doesn't work from the upscale node, but it works from the result
+     * tab after starring"*.
+     *
+     * ⚠⚠ It does NOT render anything. An SDXL upscale is 1024² → **4096²**,
+     * and the question is whether the SAVE path survives a picture that size —
+     * not whether the upscaler works, which it demonstrably does since the
+     * picture reaches Results. So a bitmap of exactly that size goes into the
+     * same store and through the same two calls. ⚠ Results works by reading a
+     * PNG off disk that was written at STAR time, which is why it is not
+     * evidence that this path works.
+     *
+     * @param arg the long edge, default 4096. `--es arg 2048` is the SD 1.5 case.
+     */
+    private fun saveBig(arg: String?) {
+        val edge = arg?.toIntOrNull() ?: 4096
+        say("save_big: making a ${edge}x$edge bitmap (${(edge.toLong() * edge * 4) shr 20} MB)")
+        val bmp = try {
+            android.graphics.Bitmap.createBitmap(
+                edge, edge, android.graphics.Bitmap.Config.ARGB_8888,
+            ).also { b ->
+                // ⚠⚠⚠ **NOISE, not stripes.** The first version of this drew 16
+                // flat bands, which PNG-compressed to 74 KB — so it "passed"
+                // while testing nothing: the whole question is whether a
+                // 30-40 MB encode survives, and a fixture that compresses to
+                // nothing cannot ask it. `CLAUDE.md`: check the fixture is
+                // representative first.
+                val rng = java.util.Random(7)
+                val row = IntArray(edge)
+                for (y in 0 until edge) {
+                    for (x in 0 until edge) {
+                        row[x] = 0xFF shl 24 or (rng.nextInt() and 0xFFFFFF)
+                    }
+                    b.setPixels(row, 0, edge, 0, y, edge, 1)
+                }
+            }
+        } catch (e: Throwable) {
+            say("save_big: could not even allocate it — ${e.javaClass.simpleName}", bad = true)
+            return
+        }
+        val rt = java.lang.Runtime.getRuntime()
+        say("save_big: heap ${(rt.totalMemory() - rt.freeMemory()) shr 20}/" +
+            "${rt.maxMemory() shr 20} MB after the bitmap")
+        val id = images.put(bmp)
+        saveLikeTheButton("big", id)
+        say("save_big: heap ${(rt.totalMemory() - rt.freeMemory()) shr 20}/" +
+            "${rt.maxMemory() shr 20} MB at the end")
+    }
+
+    /**
+     * ⭐⭐ **The reported flow, as close as this device can get it**: a real
+     * picture, upscaled, then saved exactly as the node's button saves it.
+     *
+     * ⚠⚠ The report says SDXL, and no SDXL checkpoint is installed here — but
+     * the claim under test is about the SIZE the upscaler produces, not about
+     * which model made its input. So the input is squared off at 1024 first,
+     * which is what an SDXL render is, and the upscaler takes it from there.
+     *
+     * ⚠ [saveBig] already showed the SAVE survives a 4096² incompressible
+     * picture through the byte path, so if this also passes the bug is
+     * somewhere the harness cannot see — which is a real finding and needs
+     * saying rather than patching around.
+     */
+    private suspend fun saveUpscaled(arg: String?) {
+        val uri = newestSavedImage()
+        if (uri == null) {
+            say("save_upscaled: nothing in Pictures/${ImageSaver.FOLDER} yet", bad = true)
+            return
+        }
+        val which = arg?.takeIf { it.isNotBlank() } ?: "upscaler_realistic"
+        say("save_upscaled: $which on $uri")
+        // ⚠ An upscale-only backend: no checkpoint, because this graph names
+        // no context key. Same launch the upscale recipe takes.
+        if (!ensureBackend(noModel = true)) {
+            say("save_upscaled: no backend", bad = true)
+            return
+        }
+        val g = Graph(
+            listOf(
+                Node("photo", "core.image", params = mapOf("uri" to uri)),
+                // ⚠ Explicit: nothing downstream DERIVES a size for a crop here,
+                // because `image.upscale` takes whatever it is given.
+                Node(
+                    "square", "image.crop",
+                    params = mapOf("out_w" to "1024", "out_h" to "1024"),
+                    inputs = sources("image" to "photo"),
+                ),
+                Node(
+                    "upscale", "image.upscale",
+                    params = mapOf(UpscaleNode.UPSCALER to which),
+                    inputs = sources("image" to "square"),
+                ),
+            )
         )
+        val r = runWorkflow(
+            com.abrah.nightmare.canvas.Workflow(g, emptyMap()),
+            onNode = { n ->
+                say("  ${n.id.padEnd(8)} ${n.outcome.name.lowercase().padEnd(7)} " +
+                    "${n.ms} ms  ${n.detail}", bad = n.outcome == Outcome.FAILED)
+            },
+        )
+        if (r.error != null) {
+            say("save_upscaled: refused — ${r.error}", bad = true)
+            return
+        }
+        val img = r.outputs["upscale"]?.previewImage()
+        if (img == null) {
+            say("save_upscaled: the upscaler produced no picture", bad = true)
+            return
+        }
+        saveLikeTheButton("upscale", img.id)
+    }
+
+    suspend fun saveImage() {
+        // ⚠⚠ `image.output` is gone (2026-09-13) — every terminal node draws
+        // its own result and carries save/share/star, so the switch had nothing
+        // left to do. This op therefore exercises what the BUTTON does, which
+        // is the path a user actually takes and the one they reported broken.
+        val withOutput = com.abrah.nightmare.canvas.defaultWorkflow()
 
         val before = countSaved()
         say("save_image: ${before} file(s) in Pictures/${ImageSaver.FOLDER} before")
@@ -1281,25 +1961,33 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 bad = n.outcome == Outcome.FAILED)
         })
         if (first.error != null || first.failed > 0) {
-            say("save_image: first run failed -- ${first.error}", bad = true)
+            say("save_image: first run failed — ${first.error}", bad = true)
             return
         }
 
+        // ⚠ The decode's own picture, saved the way the node's Save button
+        // saves it: the store's PNG bytes through [ImageSaver].
+        val img = first.outputs["decode"]?.previewImage()
+        if (img == null) {
+            say("save_image: the decode produced no picture", bad = true)
+            return
+        }
+        saveLikeTheButton("decode", img.id)
+
         val second = runWorkflow(withOutput)
-        val outRun = second.runs.firstOrNull { it.id == "out" }
-        say("  second run: ran ${second.ran}, cached ${second.cached}; " +
-            "out was ${outRun?.outcome?.name?.lowercase()}")
+        say("  second run: ran ${second.ran}, cached ${second.cached}")
 
         val after = countSaved()
         say("save_image: ${after} file(s) after two runs")
+        // ⚠⚠ ONE file, not two: the save is now a BUTTON, pressed once, rather
+        // than a node with a side effect that fired on every Run. That the
+        // second run adds nothing is the point -- it is what deleting
+        // `image.output` was for.
         when {
-            outRun?.outcome != Outcome.RAN ->
-                say("  FAIL the Output node was ${outRun?.outcome} on the second run -- a " +
-                    "node with a side effect must not be cached", bad = true)
-            after == before + 2 ->
-                say("  ok   two runs wrote two files, and the sampler stayed cached")
+            after == before + 1 ->
+                say("  ok   the button wrote one file, and a second Run added none")
             else ->
-                say("  FAIL expected ${before + 2} files, found $after", bad = true)
+                say("  FAIL expected ${before + 1} files, found $after", bad = true)
         }
     }
 
@@ -1332,7 +2020,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
     suspend fun installUpscaler(id: String?) {
         val spec = UpscalerCatalog.byId(id.orEmpty())
         if (spec == null) {
-            say("upscaler_install: unknown id \"$id\" -- " +
+            say("upscaler_install: unknown id \"$id\" — " +
                 UpscalerCatalog.ALL.joinToString { it.id }, bad = true)
             return
         }
@@ -1354,6 +2042,87 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // downloader left a 0-byte file and no clue; an IOException and an
             // SSLException want opposite fixes.
             say("  FAIL ${e.javaClass.simpleName}: ${e.message}", bad = true)
+        }
+    }
+
+    private suspend fun segmenterInstall() {
+        val seg = com.abrah.nightmare.segment.Segmenter
+        say("segmenter_install: ${seg.LABEL}, ${seg.BYTES} B")
+        try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                seg.install(ctx, onProgress = { p -> if (p.total <= 0) say("  ${p.phase}") })
+            }
+            say("  ok   ${seg.bytesOnDisk(ctx)} B at ${seg.dir(ctx).absolutePath}")
+        } catch (e: Throwable) {
+            say("  FAIL ${e.javaClass.simpleName}: ${e.message}", bad = true)
+        }
+    }
+
+    /**
+     * ⭐⭐ One tap, measured and LOOKED at: the trunk and decode times, each
+     * candidate written as a PNG to pull, and a second segment of the same point
+     * byte-compared against the first (determinism is what storing a tap as a
+     * point relies on — `docs/SEGMENTER.md` §3).
+     *
+     * ⚠ The second segment goes through a FRESH model (`close()` first), or the
+     * cache would answer it and the comparison would prove nothing.
+     */
+    private suspend fun segmentProbe(arg: String?) {
+        val seg = com.abrah.nightmare.segment.Segmenter
+        val parts = arg.orEmpty().split(",")
+        val x = parts.getOrNull(0)?.toFloatOrNull() ?: 0.5f
+        val y = parts.getOrNull(1)?.toFloatOrNull() ?: 0.5f
+        val path = parts.getOrNull(2)
+        if (!seg.isInstalled(ctx)) {
+            say("segment: not installed — run segmenter_install", bad = true)
+            return
+        }
+        val photo = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (path != null) android.graphics.BitmapFactory.decodeFile(path)
+            else newestSavedImage()?.let { uri ->
+                ctx.contentResolver.openInputStream(android.net.Uri.parse(uri))
+                    ?.use { android.graphics.BitmapFactory.decodeStream(it) }
+            }
+        }
+        if (photo == null) {
+            say("segment: no photo (${path ?: "nothing in Pictures/${ImageSaver.FOLDER}"})", bad = true)
+            return
+        }
+        say("segment: ${photo.width}x${photo.height} at $x,$y")
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            seg.close()
+            val t0 = System.nanoTime()
+            val a = seg.segment(ctx, photo, x, y)
+            val ms = (System.nanoTime() - t0) / 1_000_000
+            if (a == null) {
+                say("  miss — nothing contains the tap ($ms ms, open + trunk + decode)", bad = true)
+                return@withContext
+            }
+            val out = java.io.File(ctx.getExternalFilesDir(null), "segment").apply { mkdirs() }
+            fun bytes(b: android.graphics.Bitmap): ByteArray =
+                java.nio.ByteBuffer.allocate(b.rowBytes * b.height).also { b.copyPixelsToBuffer(it) }.array()
+            a.candidates.forEachIndexed { i, c ->
+                // ⚠ As a black/white mask, the way the sampler will see it.
+                val m = com.abrah.nightmare.MaskRaster.rasterise(
+                    com.abrah.nightmare.MaskState(listOf(com.abrah.nightmare.MaskOp.Placed(c))),
+                    photo.width, photo.height,
+                )
+                java.io.File(out, "cand$i.png").outputStream().use {
+                    m.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+                }
+                val cover = bytes(c).count { (it.toInt() and 0xFF) >= 128 } * 100f / (c.width * c.height)
+                say("  cand$i ${c.width}x${c.height} covers ${"%.1f".format(cover)}%" +
+                    if (i == a.default) "  <- default" else "")
+            }
+            say("  first tap $ms ms (open + trunk + decode); PNGs in ${out.absolutePath}")
+            val t1 = System.nanoTime()
+            seg.segment(ctx, photo, x + 0.0004f, y) // cache miss, same photo: trunk kept
+            say("  second point ${(System.nanoTime() - t1) / 1_000_000} ms (trunk cached)")
+            seg.close()
+            val b = seg.segment(ctx, photo, x, y)
+            val same = b != null && b.default == a.default && b.candidates.size == a.candidates.size &&
+                a.candidates.indices.all { bytes(a.candidates[it]).contentEquals(bytes(b.candidates[it])) }
+            say("  deterministic across a fresh model: $same", bad = !same)
         }
     }
 
@@ -1382,7 +2151,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         try {
             store.save("smoke", wf, nodeTypes())
         } catch (e: Exception) {
-            say("workflow_io: save FAILED -- ${e.javaClass.simpleName}: ${e.message}", bad = true)
+            say("workflow_io: save FAILED — ${e.javaClass.simpleName}: ${e.message}", bad = true)
             return
         }
         val file = store.file("smoke")
@@ -1391,7 +2160,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val back = try {
             store.load("smoke")
         } catch (e: Exception) {
-            say("workflow_io: load FAILED -- ${e.message}", bad = true)
+            say("workflow_io: load FAILED — ${e.message}", bad = true)
             return
         }
         if (back == null) {
@@ -1437,7 +2206,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         when (val w = Ops.sample(prompt = PREVIEW_PROMPT, negative = PREVIEW_NEG,
             steps = 8, seed = 4242)) {
             is Ops.Result.Err -> {
-                say("preview: warm-up FAILED http ${w.code} -- ${w.body.take(160)}", bad = true)
+                say("preview: warm-up FAILED http ${w.code} — ${w.body.take(160)}", bad = true)
                 return
             }
             is Ops.Result.Ok -> say("  warm-up ${w.value.serverMs} ms")
@@ -1469,7 +2238,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         sink.progress(null)
         val withPreviews = when (on) {
             is Ops.Result.Err -> {
-                say("preview: preview run FAILED http ${on.code} -- ${on.body.take(160)}",
+                say("preview: preview run FAILED http ${on.code} — ${on.body.take(160)}",
                     bad = true)
                 return
             }
@@ -1484,7 +2253,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // ⚠ A real outcome, not a measurement. `previewSupported()` is a
             // pipeline capability, so a backend that cannot preview must say so
             // rather than be reported as "previews are free".
-            say("  FAIL asked for previews and got none -- the pipeline may not " +
+            say("  FAIL asked for previews and got none — the pipeline may not " +
                 "support them, or the request fields are wrong", bad = true)
             return
         }
@@ -1538,7 +2307,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         suspend fun blend(label: String, mask: ByteArray, expect: String?): Ops.Blended? =
             when (val r = Ops.latentBlend(a.handle, b.handle, mask)) {
                 is Ops.Result.Err -> {
-                    say("  $label FAILED http ${r.code} -- ${r.body.take(160)}", bad = true)
+                    say("  $label FAILED http ${r.code} — ${r.body.take(160)}", bad = true)
                     null
                 }
                 is Ops.Result.Ok -> {
@@ -1559,7 +2328,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (half.latentSha == a.latentSha || half.latentSha == b.latentSha) {
             // ⚠ Without this, an op that ignored the mask and returned one input
             // would pass both identity checks above.
-            say("  FAIL a half mask reproduced one of the inputs -- the mask is " +
+            say("  FAIL a half mask reproduced one of the inputs — the mask is " +
                 "not being applied", bad = true)
             return
         }
@@ -1592,7 +2361,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // The mask was WHITE on the left, and white takes B.
         val geometryHolds = leftVsB < leftVsA / 2 && rightVsA < rightVsB / 2
         if (geometryHolds) {
-            say("  ok   the white half took B and the black half took A -- the mask's " +
+            say("  ok   the white half took B and the black half took A — the mask's " +
                 "geometry is applied, not just its hash")
         } else {
             say("  FAIL the halves do not match the mask: white was supposed to take B", bad = true)
@@ -1661,14 +2430,14 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val plugin = try {
             Plugin.fromDir(dir)
         } catch (e: Exception) {
-            say("plugin_latent: no pack at ${dir.absolutePath} -- push examples/latent-mix " +
+            say("plugin_latent: no pack at ${dir.absolutePath} — push examples/latent-mix " +
                 "there first (${e.message})", bad = true)
             return
         }
         val added = try {
             plugins.load(plugin)
         } catch (e: Throwable) {
-            say("plugin_latent: load failed -- ${e.javaClass.simpleName}: ${e.message}",
+            say("plugin_latent: load failed — ${e.javaClass.simpleName}: ${e.message}",
                 bad = true)
             return
         }
@@ -1679,7 +2448,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // same prompt twice would be pure waste -- and a COND handle fanning
         // out to two consumers is a case the executor should be seen doing.
         fun sampler(id: String, seed: Int) = Node(
-            id, "sd.sample",
+            id, com.abrah.nightmare.SdSampler.SD15.name,
             params = mapOf(
                 "steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to seed.toString(),
             ),
@@ -1735,7 +2504,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (mixRun?.outcome == Outcome.FAILED && mixRun.detail.contains("wants IMAGE")) {
             say("  ok   a latent wired into an image port is refused: ${mixRun.detail.take(120)}")
         } else {
-            say("  FAIL a latent into an IMAGE port was not refused -- outcome " +
+            say("  FAIL a latent into an IMAGE port was not refused — outcome " +
                 "${mixRun?.outcome}, ${mixRun?.detail?.take(120)}", bad = true)
         }
     }
@@ -1802,7 +2571,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // ⚠ Throwable, not Exception: a missing libnmjs.so arrives as
             // UnsatisfiedLinkError, which an Exception catch would let through
             // as an app crash rather than a legible finding.
-            say("js: could not create a runtime -- ${e.javaClass.simpleName}: ${e.message}",
+            say("js: could not create a runtime — ${e.javaClass.simpleName}: ${e.message}",
                 bad = true)
             return
         }
@@ -1849,7 +2618,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             if (stopped && loopMs < 5_000) {
                 say("  ok   runaway loop interrupted after $loopMs ms")
             } else {
-                say("  FAIL runaway loop: stopped=$stopped after $loopMs ms -- the " +
+                say("  FAIL runaway loop: stopped=$stopped after $loopMs ms — the " +
                     "interrupt budget is not a real stop", bad = true)
             }
 
@@ -1916,7 +2685,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val plugin = try {
             Plugin.fromAssets(ctx, "plugins/resize-pack")
         } catch (e: Exception) {
-            say("plugin: could not read the manifest -- ${e.javaClass.simpleName}: ${e.message}",
+            say("plugin: could not read the manifest — ${e.javaClass.simpleName}: ${e.message}",
                 bad = true)
             return
         }
@@ -1926,7 +2695,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val added = try {
             plugins.load(plugin)
         } catch (e: Throwable) {
-            say("plugin: load failed -- ${e.javaClass.simpleName}: ${e.message}", bad = true)
+            say("plugin: load failed — ${e.javaClass.simpleName}: ${e.message}", bad = true)
             return
         }
         say("  registered: ${added.joinToString(", ")}")
@@ -1935,7 +2704,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             listOf(
                 textNode(),
                 Node(
-                    "sample", "sd.sample",
+                    "sample", com.abrah.nightmare.SdSampler.SD15.name,
                     params = mapOf(
                         "steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to "42",
                     ),
@@ -1958,7 +2727,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val a = pass("A plugin cold", graph("0.5"), expectRan = 4, expectCached = 0)
         val small = a.outputs["small"] as? Value.Image
         if (small == null) {
-            say("plugin: the node produced no image -- nothing after this means anything",
+            say("plugin: the node produced no image — nothing after this means anything",
                 bad = true)
             return
         }
@@ -1989,7 +2758,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         val nosy = try {
             Plugin.fromAssets(ctx, "plugins/nosy-pack").also { plugins.load(it) }
         } catch (e: Throwable) {
-            say("  FAIL could not load the nosy pack -- ${e.message}", bad = true)
+            say("  FAIL could not load the nosy pack — ${e.message}", bad = true)
             null
         }
         if (nosy != null) {
@@ -2007,7 +2776,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 // ⚠⚠ The loudest line in this file. A permission check that
                 // does not deny is worse than none: it makes the manifest read
                 // like a guarantee it is not providing.
-                say("  FAIL the nosy node was NOT denied -- outcome ${run?.outcome}, " +
+                say("  FAIL the nosy node was NOT denied — outcome ${run?.outcome}, " +
                     "detail ${run?.detail?.take(120)}", bad = true)
             }
         }
@@ -2055,7 +2824,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 val dir = PluginInstaller.install(z, pluginsDir(), ctx.cacheDir)
                 say("  installed ${z.name} (${z.length()} B) -> ${dir.name}")
             } catch (e: Exception) {
-                say("  ${z.name}: REFUSED -- ${e.message}", bad = true)
+                say("  ${z.name}: REFUSED — ${e.message}", bad = true)
             }
         }
         pluginsFromDisk()
@@ -2086,7 +2855,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             // ⚠ A finding, not an error. An empty directory means the push has
             // not happened, and saying so with the path is the difference
             // between a five-second fix and a debugging session.
-            say("no plugins on disk -- push one to ${dir.absolutePath} first", bad = true)
+            say("no plugins on disk — push one to ${dir.absolutePath} first", bad = true)
             return
         }
 
@@ -2095,13 +2864,13 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             val plugin = try {
                 Plugin.fromDir(p)
             } catch (e: Exception) {
-                say("  ${p.name}: REFUSED -- ${e.message}", bad = true)
+                say("  ${p.name}: REFUSED — ${e.message}", bad = true)
                 continue
             }
             val added = try {
                 plugins.load(plugin)
             } catch (e: Throwable) {
-                say("  ${plugin.id}: load failed -- ${e.javaClass.simpleName}: ${e.message}",
+                say("  ${plugin.id}: load failed — ${e.javaClass.simpleName}: ${e.message}",
                     bad = true)
                 continue
             }
@@ -2114,14 +2883,14 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             }
         }
         if (chain.isEmpty()) {
-            say("no image->image nodes among the loaded packs -- nothing to chain", bad = true)
+            say("no image->image nodes among the loaded packs — nothing to chain", bad = true)
             return
         }
 
         val nodes = mutableListOf(
             textNode(),
             Node(
-                "sample", "sd.sample",
+                "sample", com.abrah.nightmare.SdSampler.SD15.name,
                 params = mapOf(
                     "steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to "42",
                 ),
@@ -2177,7 +2946,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      */
     private fun demoGraph(seedA: Int, seedB: Int): Graph {
         fun sampler(id: String, seed: Int) = Node(
-            id = id, type = "sd.sample",
+            id = id, type = com.abrah.nightmare.SdSampler.SD15.name,
             params = ctxKey(
                 mapOf(
                     "steps" to FIXTURE_STEPS,
@@ -2261,25 +3030,31 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         if (!ensureBackend()) return
         val expect = want ?: spec.native
         say("aspect $ratio on ${spec.label}: expecting $expect out of ${spec.native}")
+        // ⚠⚠ The CURRENT node set — a prompt into the selected family's fused
+        // sampler, which crops its own decode. This op still built the
+        // pre-rework `sd.clip_encode -> sd15.sample(cond) -> sd.vae_decode`
+        // graph after §5.7 and refused before sampling ("nothing is wired into
+        // prompt"), so the one check of aspectTarget against the C++ had not run
+        // since the fusion. Found 2026-09-16.
+        // ⚠ 20 steps, not FIXTURE_STEPS: at 8 an SDXL render is speckle, and this
+        // op is also where an imported SDXL export gets LOOKED at.
         val g = Graph(
             listOf(
-                textNode(),
                 Node(
-                    "sample", "sd.sample",
-                    params = ctxKey(
-                        mapOf("steps" to FIXTURE_STEPS, "cfg" to "7.5", "seed" to "42",
-                              "aspect" to ratio)
+                    "prompt", "core.prompt",
+                    params = mapOf(
+                        "prompt" to "a lighthouse on a cliff at sunset, photograph",
+                        "negative" to "blurry, lowres",
                     ),
-                    inputs = sources("cond" to "text"),
                 ),
                 Node(
-                    "decode", "sd.vae_decode",
-                    // ⚠ The SAME ratio on the decoder. That is the pairing
-                    // `aspectRetarget` enforces on a real graph, and writing it
-                    // by hand here is what makes this fixture a test of the crop
-                    // rather than of the retarget.
-                    params = ctxKey(mapOf("aspect" to ratio)),
-                    inputs = sources("latent" to "sample"),
+                    "sample",
+                    com.abrah.nightmare.SdSampler.typeFor(spec.family, inpaint = false),
+                    params = ctxKey(
+                        mapOf("steps" to "20", "cfg" to spec.cfg.toString(), "seed" to "42",
+                              "scheduler" to spec.scheduler, "aspect" to ratio)
+                    ),
+                    inputs = sources("prompt" to "prompt"),
                 ),
             )
         )
@@ -2295,14 +3070,19 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             },
         )
         sink.progress(null)
-        if (r.error != null) { say("aspect: refused -- ${r.error}", bad = true); return }
-        val out = r.outputs["decode"] as? Value.Image
+        if (r.error != null) { say("aspect: refused — ${r.error}", bad = true); return }
+        val out = r.outputs["sample"] as? Value.Image
         if (out == null) { say("aspect: no image came out", bad = true); return }
-        images.get(out.id)?.let { sink.image(it) }
+        images.get(out.id)?.let { bmp ->
+            sink.image(bmp)
+            // ⭐ Pullable, so a render from this op can be LOOKED at, not only sized.
+            java.io.File(ctx.getExternalFilesDir(null), "aspect_probe.png").outputStream()
+                .use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        }
         if (out.w == expect.width && out.h == expect.height) {
             say("aspect $ratio -> ${out.w}x${out.h} ✓ matches ${expect}")
         } else {
-            say("aspect $ratio -> ${out.w}x${out.h} but expected $expect -- " +
+            say("aspect $ratio -> ${out.w}x${out.h} but expected $expect — " +
                 "the app's aspectTarget and the backend disagree", bad = true)
         }
     }
@@ -2311,7 +3091,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         executor.cache.clear()
         val a = pass("A cold", demoGraph(42, 7), expectRan = 5, expectCached = 0)
         if (a.error != null || a.failed > 0) {
-            say("graph: pass A did not complete -- the later passes would be " +
+            say("graph: pass A did not complete — the later passes would be " +
                 "measuring nothing. Stopping.", bad = true)
             return
         }
@@ -2320,7 +3100,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
 
         say("pass D: restarting the backend under the cache…")
         if (!restartBackend()) {
-            say("graph: no backend after the restart -- D not run", bad = true)
+            say("graph: no backend after the restart — D not run", bad = true)
             return
         }
         val d = pass("D after restart", demoGraph(42, 8), expectRan = 3, expectCached = 2)
@@ -2329,9 +3109,9 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // a pass.
         if (d.prunedHandles > 0) {
             say("  dropped ${d.prunedHandles} handle(s) the restarted backend no " +
-                "longer held -- residency WAS consulted")
+                "longer held — residency WAS consulted")
         } else {
-            say("  pruned 0 handles after a restart -- residency was NOT consulted, " +
+            say("  pruned 0 handles after a restart — residency was NOT consulted, " +
                 "so D proves nothing", bad = true)
         }
 
@@ -2340,7 +3120,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         (d.outputs["decode_b"] as? Value.Image)?.let { img ->
             images.get(img.id)?.let { bmp ->
                 sink.image(bmp)
-                say("  ^ decode_b, from the cache -- a cat, not beige blobs")
+                say("  ^ decode_b, from the cache — a cat, not beige blobs")
             }
         }
     }
@@ -2395,16 +3175,16 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * check has to prove the old process is gone, not that a process is there.
      */
     suspend fun restartBackend(): Boolean {
-        BackendProcess.stop()
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { BackendProcess.stop() }
         var down = false
         repeat(10) {
             if (!down) {
-                if (Backend.get("/health").code != 200) down = true
+                if (Backend.probe("/health").code != 200) down = true
                 else kotlinx.coroutines.delay(500)
             }
         }
         if (!down) {
-            say("  backend still answering /health after stop() -- not restarted", bad = true)
+            say("  backend still answering /health after stop() — not restarted", bad = true)
             return false
         }
         sink.backend(BackendState.DOWN)
@@ -2428,13 +3208,13 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      * an absent backend is started this way.
      */
     private suspend fun ensureUpscaleServer(): Boolean {
-        if (Backend.get("/health").code == 200) {
+        if (Backend.probe("/health").code == 200) {
             if (!BackendProcess.upscalerServer) {
                 say("this graph needs no checkpoint; the backend already up is holding one")
             }
             return true
         }
-        say("starting an upscale-only backend -- this graph needs no checkpoint…")
+        say("starting an upscale-only backend — this graph needs no checkpoint…")
         return launchBackend(upscalerOnly = true)
     }
 
@@ -2451,7 +3231,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             upscalerOnly = upscalerOnly,
         )) {
             is BackendProcess.Start.Failed -> {
-                say("start failed -- ${r.why}", bad = true)
+                say("start failed — ${r.why}", bad = true)
                 drainBackendLog()
                 return false
             }
@@ -2460,7 +3240,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 var up = false
                 repeat(45) {
                     if (!up) {
-                        if (Backend.get("/health").code == 200) {
+                        if (Backend.probe("/health").code == 200) {
                             up = true
                             sink.backend(BackendState.UP)
                             say("serving after ~${it + 1}s")
@@ -2471,7 +3251,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 }
                 if (!up) {
                     sink.backend(BackendState.DOWN)
-                    say("no /health after 45s -- backend output follows", bad = true)
+                    say("no /health after 45s — backend output follows", bad = true)
                     drainBackendLog()
                 }
                 return up
@@ -2479,8 +3259,10 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
     }
 
-    fun stopBackend() {
-        BackendProcess.stop()
+    suspend fun stopBackend() {
+        // ⚠ IO: [BackendProcess.stop] now waits for the process to exit, and
+        // this is reached from the main thread.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { BackendProcess.stop() }
         sink.backend(BackendState.DOWN)
         say("backend stopped")
     }

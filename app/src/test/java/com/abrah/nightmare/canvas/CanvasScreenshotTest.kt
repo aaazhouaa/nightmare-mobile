@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.abrah.nightmare.Graph
 import com.abrah.nightmare.MaskNode
 import com.abrah.nightmare.MaskOp
@@ -60,8 +61,17 @@ class CanvasScreenshotTest {
         ),
     )
 
+    /**
+     * ⚠⚠ The LEGACY sampler, and it has to be: this fixture is the
+     * plugin-LATENT story (`LatentMix` takes two latents), and the fused sampler
+     * emits an IMAGE. Pointed at the new type the wires below would be drawn
+     * between ports that cannot connect — a golden of a graph nobody can build.
+     * ⇒ It goes when the legacy types do, and this fixture becomes an
+     * IMAGE-level plugin, which is where every real Tier 0 pack lives anyway
+     * (docs/ARCHITECTURE.md §5.7).
+     */
     private fun sampler(id: String, seed: Int) = Node(
-        id, "sd.sample",
+        id, "sd.sample_legacy",
         params = mapOf(
             "model" to "dreamshaper",
             "steps" to "8", "cfg" to "7.5", "seed" to seed.toString(),
@@ -246,6 +256,19 @@ class CanvasScreenshotTest {
     }
 
     /**
+     * ⭐⭐⭐ **A recipe opened the way the APP opens one** — [CanvasState.withView]
+     * with no saved view, which is what `HarnessViewModel` calls.
+     *
+     * ⚠⚠ Every screen golden below used to hardcode `Viewport(Pt(0, 0), 0.85f)`,
+     * and that is precisely the blind spot `docs/UI.md` §5 names: a test that
+     * does not drive the production wiring cannot test it. The fit was broken
+     * for weeks — `REFERENCE_WIDTH` was 1100 against a 411dp screen, so a flow
+     * opened with its last two nodes off the right edge — and these goldens
+     * showed a tidy canvas throughout, because they never asked for the fit.
+     */
+    private fun opened(w: Workflow = defaultWorkflow()) = CanvasState(w).withView(null)
+
+    /**
      * ⭐ The whole screen, mid-render: the run bar, the output thumbnail, and
      * the per-node state the executor reports. This is the state docs/UI.md §1
      * says decides whether the app feels modern, so it is the one most worth
@@ -254,7 +277,7 @@ class CanvasScreenshotTest {
     @Test
     fun theScreenMidRender() = shoot("screen-running") {
         CanvasScreen(
-            state = CanvasState(defaultWorkflow(), Viewport(Pt(0f, 0f), 0.85f)),
+            state = opened(),
             types = NODE_TYPES,
             status = mapOf("sample" to NodeStatus(progress = 7 to 20)),
             busy = true,
@@ -291,12 +314,7 @@ class CanvasScreenshotTest {
     @Test
     fun theScreenWithBothLocks() = shoot("screen-locked") {
         CanvasScreen(
-            state = CanvasState(
-                defaultWorkflow(),
-                Viewport(Pt(0f, 0f), 0.85f),
-                zoomLocked = true,
-                panLocked = true,
-            ),
+            state = opened().copy(zoomLocked = true, panLocked = true),
             types = NODE_TYPES,
             status = emptyMap(),
             busy = false,
@@ -309,9 +327,7 @@ class CanvasScreenshotTest {
     @Test
     fun theScreenShowingARefusal() = shoot("screen-refused") {
         CanvasScreen(
-            state = CanvasState(
-                defaultWorkflow(),
-                Viewport(Pt(0f, 0f), 0.85f),
+            state = opened().copy(
                 // ⚠ No selection: `selection.isNotEmpty()` implies multi-select
                 // now, and this golden is about the refusal strip over an
                 // ORDINARY canvas -- the run bar, not the contextual one.
@@ -339,7 +355,7 @@ class CanvasScreenshotTest {
     @Test
     fun theFirstScreen() = shoot("screen-first-run") {
         CanvasScreen(
-            state = CanvasState(defaultWorkflow(), Viewport(Pt(0f, 0f), 0.85f)),
+            state = opened(),
             types = NODE_TYPES,
             status = emptyMap(),
             busy = false,
@@ -350,17 +366,67 @@ class CanvasScreenshotTest {
         )
     }
 
-    /** ⚠ A run that failed says so ON the canvas — it used to reach only the log. */
+    /**
+     * ⭐⭐⭐ **The TWO-FEEDER shape** — the one the user arranged by hand on the
+     * phone and asked every recipe to copy, 2026-09-15.
+     *
+     * ⚠⚠ It is the shape with something to get wrong: `prompt` and `photo`
+     * both feed the sampler, and the sampler's `prompt` port sits ABOVE its
+     * `image` port. Stacked in one column in that order the wires cannot cross;
+     * in two columns — which is what the diagonal did — they always do. That is
+     * a thing only a picture shows, so this is where it is pinned.
+     */
     @Test
-    fun theScreenShowingWhyARunFailed() = shoot("screen-run-error") {
+    fun aFlowWithAPhotoAndAPrompt() = shoot("screen-img2img") {
         CanvasScreen(
-            state = CanvasState(defaultWorkflow(), Viewport(Pt(0f, 0f), 0.85f)),
+            state = opened(img2imgWorkflow()),
             types = NODE_TYPES,
             status = emptyMap(),
             busy = false,
             image = null,
             onGesture = {}, onRun = {}, onBack = {},
-            runError = "no model installed -- open Models and download one",
+            modelLabel = "AbsoluteReality",
+            backendUp = true,
+            flowName = "Image to image",
+        )
+    }
+
+    /**
+     * ⭐⭐ The top bar's SECOND and third rows — the flow and the load line.
+     *
+     * ⚠⚠ No golden drew them until the design review, 2026-09-15: every other
+     * screen golden passes `flowName` and `loadLine` as null, which hides both.
+     * `docs/UI.md` §6 rule 3 asked for this after a literal `$it` reached the
+     * phone through exactly that gap. ⚠ A video flow, with an SDXL-length
+     * label, because that is the case the readout got wrong twice.
+     */
+    @Test
+    fun theTopBarNamesTheFlowAndTheLoad() = shoot("screen-top-bar") {
+        CanvasScreen(
+            state = opened(textToVideoWorkflow()),
+            types = NODE_TYPES,
+            status = emptyMap(),
+            busy = false,
+            image = null,
+            onGesture = {}, onRun = {}, onBack = {},
+            backendUp = true,
+            flowName = "Text to video",
+            flowDirty = true,
+            loadLine = "holding Neodragon (video) · 6.1/11.4 GB free",
+        )
+    }
+
+    /** ⚠ A run that failed says so ON the canvas — it used to reach only the log. */
+    @Test
+    fun theScreenShowingWhyARunFailed() = shoot("screen-run-error") {
+        CanvasScreen(
+            state = opened(),
+            types = NODE_TYPES,
+            status = emptyMap(),
+            busy = false,
+            image = null,
+            onGesture = {}, onRun = {}, onBack = {},
+            runError = "no model installed — open Models and download one",
             modelLabel = "AbsoluteReality (not installed)",
             backendUp = false,
         )
@@ -385,10 +451,10 @@ class CanvasScreenshotTest {
             NodeInspectorBody(
                 nodeId = "src",
                 node = Node(
-                    "src", "image.load",
+                    "src", "core.image",
                     params = mapOf("width" to "512", "height" to "512"),
                 ),
-                type = NODE_TYPES["image.load"],
+                type = NODE_TYPES["core.image"],
                 onSetParam = { _, _, _ -> },
                 onDelete = {},
             )
@@ -409,13 +475,13 @@ class CanvasScreenshotTest {
             NodeInspectorBody(
                 nodeId = "src",
                 node = Node(
-                    "src", "image.load",
+                    "src", "core.image",
                     params = mapOf(
                         "uri" to "content://media/external/images/media/258620",
                         "width" to "512", "height" to "512",
                     ),
                 ),
-                type = NODE_TYPES["image.load"],
+                type = NODE_TYPES["core.image"],
                 onSetParam = { _, _, _ -> },
                 onDelete = {},
             )
@@ -465,10 +531,74 @@ class CanvasScreenshotTest {
             NodeInspectorBody(
                 nodeId = "sample",
                 node = Node(
-                    "sample", "sd.sample",
-                    params = mapOf("steps" to "10", "cfg" to "1.5", "scheduler" to "euler_a"),
+                    "sample", "sd15.sample",
+                    params = mapOf(
+                        "steps" to "10", "cfg" to "1.5", "scheduler" to "euler_a",
+                        "model" to "absolutereality",
+                    ),
                 ),
-                type = NODE_TYPES["sd.sample"],
+                type = NODE_TYPES["sd15.sample"],
+                onSetParam = { _, _, _ -> },
+                onDelete = {},
+                // ⭐⭐⭐ **The checkpoint picker**, which had no golden at all
+                // while it was the most-reported control in the sheet — a chip
+                // strip of fifteen models, then a dropdown, then a family
+                // filter, all shipped without a picture of any of them.
+                //
+                // ⚠ Two families, because the chips only exist with two: one
+                // installed family filters nothing and draws none.
+                installedModels = listOf(
+                    CheckpointChoice("absolutereality", "AbsoluteReality", com.abrah.nightmare.Family.SD15),
+                    CheckpointChoice("qteamix", "QteaMix", com.abrah.nightmare.Family.SD15),
+                    CheckpointChoice("intorealism", "intorealism", com.abrah.nightmare.Family.SDXL),
+                ),
+            )
+        }
+    }
+
+    /**
+     * ⭐⭐⭐ **A `bool` knob is a CHECKBOX**, and this golden is the only
+     * thing that sees it.
+     *
+     * ⚠⚠ Every `bool` in the app rendered as a TEXT FIELD until
+     * 2026-09-12 — the inspector's widget loop had no branch for the type, so
+     * `upscale` and `save` fell through to the box at the bottom of it and
+     * asked people to type the word `true` on a phone keyboard. `True` and a
+     * typo both read as false, and nothing said so until a Run that quietly
+     * wrote nothing. Reported from the phone in exactly those terms.
+     *
+     * ⚠ `nd.vae_decode`, the end of the video chain, because its `upscale` is
+     * the `bool` every clip passes through. ⚠ Unset on purpose — the box must
+     * draw CHECKED from the widget's own default, or it lies about what the
+     * node will run with.
+     * ⚠⚠ This golden and the one below pinned `nd.video_sample` and
+     * `video.output` until the design review, 2026-09-15 — both DELETED types,
+     * so both images showed "unknown node type" and checked nothing.
+     */
+    @Test
+    fun aBoolKnobIsACheckbox() = shoot("inspector-video-decode") {
+        Surface(Modifier.fillMaxSize()) {
+            NodeInspectorBody(
+                nodeId = "decode",
+                node = Node("decode", "nd.vae_decode"),
+                type = NODE_TYPES["nd.vae_decode"],
+                onSetParam = { _, _, _ -> },
+                onDelete = {},
+            )
+        }
+    }
+
+    /**
+     * ⭐ The video sampler: its seed hint must read like `sd.sample`'s, and its
+     * knobs carry readable labels — both settled by the design review.
+     */
+    @Test
+    fun theVideoSamplerReadsLikeTheSdOne() = shoot("inspector-video-sample") {
+        Surface(Modifier.fillMaxSize()) {
+            NodeInspectorBody(
+                nodeId = "sample",
+                node = Node("sample", "nd.sample", params = mapOf("seed" to "0")),
+                type = NODE_TYPES["nd.sample"],
                 onSetParam = { _, _, _ -> },
                 onDelete = {},
             )
@@ -496,13 +626,13 @@ class CanvasScreenshotTest {
             NodeInspectorBody(
                 nodeId = "sample",
                 node = Node(
-                    "sample", "sd.sample",
+                    "sample", "sd15.sample",
                     params = mapOf(
                         "steps" to "20", "cfg" to "7.5", "scheduler" to "dpm",
                         "model" to V1_MODEL, "width" to "768", "height" to "512",
                     ),
                 ),
-                type = NODE_TYPES["sd.sample"],
+                type = NODE_TYPES["sd15.sample"],
                 onSetParam = { _, _, _ -> },
                 // ⚠ Passed in, never read from SelectedModel: on the JVM there is
                 // no model directory to scan, so the real cache holds one entry
@@ -527,13 +657,13 @@ class CanvasScreenshotTest {
             NodeInspectorBody(
                 nodeId = "sample",
                 node = Node(
-                    "sample", "sd.sample",
+                    "sample", "sd15.sample",
                     params = mapOf(
                         "steps" to "20", "cfg" to "7.5", "scheduler" to "dpm",
                         "model" to V1_MODEL, "width" to "512", "height" to "512",
                     ),
                 ),
-                type = NODE_TYPES["sd.sample"],
+                type = NODE_TYPES["sd15.sample"],
                 onSetParam = { _, _, _ -> },
                 resolutions = listOf(Res(512, 512)),
                 onDelete = {},
@@ -811,6 +941,82 @@ class CanvasScreenshotTest {
             )
         }
     }
+}
+
+/**
+ * ⭐ The Add node sheet, each tab — a fixed height and one full-width card a row
+ * (2026-09-17). Its own class so the palette can be shot without the canvas.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(qualifiers = "w411dp-h891dp-xxhdpi")
+class PaletteScreenshotTest {
+    private fun shootTab(tab: Int, name: String) =
+        captureRoboImage(filePath = "src/test/screenshots/$name.png") {
+            NightmareTheme(darkTheme = true) {
+                Surface(Modifier.fillMaxSize()) {
+                    NodePaletteContent(NODE_TYPES, onPick = {}, height = 660.dp, initialTab = tab)
+                }
+            }
+        }
+
+    @Test fun common() = shootTab(0, "palette-common")
+    @Test fun generate() = shootTab(1, "palette-generate")
+    @Test fun inpaint() = shootTab(2, "palette-inpaint")
+}
+
+/**
+ * ⭐ An inpaint node's sheet: Crop and Mask as two previews (2026-09-17), and
+ * the segment model node whose model is a locked fact.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+@Config(qualifiers = "w411dp-h891dp-xxhdpi")
+class InpaintInspectorScreenshotTest {
+    @Test fun cropAndMaskArePreviews() = shoot("inspector-inpaint", null)
+    /** ⭐ The popup's two tabs — the picture must sit in the same place in both. */
+    @Test fun popupCropTab() = shoot("inpaint-popup-crop", 0)
+    @Test fun popupMaskTab() = shoot("inpaint-popup-mask", 1)
+
+    private fun shoot(name: String, tab: Int?) =
+        captureRoboImage(filePath = "src/test/screenshots/$name.png") {
+            NightmareTheme(darkTheme = true) {
+                Surface(Modifier.fillMaxSize()) {
+                    NodeInspectorBody(
+                        nodeId = "inpaint",
+                        node = Node(
+                            "inpaint", "sd15.inpaint",
+                            params = mapOf(
+                                "x" to "0.1", "y" to "0.1", "w" to "0.8", "h" to "0.8",
+                                "width" to "512", "height" to "512", "model" to "absolutereality",
+                                MaskNode.OPS to MaskState(
+                                    listOf(MaskOp.Stroke(MaskStrokeData(listOf(0.3f to 0.35f, 0.6f to 0.6f), 0.09f)))
+                                ).encode(),
+                            ),
+                            inputs = sources("image" to "photo", "segmenter" to "segment_model"),
+                        ),
+                        type = NODE_TYPES["sd15.inpaint"],
+                        onSetParam = { _, _, _ -> },
+                        onDelete = {},
+                        cropSource = stripeSource(300, 220),
+                        maskSource = stripeSource(300, 220),
+                        inlinePopupTab = tab,
+                    )
+                }
+            }
+        }
+}
+
+/** [CanvasScreenshotTest]'s synthetic source, for the classes beside it. */
+private fun stripeSource(w: Int, h: Int): androidx.compose.ui.graphics.ImageBitmap {
+    val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+    val c = android.graphics.Canvas(bmp)
+    val p = android.graphics.Paint()
+    for (i in 0 until 8) {
+        p.color = if (i % 2 == 0) 0xFF3A6EA5.toInt() else 0xFF7FB2E5.toInt()
+        c.drawRect(0f, h * i / 8f, w.toFloat(), h * (i + 1) / 8f, p)
+    }
+    return bmp.asImageBitmap()
 }
 
 /** A stand-in for a loaded plugin's node type — the real one needs QuickJS. */

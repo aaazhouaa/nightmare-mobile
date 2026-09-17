@@ -20,3 +20,24 @@
 -keep class com.abrah.nightmare.JsException {
     <init>(java.lang.String);
 }
+
+# ⚠⚠ The NPU runner's JNI surface. `libnmqnn.so` exports
+# `Java_com_abrah_nightmare_npu_NativeQnn_<method>`, so BOTH the class name and
+# the method names are part of the ABI -- renaming either is an
+# UnsatisfiedLinkError that only a release build shows.
+#
+# ⚠ `-keepclasseswithmembernames` in proguard-android-optimize.txt already
+# covers a class with `native <methods>`. It is restated here for the same
+# reason the JsRuntime block above is: the rule that protects this lives in a
+# file we do not own, and a release-only link error is expensive to diagnose.
+-keepclassmembers class com.abrah.nightmare.npu.NativeQnn {
+    native <methods>;
+}
+-keep class com.abrah.nightmare.npu.NativeQnn { *; }
+
+# ⚠⚠ ONNX Runtime (the segmenter, docs/SEGMENTER.md). Its native library calls
+# back into these classes by name — the same R8 blind spot as nmjs.c above.
+# DreamUI's rules, unchanged.
+-keep class ai.onnxruntime.** { *; }
+-keepclassmembers class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**

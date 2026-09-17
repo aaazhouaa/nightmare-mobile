@@ -31,6 +31,7 @@ object BackendProcess {
     const val EXECUTABLE = "libstable_diffusion_core.so"
     private const val RUNTIME_DIR = "qnnruntime"
 
+    @Volatile
     private var process: Process? = null
 
     /** Newest-first, same convention as the harness log. */
@@ -71,16 +72,45 @@ object BackendProcess {
     /**
      * Unpacks `assets/qnnlibs` into `filesDir/qnnruntime`.
      *
-     * ⚠ Re-copies every time rather than skipping when the directory exists.
-     * A stale runtime dir after a backend upgrade is a genuinely nasty failure:
-     * the mismatch shows up as a QNN context that refuses to load, pointing at
-     * the model rather than at the libs. 33 MB of copying is cheap next to that.
+     * ⚠ Re-copies rather than skipping when the directory exists. A stale
+     * runtime dir after a backend upgrade is a genuinely nasty failure: the
+     * mismatch shows up as a QNN context that refuses to load, pointing at the
+     * model rather than at the libs. 33 MB of copying is cheap next to that.
+     *
+     * ⚠⚠⚠ **But it copies through a temp file and a rename, and it does the
+     * work ONCE PER PROCESS — because these same libraries are `dlopen`'d into
+     * THIS process by `libnmqnn.so`, and rewriting a mapped `.so` in place is
+     * fatal.** `FileOutputStream` opens with `O_TRUNC`, and truncating a file
+     * makes the kernel zap every page of every mapping of it — COW'd pages
+     * included. That throws away the linker's load-bias fixups in
+     * `.got.plt`, so the next call into the library reads a slot holding
+     * PLT0's *link-time* address and branches into an unmapped page:
+     *
+     *     signal 11 (SIGSEGV), SEGV_MAPERR, fault addr 0x3d37b0 (== .plt)
+     *     x16 = base+0x3e8ff0 (inside .got.plt)   x17 = 0x3d37b0
+     *     #01 libQnnSystem.so   #03 NativeQnn_load
+     *
+     * ⚠⚠ That was the "a context binary can only be loaded once per process"
+     * blocker, and it was never about QNN, deserialisation or memory: it is
+     * this function, called a second time by the second `QnnRunner`. Whichever
+     * of the five libs is called into first after the rewrite is the one that
+     * appears to crash, which is why the fault moved between `libQnnSystem`
+     * and `libQnnHtp` and looked like two bugs. `docs/NEODRAGON.md` §5b.
+     *
+     * ⇒ **Never truncate a file this process may have mapped.** A rename swaps
+     * the directory entry and leaves the old inode intact for whoever has it
+     * open, which is exactly the semantics needed here.
      */
+    @Volatile
+    private var runtimeUnpacked: File? = null
+
+    @Synchronized
     fun prepareRuntime(context: Context): File {
+        runtimeUnpacked?.let { return it }
         val dir = File(context.filesDir, RUNTIME_DIR).apply { mkdirs() }
         val all = context.assets.list("qnnlibs").orEmpty().toList()
         check(all.isNotEmpty()) {
-            "no qnnlibs in assets -- run tools/stage_backend.ps1 before building"
+            "no qnnlibs in assets — run tools/stage_backend.ps1 before building"
         }
         // ⚠⚠ ONLY this device's arch trio, plus the two shared libraries. The
         // APK carries all six arches (~150 MB) because `libQnnHtp.so` dispatches
@@ -92,13 +122,18 @@ object BackendProcess {
         val names = DeviceProbe.runtimeLibs(all)
         for (n in names) {
             val dst = File(dir, n)
+            val tmp = File(dir, "$n.tmp")
             context.assets.open("qnnlibs/$n").use { input ->
-                dst.outputStream().use { input.copyTo(it) }
+                tmp.outputStream().use { input.copyTo(it) }
             }
-            dst.setReadable(true, false)
-            dst.setExecutable(true, false)
+            tmp.setReadable(true, false)
+            tmp.setExecutable(true, false)
+            // ⚠ `File.renameTo` is `rename(2)` here -- same directory, same
+            // filesystem -- so it is atomic and never truncates `dst`.
+            check(tmp.renameTo(dst)) { "cannot replace ${dst.absolutePath}" }
         }
         Log.i(TAG, "runtime: ${names.size}/${all.size} libs (${DeviceProbe.caps()}) in ${dir.absolutePath}")
+        runtimeUnpacked = dir
         return dir
     }
 
@@ -152,7 +187,7 @@ object BackendProcess {
                 val exe = File(nativeDir, EXECUTABLE)
                 if (!exe.exists()) {
                     return@withContext Start.Failed(
-                        "backend binary missing from $nativeDir -- " +
+                        "backend binary missing from $nativeDir — " +
                             "run tools/stage_backend.ps1 and rebuild"
                     )
                 }
@@ -162,7 +197,7 @@ object BackendProcess {
                 // upscale-only server has none by definition.
                 if (!upscalerOnly && !model.isDirectory) {
                     return@withContext Start.Failed(
-                        "no model at ${model.absolutePath} -- push one there first"
+                        "no model at ${model.absolutePath} — push one there first"
                     )
                 }
 
@@ -193,7 +228,7 @@ object BackendProcess {
                 // catalogue assumed.
                 if (!upscalerOnly) spec?.missingPatch(context, res)?.let { name ->
                     return@withContext Start.Failed(
-                        "$modelId cannot render $res -- ${File(model, name).absolutePath} is missing. " +
+                        "$modelId cannot render $res — ${File(model, name).absolutePath} is missing. " +
                             "Re-download the model, or pick a size it ships a patch for"
                     )
                 }
@@ -291,20 +326,46 @@ object BackendProcess {
             // ⚠ A crashed backend has no launch key. Leaving the last one set
             // would make [ensureBackend] believe the right process is up and
             // skip the relaunch that is the whole point of recording it.
-            launchedKey = null
-            upscalerServer = false
+            // ⚠⚠⚠ **But only if THIS is still the process.** The monitor of a
+            // process [stop] killed fires AFTER the relaunch that replaced it,
+            // and clearing then wiped the NEW process's key — so every later
+            // Run saw "a backend this app did not start", killed it and
+            // started again, twice per Run. Measured on the phone 2026-09-16:
+            // `[exited 143]` logged 60 ms after the new `exec:`. It only showed
+            // when a NODE switched checkpoint, because that is the one path
+            // where stop and start are milliseconds apart; the Models tab stops
+            // the backend seconds before the next Run launches.
+            synchronized(this@BackendProcess) {
+                if (process === p) {
+                    process = null
+                    launchedKey = null
+                    upscalerServer = false
+                }
+            }
             say("[exited $code]")
         }.apply { isDaemon = true; name = "backend-monitor" }.start()
     }
 
     fun stop() {
-        process?.let {
+        val p = synchronized(this) {
+            val was = process
+            process = null
+            launchedKey = null
+            upscalerServer = false
+            was
+        }
+        p?.let {
             say("[stopping]")
             it.destroy()
+            // ⚠ Wait for it to be GONE before anyone relaunches: until then it
+            // still holds the port, and a `/health` probe could be answered by
+            // the process being killed. Bounded, and escalated, so a wedged
+            // backend cannot hang the caller.
+            if (!it.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                it.destroyForcibly()
+                it.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+            }
         }
-        process = null
-        launchedKey = null
-        upscalerServer = false
     }
 
     private fun say(line: String) {

@@ -33,7 +33,7 @@ class BatchChoicesTest {
 
     @Test
     fun theSamplersKnobsAreOffered() {
-        val params = choices().filter { it.first == "sample" }.map { it.second }
+        val params = choices().filter { it.first == "inpaint" }.map { it.second }
         for (want in listOf("seed", "steps", "cfg", "denoise")) {
             assertTrue("the sampler's \"$want\" must be sweepable, got $params", want in params)
         }
@@ -80,9 +80,20 @@ class BatchChoicesTest {
 class TerminalImageNodeTest {
 
     @Test
-    fun theInpaintRecipeCollectsItsDecode() {
+    fun theInpaintRecipeCollectsItsOutput() {
         val g = com.abrah.nightmare.canvas.inpaintWorkflow().graph
-        assertEquals(listOf("decode"), terminalImageNodes(g, NODE_TYPES))
+        // ⚠⚠ The OUTPUT node, which declares no outputs at all. Every recipe
+        // ends in one since 2026-09-15, so a rule that only looked for an
+        // unconsumed IMAGE would match nothing in any of them.
+        assertEquals(listOf("output"), terminalImageNodes(g, NODE_TYPES))
+    }
+
+    /** ⚠ …and a graph with no output node still answers, the old way. */
+    @Test
+    fun aGraphWithNoOutputNodeCollectsItsLastPicture() {
+        val g = com.abrah.nightmare.canvas.inpaintWorkflow().graph
+        val bare = Graph(g.nodes.filterNot { it.type == "core.output" })
+        assertEquals(listOf("inpaint"), terminalImageNodes(bare, NODE_TYPES))
     }
 
     /** ⭐ An Upscale wired after the decode moves the answer, with no list to edit. */
@@ -90,10 +101,10 @@ class TerminalImageNodeTest {
     fun anUpscaleAfterTheDecodeBecomesTheTerminal() {
         val g = com.abrah.nightmare.canvas.inpaintWorkflow().graph
         val withUp = Graph(
-            g.nodes + Node(
+            g.nodes.filterNot { it.type == "core.output" } + Node(
                 "up", "image.upscale",
                 mapOf("upscaler" to "upscaler_anime"),
-                sources("image" to "decode"),
+                sources("image" to "inpaint"),
             )
         )
         assertEquals(listOf("up"), terminalImageNodes(withUp, NODE_TYPES))
@@ -108,12 +119,12 @@ class TerminalImageNodeTest {
     fun twoUnconsumedImageNodesAreBothReturned() {
         val g = com.abrah.nightmare.canvas.inpaintWorkflow().graph
         val two = Graph(
-            g.nodes + Node(
+            g.nodes.filterNot { it.type == "core.output" } + Node(
                 "up", "image.upscale",
                 mapOf("upscaler" to "upscaler_anime"),
-                sources("image" to "frame"),
+                sources("image" to "photo"),
             )
         )
-        assertEquals(setOf("decode", "up"), terminalImageNodes(two, NODE_TYPES).toSet())
+        assertEquals(setOf("inpaint", "up"), terminalImageNodes(two, NODE_TYPES).toSet())
     }
 }

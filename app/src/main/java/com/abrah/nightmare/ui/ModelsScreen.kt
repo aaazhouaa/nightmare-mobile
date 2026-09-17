@@ -39,6 +39,9 @@ import com.abrah.nightmare.UpscalerBuild
 import com.abrah.nightmare.UpscalerSpec
 import com.abrah.nightmare.ModelSpec
 import com.abrah.nightmare.ui.nightmareButtonColors
+import androidx.compose.material3.Surface
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
 
 /**
  * What the model list needs to draw one row.
@@ -55,6 +58,20 @@ import com.abrah.nightmare.ui.nightmareButtonColors
  * one file), and no family. Three fields that would always be dead is what a
  * separate type costs less than.
  */
+/**
+ * ⭐ One download on the Tools tab — today only the segmenter
+ * (`docs/SEGMENTER.md`). ⚠ Its own tab, the user's call 2026-09-16: it is not a
+ * checkpoint and has no Use button, and a row among checkpoints without one
+ * would read as a broken checkpoint (the upscalers' reasoning).
+ */
+data class ToolRow(
+    val label: String,
+    val bytes: Long,
+    val installed: Boolean,
+    val onDisk: Long = 0,
+    val progress: ModelInstaller.Progress? = null,
+)
+
 data class UpscalerRow(
     val spec: UpscalerSpec,
     /** ⚠ Null when no published tier loads on this HTP — the card must say so. */
@@ -63,6 +80,38 @@ data class UpscalerRow(
     val progress: ModelInstaller.Progress? = null,
     val onDisk: Long = 0,
 )
+
+/**
+ * ⭐⭐ The video models, as one row — because they are one decision.
+ *
+ * ⚠⚠ **A THIRD kind of model**, next to a checkpoint and an upscaler, and
+ * it gets its own tab for the same reason they do. It is not a family: there
+ * is no launch contract, nothing to "Use", no `--type`, and the catalogue
+ * cannot describe it at all ([com.abrah.nightmare.npu.NpuFiles]).
+ *
+ * ⚠ **One row for 13 files**, not thirteen. They are useless individually —
+ * the pipeline maps all of them — so thirteen cards would be thirteen
+ * decisions a user cannot make separately.
+ *
+ * @param supported null while the canary has not run; false means this chip
+ *   refused a real context binary and the download would be wasted.
+ */
+data class VideoRow(
+    val installedBytes: Long,
+    val totalBytes: Long,
+    /** ⚠ Graphs, not host weights — [weightsMissing] is the other half. */
+    val missing: List<String>,
+    /**
+     * ⚠ The host-side weights, which download with the graphs since
+     * 2026-09-13 — they are 0.7% of the bytes and the app cannot render a
+     * frame without them, so [VideoInstaller] fetches them FIRST.
+     */
+    val weightsMissing: List<String>,
+    val supported: Boolean? = null,
+    val progress: ModelInstaller.Progress? = null,
+) {
+    val complete: Boolean get() = missing.isEmpty() && weightsMissing.isEmpty()
+}
 
 data class ModelRow(
     val spec: ModelSpec,
@@ -107,6 +156,15 @@ fun ModelsScreen(
     onCancel: () -> Unit,
     onDelete: (ModelSpec) -> Unit,
     onSelect: (ModelSpec) -> Unit,
+    /**
+     * ⭐⭐ A Use waiting on a flow choice — see
+     * [com.abrah.nightmare.HarnessViewModel.PendingUse]. Null when nothing is
+     * pending, which is almost always.
+     */
+    pendingUse: com.abrah.nightmare.HarnessViewModel.PendingUse? = null,
+    recipes: List<com.abrah.nightmare.canvas.Recipe> = emptyList(),
+    onConfirmUse: (ModelSpec, com.abrah.nightmare.canvas.Recipe?) -> Unit = { _, _ -> },
+    onCancelUse: () -> Unit = {},
     modifier: Modifier = Modifier,
     /**
      * ⭐ Import a checkpoint the user already has, as a zip.
@@ -130,28 +188,120 @@ fun ModelsScreen(
     upscalers: List<UpscalerRow> = emptyList(),
     onInstallUpscaler: (UpscalerSpec) -> Unit = {},
     onDeleteUpscaler: (UpscalerSpec) -> Unit = {},
+    /**
+     * ⭐⭐ The video models. Null renders no tab at all — which is what a
+     * preview, a golden, and a phone whose chip cannot run them all want.
+     */
+    video: VideoRow? = null,
+    onInstallVideo: () -> Unit = {},
+    onDeleteVideo: () -> Unit = {},
+    /**
+     * ⚠⚠ Asked for by the TAB, not at app start: it runs the canary, which
+     * brings the whole QNN backend up and costs seconds on a cold app. A user
+     * who never opens this tab never pays for it.
+     */
+    onProbeVideo: () -> Unit = {},
+    /** ⭐ The Tools tab. Null renders no tab, as for [video]. */
+    segmenter: ToolRow? = null,
+    onInstallSegmenter: () -> Unit = {},
+    onDeleteSegmenter: () -> Unit = {},
 ) {
     // ⚠⚠ The confirm is intercepted HERE rather than inside the card, so the
     // card stays a dumb row and there is exactly one place that can delete a
     // model. A dialog per card would be one per row on screen.
+    // ⭐⭐⭐ **Use asks what to open with it**, rather than silently retargeting
+    // whatever happens to be on the canvas.
+    //
+    // ⚠⚠ Before this, someone who came here to START something with a
+    // checkpoint pressed Use, went to Flows, and picked a recipe — and if the
+    // canvas held unsaved work, Use had already rewritten it on the way past
+    // with nothing said. Asked for 2026-09-15.
+    pendingUse?.let { p ->
+        // ⭐⭐⭐ **Use asks what to open with it**, rather than silently
+        // retargeting whatever happens to be on the canvas.
+        //
+        // ⚠⚠ The flows live in the TEXT slot as rows, not in `confirmButton`.
+        // A Column of buttons in that slot is laid out by AlertDialog in a Row
+        // beside the dismiss button, which is why the first version came out a
+        // mess — reported 2026-09-15. A dialog's action slots hold ONE action
+        // each; a list of choices is content.
+        AlertDialog(
+            onDismissRequest = onCancelUse,
+            title = { Text("Use ${p.spec.label}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // ⚠⚠ The warning first, and ONLY when it is true. A dialog
+                    // that always warns is one people learn to tap through.
+                    if (p.unsavedFlow) {
+                        Text(
+                            "The flow on the canvas has not been saved — opening one of " +
+                                "these replaces it.",
+                            style = LogTextStyle,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    // ⚠ Only flows that RUN on a checkpoint. The video ones and
+                    // the upscaler load their own weights and would ignore the
+                    // choice just made.
+                    for (r in recipes.filter { it.usesCheckpoint }) {
+                        Surface(
+                            onClick = { onConfirmUse(p.spec, r) },
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                                Text(r.label, fontWeight = FontWeight.Medium)
+                                Text(
+                                    r.about,
+                                    style = LogTextStyle,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                    // ⭐ …and the old behaviour, named: keep what is open and
+                    // just point it at this checkpoint.
+                    Surface(
+                        onClick = { onConfirmUse(p.spec, null) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(
+                            "Keep the flow on the canvas",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            },
+            // ⚠ ONE action button. Choosing a flow IS the confirmation, so
+            // there is nothing for a confirm button to do.
+            confirmButton = { TextButton(onClick = onCancelUse) { Text("Cancel") } },
+        )
+    }
+
+
     var deleting by remember { mutableStateOf<ModelSpec?>(null) }
     // ⚠ The same pattern for the other catalogue: ONE owner of the confirm, so
     // there is exactly one place that can delete an upscaler. It shipped
     // without a confirm at all while the checkpoint beside it had one — the
     // inconsistency the phone reported.
     var deletingUpscaler by remember { mutableStateOf<UpscalerSpec?>(null) }
+    // ⚠⚠⚠ …and the same for the video models, which is the BIGGEST delete in
+    // the app and shipped without one. A checkpoint asks before costing a ~1 GB
+    // re-download and an upscaler asks before costing 24 MB; this threw away
+    // 8.6 GB on a single tap. Reported from the phone, 2026-09-13.
+    var deletingVideo by remember { mutableStateOf(false) }
+    var deletingSegmenter by remember { mutableStateOf(false) }
 
     // ⚠ No header and no `statusBarsPadding` any more: [LibraryScreen] owns
     // both, because this screen is now a TAB rather than a whole screen. A
     // second inset here would double it.
     Column(modifier.fillMaxSize()) {
         if (error != null) {
-            Text(
-                error,
-                style = LogTextStyle,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.padding(top = 8.dp),
-            )
+            ErrorNotice(error, Modifier.padding(top = 8.dp))
         }
         // ⭐ "Something is happening", for the one case with no row to say so.
         if (importing != null) {
@@ -208,9 +358,40 @@ fun ModelsScreen(
         // checkpoint but had no Use button would read as a broken checkpoint.
         val hasUpscalers = upscalers.isNotEmpty()
         SwipeTabs(
-            labels = families.map { it.label } + if (hasUpscalers) listOf(stringResource(R.string.upscalers)) else emptyList(),
+            labels = families.map { it.label } +
+                (if (hasUpscalers) listOf(stringResource(R.string.upscalers)) else emptyList()) +
+                (if (video != null) listOf(stringResource(R.string.video)) else emptyList()) +
+                (if (segmenter != null) listOf(stringResource(R.string.tools)) else emptyList()),
             modifier = Modifier.padding(top = 8.dp).fillMaxSize(),
         ) { page ->
+            // ⚠ LAST again, after Video, so adding it moved no existing index.
+            if (segmenter != null &&
+                page == families.size + (if (hasUpscalers) 1 else 0) + (if (video != null) 1 else 0)
+            ) {
+                LazyColumn(
+                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    item {
+                        Text(
+                            stringResource(R.string.tools_note),
+                            style = LogTextStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    item { ToolCard(segmenter, busy, onInstallSegmenter, onCancel) { deletingSegmenter = true } }
+                }
+                return@SwipeTabs
+            }
+            // ⚠ LAST, after the upscalers, so adding it moved no existing index.
+            if (video != null && page == families.size + (if (hasUpscalers) 1 else 0)) {
+                VideoModelsTab(
+                    video, busy, onInstallVideo, onCancel,
+                    onConfirmDelete = { deletingVideo = true },
+                    onProbe = onProbeVideo,
+                )
+                return@SwipeTabs
+            }
             if (hasUpscalers && page == families.size) {
                 LazyColumn(
                     Modifier.fillMaxSize().padding(top = 10.dp),
@@ -275,6 +456,10 @@ fun ModelsScreen(
                     Text(
                         when (family) {
                             Family.SD15 -> stringResource(R.string.r2_models_hint_sd15)
+                            // ⚠ Measured 2026-09-16 on an 11.4 GB phone: 6.4 s a
+                            // step, and killed by Android while other apps were
+                            // in use. Said here, before 4 GB is downloaded.
+                            Family.ANIMA -> stringResource(R.string.r2_models_hint_anima)
                             // ⚠ The free-space figure is the one that surprises:
                             // the archive and its unpacked copy are both on disk
                             // at once, so a 3.5 GB download needs ~7.5 GB free.
@@ -291,30 +476,47 @@ fun ModelsScreen(
         }
     }
 
-    // ⚠ Same shape as the checkpoint confirm below, deliberately: the number
-    // is smaller but the interaction must not be a different one.
+    // ⚠ All three kinds of model ask through [ConfirmDelete] — one dialog, one
+    // verb, one pair of buttons (`docs/UI.md` §8.2). They shipped as three
+    // copies with two dismiss labels and two confirm styles.
     deletingUpscaler?.let { spec ->
         val row = upscalers.firstOrNull { it.spec.id == spec.id }
-        AlertDialog(
-            onDismissRequest = { deletingUpscaler = null },
-            title = { Text(stringResource(R.string.delete_named, upscalerLabel(spec.id, spec.label))) },
-            text = {
-                Text(
-                    stringResource(R.string.r2_models_delete_frees, mb(row?.onDisk ?: 0L)) +
-                        // ⚠ Says what else changes, as the checkpoint dialog
-                        // does — here it is a FLOW that breaks, not a selection.
-                        stringResource(R.string.r2_models_upscaler_restore, mb(row?.build?.bytes ?: 0L))
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteUpscaler(spec)
-                    deletingUpscaler = null
-                }) { Text(stringResource(R.string.delete)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { deletingUpscaler = null }) { Text(stringResource(R.string.models_keep)) }
-            },
+        ConfirmDelete(
+            title = "Delete ${spec.label}?",
+            body = "Frees ${mb(row?.onDisk ?: 0L)} MB. Getting it back is a " +
+                "${mb(row?.build?.bytes ?: 0L)} MB download. " +
+                // ⚠ Says what else changes, as the checkpoint dialog does —
+                // here it is a FLOW that breaks, not a selection.
+                "Any flow with an Upscale node set to it will fail until " +
+                "you install it again.",
+            onConfirm = { onDeleteUpscaler(spec) },
+            onDismiss = { deletingUpscaler = null },
+        )
+    }
+
+    if (deletingSegmenter && segmenter != null) {
+        ConfirmDelete(
+            title = "Delete ${segmenter.label}?",
+            body = "Frees ${mb(segmenter.onDisk)} MB. Getting it back is a " +
+                "${mb(segmenter.bytes)} MB download. Any flow with a tapped mask " +
+                "will refuse to run until you install it again.",
+            onConfirm = onDeleteSegmenter,
+            onDismiss = { deletingSegmenter = false },
+        )
+    }
+
+    if (deletingVideo && video != null) {
+        ConfirmDelete(
+            title = stringResource(R.string.video_delete_title),
+            // ⚠⚠ The number is the whole point of the dialog. "Frees 8198 MB"
+            // and "getting it back is an 8198 MB download" are the same figure
+            // said twice on purpose — the second is the one that stops the tap.
+            body = stringResource(
+                R.string.video_delete_body,
+                mb(video.installedBytes), mb(video.totalBytes),
+            ),
+            onConfirm = onDeleteVideo,
+            onDismiss = { deletingVideo = false },
         )
     }
 
@@ -324,44 +526,27 @@ fun ModelsScreen(
     // what every node in every graph would render with.
     deleting?.let { spec ->
         val row = rows.firstOrNull { it.spec.id == spec.id }
-        AlertDialog(
-            onDismissRequest = { deleting = null },
-            title = { Text(stringResource(R.string.delete_named, spec.label)) },
-            text = {
-                Text(
-                    buildString {
-                        append(stringResource(R.string.r2_models_delete_frees, mb(row?.onDisk ?: 0L)))
-                        // ⚠⚠ A custom model has NO archive -- there is no URL
-                        // that could produce it again. Quoting a download size
-                        // used to `spec.best.bytes` on an empty build list,
-                        // which threw; and even fixed, offering a number would
-                        // promise a re-download that does not exist. The user's
-                        // own zip is the only way back, and they have to still
-                        // have it.
-                        val bytes = row?.build?.bytes ?: spec.best?.bytes
-                        if (spec.isCustom || bytes == null) {
-                            append(stringResource(R.string.r2_models_custom_restore))
-                        } else {
-                            append(stringResource(R.string.r2_models_redownload, mb(bytes)))
-                        }
-                        // ⚠ Says what ELSE changes. The selection moving is not
-                        // something a user would predict from "delete".
-                        if (row?.selected == true) {
-                            append("\n\n" + stringResource(R.string.r2_models_in_use_note))
-                        }
-                    },
-                    style = LogTextStyle,
-                )
+        ConfirmDelete(
+            title = "Delete ${spec.label}?",
+            body = buildString {
+                append("Frees ${mb(row?.onDisk ?: 0L)} MB. ")
+                // ⚠⚠ A custom model has NO archive -- there is no URL that
+                // could produce it again. The user's own zip is the only way
+                // back, and they have to still have it.
+                val bytes = row?.build?.bytes ?: spec.best?.bytes
+                if (spec.isCustom || bytes == null) {
+                    append("You imported it, so getting it back means importing the zip again.")
+                } else {
+                    append("Getting it back is a ${mb(bytes)} MB download.")
+                }
+                // ⚠ Says what ELSE changes. The selection moving is not
+                // something a user would predict from "delete".
+                if (row?.selected == true) {
+                    append("\n\nIt is the model in use, so another will be selected.")
+                }
             },
-            confirmButton = {
-                Button(
-                    onClick = { onDelete(spec); deleting = null },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) { Text(stringResource(R.string.delete)) }
-            },
-            dismissButton = { TextButton(onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
+            onConfirm = { onDelete(spec) },
+            onDismiss = { deleting = null },
         )
     }
 }
@@ -392,7 +577,10 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
     if (naming) {
         val trimmed = name.trim()
         val reserved = trimmed.isNotEmpty() && com.abrah.nightmare.CustomModels.isReserved(trimmed)
-        val ok = com.abrah.nightmare.CustomModels.isValidName(trimmed) && !reserved
+        // ⭐ EMPTY is allowed: the zip's own file name is used
+        // ([com.abrah.nightmare.CustomModels.nameFromFile]). Asked for 2026-09-16.
+        val ok = trimmed.isEmpty() ||
+            (com.abrah.nightmare.CustomModels.isValidName(trimmed) && !reserved)
         AlertDialog(
             onDismissRequest = { naming = false },
             title = { Text(stringResource(R.string.models_name_it)) },
@@ -411,6 +599,7 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
                             // ⚠ Warns BEFORE the picker, not after the copy: an
                             // import is gigabytes, and finding out afterwards
                             // that the name is permanent is finding out too late.
+                            trimmed.isEmpty() -> stringResource(R.string.r2_models_name_note_empty)
                             else -> stringResource(R.string.r2_models_name_note)
                         },
                         style = LogTextStyle,
@@ -435,19 +624,33 @@ private fun ImportCard(busy: Boolean, onImport: (String) -> Unit) {
     }
 }
 
+/**
+ * ⭐⭐⭐ ONE row for every downloadable thing — checkpoint, upscaler, video.
+ *
+ * ⚠⚠ There were three hand-built cards and they had drifted exactly the way
+ * `docs/ARCHITECTURE.md` §5.6 says two lookups will: a checkpoint's progress
+ * read "downloading <its own name>" with no bytes, an upscaler's read nothing
+ * at all, and only the video card counted bytes in flight. The design review,
+ * 2026-09-15 — `docs/UI.md` §8.1 is the shape, and this is the only thing that
+ * draws it.
+ *
+ * ⚠ Only [status], [detail] and [action] vary by kind. Progress is drawn HERE,
+ * from the one [ModelInstaller.Progress], so the three cannot disagree again.
+ */
 @Composable
-private fun ModelCard(
-    row: ModelRow,
-    busy: Boolean,
-    onInstall: (ModelSpec) -> Unit,
-    onCancel: () -> Unit,
-    onDelete: (ModelSpec) -> Unit,
-    onSelect: (ModelSpec) -> Unit,
+private fun DownloadCard(
+    title: String,
+    /** ⚠ In use — the one fact that also changes the card's colour and weight. */
+    emphasised: Boolean,
+    status: String,
+    detail: String,
+    progress: ModelInstaller.Progress?,
+    action: @Composable () -> Unit,
 ) {
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
-            containerColor = if (row.selected) {
+            containerColor = if (emphasised) {
                 MaterialTheme.colorScheme.secondaryContainer
             } else {
                 MaterialTheme.colorScheme.surfaceVariant
@@ -462,150 +665,178 @@ private fun ModelCard(
             ) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        row.spec.label,
+                        title,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = if (row.selected) FontWeight.Bold else FontWeight.Normal,
+                        fontWeight = if (emphasised) FontWeight.Bold else FontWeight.Normal,
                     )
                     Text(
-                        when {
-                            row.progress != null -> progressPhase(row.progress.phase)
-                            row.installed && row.selected -> stringResource(R.string.r2_models_status_in_use, mb(row.onDisk))
-                            row.installed -> stringResource(R.string.installed_mb, mb(row.onDisk))
-                            // ⚠⚠ A custom model is never "not installed" and
-                            // never "unsupported": its files are already on the
-                            // phone, so the only failure it can have is being
-                            // INCOMPLETE -- and it must say which files, because
-                            // there is no Download button that could fix it and
-                            // no other place that would ever tell the user.
-                            //
-                            // ⚠ Falling through to the `build == null` arm below
-                            // would have said "this device cannot run it", which
-                            // is a claim we cannot make: nothing in a QNN context
-                            // directory says which HTP it was compiled for.
-                            row.spec.isCustom ->
-                                stringResource(R.string.r2_models_incomplete, row.missing.joinToString())
-                            // ⚠⚠ The size of the build THIS DEVICE would get,
-                            // not of the preferred one: they differ by up to
-                            // 60 MB between tiers, and quoting the wrong one is
-                            // quoting a number the user cannot reach.
-                            row.build != null -> stringResource(R.string.not_installed_mb, mb(row.build.bytes))
-                            else -> stringResource(R.string.cannot_run_it)
+                        // ⚠⚠⚠ While fetching, the LIVE byte count (`docs/UI.md`
+                        // §7.6) — never a figure of completed files, which froze
+                        // at 295 MB for twenty minutes on the video row.
+                        if (progress != null && progress.total > 0) {
+                            stringResource(R.string.mb_of_total, mb(progress.done), mb(progress.total))
+                        } else {
+                            status
                         },
                         style = LogTextStyle,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    // ⭐ The family and the size it renders at.
-                    //
-                    // ⚠ The whole point of curating ten SDXL checkpoints rather
-                    // than listing all 46 is that a user can tell them apart,
-                    // and "DreamShaper XL" against "ChilloutMix" says nothing
-                    // about which one costs 3.5 GB or which produces a 1024
-                    // picture.
-                    //
-                    // ⚠⚠ **This says NATIVE, and the chips below say what is
-                    // chosen.** The two differ now: an SD 1.5 model ships
-                    // resolution patches and the selected size may be any of
-                    // them. Native is still the right thing on the line that
-                    // compares models to each other -- it is a property of the
-                    // checkpoint, where the chosen size is a property of the
-                    // session.
-                    Text(
-                        // ⭐ Family, size, and the BUILD TIER -- which is a
-                        // statement about the chip, not a detail: `_min` is
-                        // ~2.5x slower per image than `_8gen2`, and a user
-                        // comparing two phones deserves to see why.
-                        // ⭐ For a custom model the third slot says "imported"
-                        // where a built-in names its build tier. ⚠ That word is
-                        // doing real work: it is the only thing on the card that
-                        // explains why this row has no size, no tier and no
-                        // Download, and the family and resolution beside it were
-                        // INFERRED from the files rather than published by us.
-                        "${row.spec.family.label}  ${row.spec.native}" +
-                            when {
-                                row.spec.isCustom -> "  " + stringResource(R.string.models_imported_tag)
-                                row.build != null -> "  ${row.build.tier.removePrefix("_")}"
-                                else -> ""
-                            },
-                        style = LogTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Text(detail, style = LogTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                ModelAction(row, busy, onInstall, onCancel, onDelete, onSelect)
+                action()
             }
-            val p = row.progress
-            if (p != null) {
-                // ⚠ Indeterminate during extraction: the unpacked size is not
-                // known up front, and a bar that sat at 100% through a minute of
-                // unzipping would read as a hang.
-                if (p.total > 0) {
+            if (progress != null) {
+                // ⚠ Indeterminate while the total is unknown — an unzip. A bar
+                // parked at 100% through a minute of unpacking reads as a hang.
+                if (progress.total > 0) {
                     LinearProgressIndicator(
-                        progress = { p.fraction },
+                        progress = { progress.fraction },
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                     )
                 } else {
                     LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 }
+                // ⭐ The phase under the bar: which file, or "extracting".
+                Text(progress.phase, style = LogTextStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
+/** ⚠ Fields on a status or detail line are joined by ONE separator (§8.1). */
+private fun fields(vararg parts: String?): String = parts.filterNotNull().filter { it.isNotBlank() }.joinToString(" · ")
+
 @Composable
-private fun ModelAction(
+private fun ModelCard(
     row: ModelRow,
     busy: Boolean,
     onInstall: (ModelSpec) -> Unit,
     onCancel: () -> Unit,
     onDelete: (ModelSpec) -> Unit,
-    onSelect: (ModelSpec) -> Unit,
+    onUse: (ModelSpec) -> Unit,
 ) {
-    when {
-        row.progress != null -> OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
-        // ⚠ No delete on the model in use: removing it would leave the backend
-        // pointed at a directory that is gone. ModelInstaller refuses it too --
-        // this only keeps the button from being offered.
-        row.installed && row.selected -> OutlinedButton(
-            onClick = { onDelete(row.spec) },
-            enabled = false,
-        ) { Text(stringResource(R.string.in_use)) }
-        row.installed -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { onDelete(row.spec) }, enabled = !busy) { Text(stringResource(R.string.delete)) }
-            Button(colors = nightmareButtonColors(), onClick = { onSelect(row.spec) }, enabled = !busy) { Text(stringResource(R.string.use)) }
+    DownloadCard(
+        title = row.spec.label,
+        emphasised = row.selected,
+        status = when {
+            row.installed && row.selected -> stringResource(R.string.in_use_mb, mb(row.onDisk))
+            row.installed -> stringResource(R.string.installed_mb, mb(row.onDisk))
+            // ⚠⚠ A custom model is never "not installed" and never
+            // "unsupported": its files are already on the phone, so the only
+            // failure it can have is being INCOMPLETE -- and it must say which
+            // files, because nothing else would ever tell the user.
+            row.spec.isCustom -> stringResource(R.string.incomplete_missing, row.missing.joinToString())
+            // ⚠⚠ The size of the build THIS DEVICE would get, not of the
+            // preferred one: they differ by up to 60 MB between tiers.
+            row.build != null -> stringResource(R.string.not_installed_mb, mb(row.build.bytes))
+            else -> stringResource(R.string.cannot_run_it)
+        },
+        // ⭐ Family, NATIVE size, and the BUILD TIER -- `_min` is ~2.5x slower
+        // per image than `_8gen2`, and a user comparing phones deserves to see
+        // why. ⚠ An imported model says "imported" where a built-in names its
+        // tier: its family and size were INFERRED from the files.
+        detail = fields(
+            row.spec.family.label,
+            row.spec.native.toString(),
+            when {
+                row.spec.isCustom -> "imported"
+                row.build != null -> row.build.tier.removePrefix("_")
+                else -> null
+            },
+        ),
+        progress = row.progress,
+    ) {
+        when {
+            row.progress != null -> OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+            // ⚠ No delete on the model in use: removing it would leave the
+            // backend pointed at a directory that is gone.
+            row.installed && row.selected ->
+                OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.in_use)) }
+            row.installed -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onDelete(row.spec) }, enabled = !busy) { Text(stringResource(R.string.delete)) }
+                Button(onClick = { onUse(row.spec) }, enabled = !busy) { Text(stringResource(R.string.use)) }
+            }
+            // ⚠⚠ An INCOMPLETE import: the only action is to delete it. There
+            // is no Download that could complete it. ⚠ `Delete`, not `Remove`:
+            // the dialog it opens says Delete, and one action has one verb.
+            row.spec.isCustom ->
+                OutlinedButton(onClick = { onDelete(row.spec) }, enabled = !busy) { Text(stringResource(R.string.delete)) }
+            // ⚠⚠ No build this HTP can load: DISABLED and saying why, rather
+            // than failing after a multi-gigabyte download.
+            row.build == null ->
+                OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
+            else -> Button(onClick = { onInstall(row.spec) }, enabled = !busy) { Text(stringResource(R.string.download)) }
         }
-        // ⚠⚠ An INCOMPLETE import: the only action is to remove it. There is no
-        // Download that could complete it -- we have no URL for the user's own
-        // files -- so offering one would be a button that cannot work, which is
-        // the mistake this whole arm exists to avoid. ⚠ Before [ModelSpec.isCustom]
-        // existed this fell into the `build == null` arm and read "Unsupported",
-        // blaming the phone for a truncated zip.
-        row.spec.isCustom -> OutlinedButton(
-            onClick = { onDelete(row.spec) },
-            enabled = !busy,
-        ) { Text(stringResource(R.string.remove)) }
-        // ⚠⚠ No build this HTP can load: the button is DISABLED and says why,
-        // rather than being offered and failing after a multi-gigabyte
-        // download. The row's own line already names the arch it needs.
-        row.build == null -> OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
-        else -> Button(colors = nightmareButtonColors(), onClick = { onInstall(row.spec) }, enabled = !busy) { Text(stringResource(R.string.download)) }
     }
 }
 
+/**
+ * ⭐⭐ The video models, as one row on their own tab.
+ *
+ * ⚠⚠ **Bytes, not files.** "12 of 13" reads as nearly done when the absent
+ * one is 1.5 GB of 8.5, and the bytes are what the user is actually waiting
+ * for.
+ */
+@Composable
+private fun VideoModelsTab(
+    row: VideoRow,
+    busy: Boolean,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit,
+    /** ⚠ ASKS first — see [deletingVideo]. Never deletes on the tap. */
+    onConfirmDelete: () -> Unit,
+    onProbe: () -> Unit,
+) {
+    // ⚠ Once, when the tab is first composed. [HarnessViewModel.probeVideoSupport]
+    // is itself idempotent, so a pager pre-composing this page costs one call.
+    androidx.compose.runtime.LaunchedEffect(Unit) { onProbe() }
+    LazyColumn(
+        Modifier.fillMaxWidth().padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        item {
+            Text(
+                stringResource(R.string.video_models_note, gb(row.totalBytes)),
+                style = LogTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item {
+            DownloadCard(
+                title = stringResource(R.string.video_models),
+                emphasised = false,
+                status = when {
+                    row.complete -> stringResource(R.string.installed_mb, mb(row.installedBytes))
+                    else -> stringResource(R.string.mb_of_total, mb(row.installedBytes), mb(row.totalBytes))
+                },
+                // ⚠⚠ The canary's verdict, in the one place a user is about to
+                // spend 8 GB. It runs a real context binary rather than
+                // consulting a chip list — `docs/DEVICES.md` §2.
+                detail = when (row.supported) {
+                    false -> stringResource(R.string.cannot_run_it)
+                    else -> stringResource(R.string.video_about)
+                },
+                progress = row.progress,
+            ) {
+                when {
+                    row.progress != null ->
+                        OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+                    row.supported == false ->
+                        OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
+                    row.complete ->
+                        OutlinedButton(onClick = onConfirmDelete, enabled = !busy) { Text(stringResource(R.string.delete)) }
+                    else -> Button(onClick = onInstall, enabled = !busy) { Text(stringResource(R.string.download)) }
+                }
+            }
+        }
+    }
+}
 
 /**
  * One upscaler's card.
  *
- * ⚠⚠ **Built to the SAME shape as [ModelCard], and the first version was not.**
- * It had a bare `TextButton("Delete")` that deleted on the first tap while the
- * checkpoint beside it needed a confirm; its labels and button styles were
- * different; and it stated its status in a sentence where the other card uses a
- * line plus an action. Reported from the phone as "the upscalers tab isn't
- * consistent with the other model tabs", and it was — two catalogues of models,
- * one screen, two different interaction languages. `docs/UI.md` §6 has the rule
- * this broke and why it was mine to get right the first time.
- *
- * ⚠ The one deliberate difference is that there is no "Use": nothing selects an
- * upscaler globally, a flow's Upscale node names one. That absence is a design
- * decision; the rest was an oversight.
+ * ⚠ The one deliberate difference from a checkpoint is that there is no "Use":
+ * nothing selects an upscaler globally, a flow's Upscale node names one.
  */
 @Composable
 private fun UpscalerCard(
@@ -615,68 +846,52 @@ private fun UpscalerCard(
     onCancel: () -> Unit,
     onDelete: (UpscalerSpec) -> Unit,
 ) {
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant,
-        ),
+    DownloadCard(
+        title = row.spec.label,
+        emphasised = false,
+        status = when {
+            row.installed -> stringResource(R.string.installed_mb, mb(row.onDisk))
+            row.build != null -> stringResource(R.string.not_installed_mb, mb(row.build.bytes))
+            else -> stringResource(R.string.cannot_run_it)
+        },
+        detail = fields(row.spec.about, row.build?.tier),
+        progress = row.progress,
     ) {
-        Column(Modifier.padding(12.dp)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(upscalerLabel(row.spec.id, row.spec.label), style = MaterialTheme.typography.titleMedium)
-                    // ⚠ Same three-line shape as a checkpoint: what it is, what
-                    // it costs, and what it is for.
-                    Text(
-                        when {
-                            row.installed -> stringResource(R.string.installed_mb, mb(row.onDisk))
-                            row.build != null -> stringResource(R.string.not_installed_mb, mb(row.build.bytes))
-                            else -> stringResource(R.string.cannot_run_it)
-                        },
-                        style = LogTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        upscalerAbout(row.spec.id, row.spec.about) +
-                            (row.build?.let { "  ${it.tier}" } ?: ""),
-                        style = LogTextStyle,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                when {
-                    row.progress != null ->
-                        OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
-                    row.installed -> OutlinedButton(
-                        onClick = { onDelete(row.spec) },
-                        enabled = !busy,
-                    ) { Text(stringResource(R.string.delete)) }
-                    // ⚠⚠ Disabled and SAYING WHY, exactly as a checkpoint does:
-                    // never a Download that spends the bytes and then fails to
-                    // load.
-                    row.build == null ->
-                        OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
-                    else -> Button(
-                        colors = nightmareButtonColors(),
-                        onClick = { onInstall(row.spec) },
-                        enabled = !busy,
-                    ) { Text(stringResource(R.string.download)) }
-                }
-            }
-            val p = row.progress
-            if (p != null) {
-                if (p.total > 0) {
-                    LinearProgressIndicator(
-                        progress = { p.fraction },
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    )
-                } else {
-                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                }
-            }
+        when {
+            row.progress != null ->
+                OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+            row.installed ->
+                OutlinedButton(onClick = { onDelete(row.spec) }, enabled = !busy) { Text(stringResource(R.string.delete)) }
+            row.build == null ->
+                OutlinedButton(onClick = {}, enabled = false) { Text(stringResource(R.string.unsupported)) }
+            else -> Button(onClick = { onInstall(row.spec) }, enabled = !busy) { Text(stringResource(R.string.download)) }
+        }
+    }
+}
+
+/** ⚠ [UpscalerCard]'s shape: no Use, one action, the shared [DownloadCard]. */
+@Composable
+private fun ToolCard(
+    row: ToolRow,
+    busy: Boolean,
+    onInstall: () -> Unit,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    DownloadCard(
+        title = row.label,
+        emphasised = false,
+        status = if (row.installed) stringResource(R.string.installed_mb, mb(row.onDisk))
+        else stringResource(R.string.not_installed_mb, mb(row.bytes)),
+        detail = stringResource(R.string.segmenter_about),
+        progress = row.progress,
+    ) {
+        when {
+            row.progress != null ->
+                OutlinedButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
+            row.installed ->
+                OutlinedButton(onClick = onDelete, enabled = !busy) { Text(stringResource(R.string.delete)) }
+            else -> Button(onClick = onInstall, enabled = !busy) { Text(stringResource(R.string.download)) }
         }
     }
 }
@@ -701,6 +916,9 @@ private fun upscalerAbout(id: String, fallback: String): String = when (id) {
     "upscaler_realistic" -> stringResource(R.string.r2_upscaler_realistic_about)
     else -> fallback
 }
+
+/** ⚠ The SAME unit as [mb], one step up: `8198 MB` is `8.0 GB`, never `8.6`. */
+private fun gb(bytes: Long): String = String.format(java.util.Locale.ROOT, "%.1f", bytes / (1024.0 * 1024 * 1024))
 
 /**
  * Installer progress phases are built in the non-UI installer layer

@@ -15,6 +15,17 @@ import com.abrah.nightmare.sources
  * carrying a hardcoded 512 would render 1024 in silence on the first non-SD1.5
  * family. `docs/MODELS.md` §3 step 3.
  */
+/**
+ * ⭐⭐ The sampler type a recipe should build, for the checkpoint in use.
+ *
+ * ⚠⚠ A recipe cannot name `"sd15.sample"` as a literal since the fork of
+ * 2026-09-15: opening "Text to image" with an SDXL checkpoint selected would
+ * build a node of the wrong family, which refuses to run rather than rendering.
+ * ⇒ The family comes from [SelectedModel], exactly as `model` and the size do.
+ */
+private fun samplerType(inpaint: Boolean = false): String =
+    com.abrah.nightmare.SdSampler.typeFor(SelectedModel.spec.family, inpaint)
+
 private fun ctxKeyParams(): Map<String, String> {
     // ⚠ The SELECTED size, not the model's native one. A recipe builds NEW
     // nodes, and a new node is born at the size the user last chose for this
@@ -27,6 +38,33 @@ private fun ctxKeyParams(): Map<String, String> {
         "height" to res.height.toString(),
     )
 }
+
+/**
+ * ⭐⭐ The prompt node's text: the SELECTED checkpoint's own, never a literal.
+ *
+ * ⚠⚠ A recipe carried `"a cat on grass"` for txt2img and a bare quality tag
+ * for the other two, which is a prompt tuned for whatever model happened to be
+ * selected the day it was typed. The catalogue has carried a per-model prompt
+ * and negative since it was written (`ModelCatalog.ModelSpec.prompt`, copied
+ * from upstream) and nothing read them: an anime checkpoint opened on a
+ * photographic prompt with a photographic negative. The user's ask, 2026-09-12.
+ *
+ * ⚠ A function, per build, for the reason [ctxKeyParams] is one: it reads
+ * [SelectedModel].
+ *
+ * ⚠⚠ [com.abrah.nightmare.ModelSpec.starterPrompt], not `prompt`: an
+ * IMPORTED model carries no text of its own, and a recipe reading the raw field
+ * opened it on a blank box. The fallback is the FAMILY's general-purpose pair
+ * ([com.abrah.nightmare.Family.prompt]) -- quality tags with no subject, so
+ * nothing has to be deleted before typing. The user's ask, 2026-09-15.
+ *
+ * ⚠ [com.abrah.nightmare.PromptNode]'s widgets default the same way, for a
+ * node dragged from the palette.
+ */
+private fun promptParams(): Map<String, String> = mapOf(
+    "prompt" to SelectedModel.spec.starterPrompt,
+    "negative" to SelectedModel.spec.starterNegative,
+)
 
 /**
  * The workflow the app opens with.
@@ -42,18 +80,11 @@ private fun ctxKeyParams(): Map<String, String> {
 fun defaultWorkflow(): Workflow = Workflow(
     Graph(
         listOf(
-            // ⭐ THE prompt. The sampler has none (docs/ARCHITECTURE.md §3), so
-            // this node is where a user types, and it is first in the chain
-            // because it is the first thing they will want to change.
+            // ⭐ THE prompt, and it carries TEXT (docs/ARCHITECTURE.md §5.7).
+            // First in the chain because it is the first thing anyone changes.
+            Node("prompt", "core.prompt", params = promptParams()),
             Node(
-                "prompt", "sd.clip_encode",
-                params = mapOf(
-                    "prompt" to "a cat on grass",
-                    "negative" to "blurry, lowres",
-                ),
-            ),
-            Node(
-                "sample", "sd.sample",
+                "generate", samplerType(),
                 params = ctxKeyParams() + mapOf(
                     // ⚠⚠ **No `steps` here, deliberately** -- the node's own
                     // default (20) applies, which is DreamUI's default too.
@@ -83,33 +114,129 @@ fun defaultWorkflow(): Workflow = Workflow(
                     // render is worth reproducing.
                     "seed" to "0",
                 ),
-                inputs = sources("cond" to "prompt"),
+                inputs = sources("prompt" to "prompt"),
             ),
-            Node(
-                "decode", "sd.vae_decode",
-                params = ctxKeyParams(),
-                inputs = sources("latent" to "sample"),
-            ),
+            // ⭐ The end of the flow: it shows the picture and keeps it. The
+            // sampler draws its own render too -- this is what says "THIS one is
+            // the deliverable", which is what it is for in a chain.
+            Node("output", "core.output", inputs = sources("media" to "generate")),
         )
     ),
-    // One column, because this graph really is one chain. Spaced so a node and
-    // the port beneath it never collide at 1x on a 411dp-wide phone.
-    // ⚠ y starts below the canvas TOP BAR rather than at the very top: the bar
-    // floats over the canvas, so a node at y=40 had its title drawn underneath
-    // the model name on the app's first screen.
-    // ⚠⚠ 120, not 96. The bar became TWO rows when the model name moved onto a
-    // line of its own, and 96 then cleared it by 3dp at the default zoom --
-    // which is not clearance, it is a coincidence. Chrome height and node
-    // positions are independent numbers that have to be re-checked together.
-    // ⚠⚠ The gap under `prompt` is 240, not 180. A prompt node carries its two
-    // prompt boxes in its BODY now, so it stands ~205 tall where it used to be
-    // ~128 -- and at the old spacing the sampler was drawn straight through it.
-    // Caught by the golden, 2026-09-11.
-    // ⚠ These are the only stacked positions that matter: every other recipe
-    // puts the prompt node in a SECOND COLUMN, where its height cannot collide
-    // with the pixel chain beside it.
-    mapOf("prompt" to Pt(24f, 120f), "sample" to Pt(24f, 360f), "decode" to Pt(24f, 620f)),
+    // ⚠ One feeder, so the prompt sits alone in the left column and the
+    // sampler hangs just under it. [flowLayout] owns every number.
+    flowLayout("prompt", "generate", "output"),
 )
+
+/**
+ * ⭐⭐⭐ **The shape every recipe is laid out in** — the feeders down the LEFT,
+ * the renderer in the middle, the output on the right.
+ *
+ * ⚠⚠ Arranged by hand on the phone and screenshotted, 2026-09-15: *"prompt and
+ * image nodes at same side so that the wires dont cross, the wires look clean,
+ * and all nodes fit on the screen — just do like this one for all default
+ * workflows"*. This function is that arrangement generalised, and it
+ * generalises because every recipe here is the SAME shape: N feeders into one
+ * renderer into one output.
+ *
+ * ⚠⚠ It replaces the diagonal of 2026-09-13, and the reason is the one thing
+ * a diagonal cannot do: it put `prompt` and `photo` in different COLUMNS, so
+ * the prompt's wire had to cross the photo's to reach a sampler whose `prompt`
+ * port sits above its `image` port. Stacking the feeders in one column in PORT
+ * ORDER makes that crossing impossible rather than merely unlikely.
+ *
+ * ⚠⚠⚠ What the diagonal got right is kept: a wire must point FORWARD, and
+ * an output port sits on a node's right edge while an input sits on the next
+ * one's left edge. So each column starts clear of the WIDEST node in the column
+ * before it — [WORKER_X] past a 380-wide prose node, [OUTPUT_X] past a 190-wide
+ * renderer. A column narrower than the node feeding it draws a backward wire
+ * even though the node is further right.
+ *
+ * ⚠ Nothing here knows a node's HEIGHT (a prompt node is ~300 units, a photo
+ * ~140), so the vertical numbers are clearances chosen against the tallest of
+ * them rather than a stack. That is also why the columns must not overlap in x:
+ * a node that grows a picture or a third prose line then cannot collide with a
+ * neighbour.
+ *
+ * @param ids feeders first, then the renderer, then the output. ⚠ The feeders
+ *   must be in the renderer's own PORT order — prompt before image — or the
+ *   wires cross again.
+ */
+private fun flowLayout(vararg ids: String): Map<String, Pt> {
+    val feeders = ids.dropLast(2)
+    val worker = ids[ids.size - 2]
+    val output = ids.last()
+    // ⭐ The renderer sits BETWEEN its feeders, which is what keeps both wires
+    // short and stops either of them travelling past a node.
+    val middle = TOP + (feeders.size - 1) * FEED_STEP_Y / 2f
+    return buildMap {
+        feeders.forEachIndexed { i, id -> put(id, Pt(LEFT, TOP + i * FEED_STEP_Y)) }
+        put(worker, Pt(WORKER_X, middle + WORKER_DROP))
+        put(output, Pt(OUTPUT_X, middle + WORKER_DROP + OUTPUT_DROP))
+    }
+}
+
+/**
+ * ⚠⚠⚠ **The clearance under the floating top bar, and it is a WORLD
+ * number on purpose.**
+ *
+ * The bar is drawn over the canvas and is up to three rows — tabs, flow name,
+ * load line — which is ~125dp. A recipe opens at the scale `CanvasState.fitted`
+ * picks (~0.32 for the shape below), so the clearance on screen is `TOP * scale`
+ * dp on every device: the density cancels, which is why this is not an offset
+ * applied to the viewport. `Viewport.offset` is in device PIXELS and nothing
+ * that can see the density is in a position to set it.
+ *
+ * ⚠⚠ It was 120 while recipes opened at ~1x. At 0.32 that is 38dp, and the
+ * prompt node's title was drawn underneath the model name — which is the exact
+ * bug the 120 was chosen to fix, reappearing because the ZOOM changed and the
+ * two numbers were never re-checked together.
+ */
+private const val TOP = 500f
+
+/**
+ * ⭐ [positions] moved so the graph's top-left node sits where a recipe's first
+ * node does — so the fit [CanvasState.withView] gives a recipe frames it too.
+ * ⚠ Layout only; wires and params are untouched.
+ */
+fun layoutAtRecipeOrigin(positions: Map<String, com.abrah.nightmare.canvas.Pt>): Map<String, com.abrah.nightmare.canvas.Pt> {
+    if (positions.isEmpty()) return positions
+    val dx = LEFT - positions.values.minOf { it.x }
+    val dy = TOP - positions.values.minOf { it.y }
+    return positions.mapValues { (_, p) -> com.abrah.nightmare.canvas.Pt(p.x + dx, p.y + dy) }
+}
+
+private const val LEFT = 24f
+
+/**
+ * ⚠⚠ Clear of a PROMPT node, not of a photo one. A prompt is born with two
+ * prose boxes and their captions, ~300 units tall, and it is always the first
+ * feeder — so the second feeder is placed below that, not below the short node
+ * it happens to be.
+ */
+private const val FEED_STEP_Y = 380f
+
+/**
+ * ⚠ Past the 380-wide prose column, with a gap a wire can be seen in.
+ *
+ * ⚠⚠ The gaps were trimmed (140 → 110, 130 → 100) on 2026-09-15 for one
+ * reason: this layout's total WIDTH is what sets the opening zoom, and every
+ * unit of gap is a unit the whole graph has to shrink by to fit a phone. Air
+ * between columns that costs legibility in the nodes is a bad trade.
+ */
+private const val WORKER_X = LEFT + Sizes.PROSE_NODE_WIDTH + 110f
+
+/** ⚠ Past the 190-wide renderer. See [WORKER_X] on why the gap is this tight. */
+private const val OUTPUT_X = WORKER_X + Sizes.NODE_WIDTH + 100f
+
+/**
+ * ⚠ The renderer hangs slightly BELOW the midpoint of its feeders rather than
+ * on it: its `prompt` port is near its top, so a centred node would send the
+ * first wire faintly upwards.
+ */
+private const val WORKER_DROP = 40f
+
+/** ⚠ And the output below the renderer again, so its wire reads as forward. */
+private const val OUTPUT_DROP = 240f
 
 /**
  * A graph a user can start from.
@@ -118,7 +245,22 @@ fun defaultWorkflow(): Workflow = Workflow(
  * workflow that needed a plugin pack would fail to open on any device that has
  * not been handed one, which is every device but the developer's.
  */
-data class Recipe(val id: String, val label: String, val about: String, val build: () -> Workflow)
+data class Recipe(
+    val id: String,
+    val label: String,
+    val about: String,
+    val build: () -> Workflow,
+    /**
+     * ⭐⭐ Whether this flow runs on a CHECKPOINT.
+     *
+     * ⚠⚠ The video flows and the upscaler do not: they load their own weights
+     * and bind no [com.abrah.nightmare.ContextKey] at all. Offering them when a
+     * user has just picked a checkpoint is offering flows that will ignore the
+     * choice they made — reported 2026-09-15 as the Use dialog showing every
+     * flow.
+     */
+    val usesCheckpoint: Boolean = true,
+)
 
 /**
  * ⚠ The text node is called **`prompt`**, not `text`.
@@ -128,9 +270,10 @@ data class Recipe(val id: String, val label: String, val about: String, val buil
  * `frame`, `mask`). The thing a person is looking for when they open one of
  * these is where to type the prompt. The user's call, 2026-09-11.
  *
- * ⚠ Recipes only. A saved workflow keeps whatever ids it was written with, and
- * a node dragged from the palette is still named from its TYPE
- * (`clip_encode`) -- renaming that is a separate change to `nodeLabel`.
+ * ⚠ A saved workflow keeps whatever ids it was written with. ✅ But a node
+ * dragged from the palette is born `prompt` too since 2026-09-12 — its id comes
+ * from the type's LABEL, and `sd.clip_encode` is labelled `prompt`
+ * (`LABEL_OVERRIDES`).
  */
 
 /**
@@ -147,202 +290,144 @@ val RECIPES: List<Recipe> = listOf(
     ),
     Recipe(
         "img2img", "Image to image",
-        "A photo from the gallery: frame it, then re-imagine it at the strength you choose.",
+        "A photo from the gallery, re-imagined at the strength you choose.",
         ::img2imgWorkflow,
     ),
+    Recipe(
+        "inpaint", "Inpaint — paint an area to redo",
+        "Paint over part of a photo and only that part is re-imagined. Open the " +
+            "sampler and tap Mask to paint.",
+        ::inpaintWorkflow,
+    ),
+    // ⚠⚠ **Upscale sits with the picture flows, before the video ones.** The
+    // user's call, 2026-09-15. It is a PICTURE flow — a photo in, a bigger
+    // photo out — and it was only after the video pair because that is the
+    // order the two products shipped in. Ordering a list by the git log is the
+    // one ordering no user can predict.
     Recipe(
         "upscale", "Upscale a photo",
         "A picture from the gallery, enlarged 4x. No checkpoint involved — " +
             "the upscaler is its own small model, installed under Models.",
         ::upscaleWorkflow,
+        usesCheckpoint = false,
     ),
     Recipe(
-        "inpaint", "Inpaint — paint an area to redo",
-        "Paint over part of a photo and only that part is re-imagined. " +
-            "Tap the Mask node to paint.",
-        ::inpaintWorkflow,
+        "t2v", "Text to video",
+        // ⚠ 1024x640, the way round it actually COMES OUT. `../Neodragon`'s docs
+        // say "320x512 -> 640x1024" in (height, width) order, and repeating that
+        // here would have told the user a portrait clip and handed them a
+        // landscape one. Measured on device 2026-09-12: 49 frames, 1024x640.
+        "A prompt in, a 2 second clip out — 49 frames at 1024x640, on the NPU. " +
+            "Needs the video models installed; it does not use your checkpoint.",
+        ::textToVideoWorkflow,
+        usesCheckpoint = false,
+    ),
+    Recipe(
+        "i2v", "Image to video",
+        // ⚠ The speed is the SELLING point and it is measured, not guessed:
+        // 20.6 s against t2v's 24.6 s on device 2026-09-13, because SSD1B never
+        // runs. ⚠⚠ It also needs 1.68 GB fewer models, which matters to
+        // someone deciding what to download.
+        "A photo from the gallery, brought to life — 49 frames at 1024x640. " +
+            "Faster than text to video, and it needs three fewer models.",
+        ::imageToVideoWorkflow,
+        usesCheckpoint = false,
     ),
 )
 
 /**
- * ⭐⭐ Inpainting, from parts that already existed.
+ * ⭐⭐⭐ Inpainting — the SAME four nodes as image to image, with a mask painted
+ * on the sampler.
  *
- * ⚠⚠ **No 9-channel UNet and no second checkpoint.** This is RePaint-style
- * latent blending (`../LocalDream/docs/INPAINT.md` §1): the photo is encoded
- * once, sampled once, and the two latents are blended under a painted mask. It
- * is the clearest demonstration in the app that decomposing the pipeline buys
- * something a preset picker cannot — every node here already existed for
- * another reason.
+ * `docs/ARCHITECTURE.md` §5.7. It was TEN nodes until 2026-09-15:
+ * `photo → frame → mask → cut → encode → sample → blend → decode → paste`, six
+ * of which existed only because a latent was visible on a wire. Every one of
+ * those steps still happens — inside [com.abrah.nightmare.RenderNode], calling
+ * the same functions the nodes called.
  *
- * ```
- *   photo ─ frame ─┬─ encode ──────────────┐
- *                  │                       ├─ blend ─ decode
- *                  ├─ encode ─ sample ─────┘    │
- *                  └─ mask ────────────────────-┘
- *   text ──────────────────────┘
- * ```
+ * ⭐ **A recipe is a starting point, not a machine.** This one and
+ * [img2imgWorkflow] build the same graph; what makes it an inpaint is the mask
+ * and the denoise, and a user can turn one into the other by painting or by
+ * clearing the mask — without rewiring anything.
  *
- * ⚠ `frame` feeds THREE consumers and they must all want the same size — they
- * do, because `vae_encode` and `latent_blend` both demand the render size and
- * `mask` passes that demand through. That is the whole reason the mask node is
- * `sizedByConsumer`.
- *
- * ⚠ ONE `encode`, not two: `base` and the sampler's starting latent are the
- * same picture, and encoding it twice would cost a second VAE pass for an
- * identical tensor the cache would have to notice anyway.
- *
- * ⚠ `denoise` at 0.85 rather than img2img's 0.6 — inside the mask the point is
- * to make something new, and the untouched surroundings come from `base`
- * regardless. A low denoise here reads as "the mask did nothing".
+ * ⚠ `denoise` 0.85 rather than img2img's 0.6: inside the mask the point is to
+ * make something new, and the surroundings come back from the blend regardless.
+ * A low denoise here reads as "the mask did nothing".
  */
 fun inpaintWorkflow(): Workflow = Workflow(
     Graph(
         listOf(
-            Node("photo", "image.load", params = mapOf("uri" to "")),
+            Node("prompt", "core.prompt", params = promptParams()),
+            Node("photo", "core.image", params = mapOf("uri" to "")),
+            // ⭐ Wired by default (the user's call, 2026-09-17, reversing "no new
+            // recipe" of the day before): the Tap tool is the easy way to mask, and
+            // a person should not have to know a node exists to find it. Without
+            // the model installed the tool says where to get it.
             Node(
-                "prompt", "sd.clip_encode",
-                params = mapOf(
-                    "prompt" to "masterpiece, best quality, highly detailed,",
-                    "negative" to "blurry, lowres",
-                ),
+                "segment_model", "mask.segment_model",
+                params = mapOf(com.abrah.nightmare.SelectObjectNode.MODEL to com.abrah.nightmare.segment.Segmenter.LABEL),
             ),
+            // ⭐ Tap the node, then Mask, to paint. The framing lives here too —
+            // there is no crop node in the chain any more, because the sampler
+            // fits whatever it is given.
             Node(
-                "frame", "image.crop",
-                params = mapOf("x" to "0.0", "y" to "0.0", "w" to "1.0", "h" to "1.0"),
-                inputs = sources("image" to "photo"),
-            ),
-            // ⭐ Tap this node on the canvas to paint. It is interactive, so the
-            // tap opens the editor rather than a fullscreen copy of the picture.
-            Node(
-                "mask", "image.mask",
-                params = mapOf("grow" to "0.0", "feather" to "0.02"),
-                inputs = sources("image" to "frame"),
-            ),
-            Node(
-                "encode", "sd.vae_encode",
-                params = ctxKeyParams() + mapOf("seed" to "42"),
-                inputs = sources("image" to "frame"),
-            ),
-            Node(
-                "sample", "sd.sample",
+                "inpaint", samplerType(inpaint = true),
                 params = ctxKeyParams() + mapOf("seed" to "0", "denoise" to "0.85"),
-                inputs = sources("cond" to "prompt", "latent" to "encode"),
+                inputs = sources("prompt" to "prompt", "image" to "photo", "segmenter" to "segment_model"),
             ),
-            // ⚠⚠ `base` is the ORIGINAL and `repaint` is the sampled one. The
-            // mask's white area is where `repaint` shows through; the other way
-            // round replaces everything except what you painted, which is a
-            // plausible picture and a silent mistake.
-            Node(
-                "blend", "sd.latent_blend",
-                params = ctxKeyParams(),
-                inputs = sources("base" to "encode", "repaint" to "sample", "mask" to "mask"),
-            ),
-            Node(
-                "decode", "sd.vae_decode",
-                params = ctxKeyParams(),
-                inputs = sources("latent" to "blend"),
-            ),
+            Node("output", "core.output", inputs = sources("media" to "inpaint")),
         )
     ),
-    // ⚠ 120 for the top row, for the reason [defaultWorkflow] gives.
-    mapOf(
-        "photo" to Pt(24f, 120f), "frame" to Pt(24f, 330f),
-        "encode" to Pt(24f, 560f), "sample" to Pt(24f, 790f),
-        "blend" to Pt(24f, 1060f), "decode" to Pt(24f, 1330f),
-        // Second column: the prompt and the mask, the two things a user
-        // actually touches, level with the chain they join.
-        "prompt" to Pt(250f, 120f), "mask" to Pt(250f, 560f),
-    ),
+    flowLayout("prompt", "photo", "segment_model", "inpaint", "output"),
 )
 
 /**
- * Photo -> latent -> re-sample -> picture.
+ * Photo in, re-imagined picture out.
  *
  * ⚠ `denoise` is what makes this useful rather than a noisy copy: at 1.0 the
  * source is entirely renoised, which is txt2img with extra steps.
+ *
+ * ⚠⚠ **No crop node**, and that is the change of 2026-09-15: `image.crop` used
+ * to stand here because `sd.vae_encode` demanded an exact 512². The sampler
+ * fits the photo itself now, so the node earns its place only when a framing is
+ * worth choosing once and feeding to two branches.
  */
 fun img2imgWorkflow(): Workflow = Workflow(
     Graph(
         listOf(
-            // ⚠ No size on `load_image` any more: it hands the photo on whole,
-            // and `frame` below is the only node that decides a framing. Two
-            // nodes cropping in sequence threw the first decision away before
-            // the user ever saw it.
-            Node("photo", "image.load", params = mapOf("uri" to "")),
-            // ⚠ A branch of its own, not a link in the chain: the text reaches
-            // the sampler directly and never touches the photo. Placed in a
-            // second column for that reason -- stacked into the middle of the
-            // pixel chain it would read as a step the picture passes through.
+            Node("prompt", "core.prompt", params = promptParams()),
+            Node("photo", "core.image", params = mapOf("uri" to "")),
             Node(
-                "prompt", "sd.clip_encode",
-                params = mapOf(
-                    "prompt" to "masterpiece, best quality, highly detailed,",
-                    "negative" to "blurry, lowres",
-                ),
+                "generate", samplerType(),
+                // ⚠ No `steps`/`cfg`: the model supplies both (see
+                // [defaultWorkflow]). `denoise` stays — it is a property of THIS
+                // recipe, not of the checkpoint.
+                params = ctxKeyParams() + mapOf("seed" to "0", "denoise" to "0.6"),
+                inputs = sources("prompt" to "prompt", "image" to "photo"),
             ),
-            Node(
-                "frame", "image.crop",
-                params = mapOf("x" to "0.0", "y" to "0.0", "w" to "1.0", "h" to "1.0", "out" to "512"),
-                inputs = sources("image" to "photo"),
-            ),
-            Node(
-                "encode", "sd.vae_encode",
-                params = ctxKeyParams() + mapOf("seed" to "42"),
-                inputs = sources("image" to "frame"),
-            ),
-            Node(
-                "sample", "sd.sample",
-                params = ctxKeyParams() + mapOf(
-                    // ⚠ No `steps`/`cfg`: the model supplies both (see the
-                    // txt2img recipe above). `denoise` stays -- it is a
-                    // property of THIS recipe, not of the checkpoint.
-                    "seed" to "0", "denoise" to "0.6",
-                ),
-                inputs = sources("cond" to "prompt", "latent" to "encode"),
-            ),
-            Node(
-                "decode", "sd.vae_decode",
-                params = ctxKeyParams(),
-                inputs = sources("latent" to "sample"),
-            ),
+            Node("output", "core.output", inputs = sources("media" to "generate")),
         )
     ),
-    // ⚠ 120 for the top row, for the reason [defaultWorkflow] gives.
-    mapOf(
-        "photo" to Pt(24f, 120f), "frame" to Pt(24f, 330f), "encode" to Pt(24f, 560f),
-        "sample" to Pt(24f, 790f), "decode" to Pt(24f, 1130f),
-        // Second column, level with the photo: the two branches start side by
-        // side and meet at the sampler.
-        "prompt" to Pt(250f, 120f),
-    ),
+    flowLayout("prompt", "photo", "generate", "output"),
 )
+
 
 /**
  * ⭐⭐ Enlarge a picture, and nothing else.
  *
  * ⚠⚠ **No sampler, no checkpoint, no [ContextKey] at all.** An upscaler binds
- * nothing at backend launch — `/upscale` builds its own QNN context from the
- * weight file per request and frees it after — so this graph pins the process
- * to nothing and runs beside any model. That is also why an upscaler never
- * appears as a "resident" model in the load readout: there is nothing resident
- * to report.
+ * nothing at backend launch — `/upscale` builds its own QNN context per request
+ * and frees it after — so this graph pins the process to nothing and runs beside
+ * any model.
  *
- * ⚠ It exists because wiring a photo straight into an upscale node by hand was
- * the obvious thing to try and gave no clue what was missing: the node needs an
- * upscaler INSTALLED (Models → Upscalers) and an `image.output` to land in.
- * Asked for from the phone, 2026-09-11.
+ * ⚠ It exists because wiring a photo straight into an upscale node by hand gave
+ * no clue what was missing: the node needs an upscaler INSTALLED (Models →
+ * Upscalers). Asked for from the phone, 2026-09-11.
  */
 fun upscaleWorkflow(): Workflow = Workflow(
     Graph(
         listOf(
-            // ⚠ Whole, uncropped. There is no size to match here -- unlike the
-            // sampler recipes, an upscaler takes whatever it is given.
-            Node("photo", "image.load", params = mapOf("uri" to "")),
-            // ⚠ **No `image.output` after it.** The upscale node shows its own
-            // result and carries save/share/keep like any node with a picture,
-            // so a terminal node would be a third box doing nothing the second
-            // one does not. `image.output` earns its place only where a graph
-            // needs an explicit save toggle.
+            Node("photo", "core.image", params = mapOf("uri" to "")),
             Node(
                 "upscale", "image.upscale",
                 // ⚠ No `upscaler` param written: the node's own default is the
@@ -350,10 +435,78 @@ fun upscaleWorkflow(): Workflow = Workflow(
                 // here would name a file a fresh install does not have.
                 inputs = sources("image" to "photo"),
             ),
+            Node("output", "core.output", inputs = sources("media" to "upscale")),
         )
     ),
-    positions = mapOf(
-        "photo" to Pt(24f, 40f),
-        "upscale" to Pt(24f, 300f),
+    positions = flowLayout("photo", "upscale", "output"),
+)
+
+/**
+ * ⭐⭐ **Image to video** — a photo brought to life, in the same four nodes as
+ * image to image.
+ *
+ * ⚠⚠ The ONLY difference from [textToVideoWorkflow] is the photo. Since
+ * 2026-09-15 there is no first-frame node and no crop node: the sampler makes
+ * its own first frame when nothing is wired, and frames the photo itself when
+ * one is. The user's call — one video sampler for both.
+ *
+ * ⭐ It is also the CHEAPER path, measurably: SSD1B never runs (~4 s and
+ * 614 MB), and three of the thirteen models are not needed at all.
+ */
+fun imageToVideoWorkflow(): Workflow = Workflow(
+    Graph(
+        listOf(
+            Node(
+                "prompt", "core.prompt",
+                // ⚠ A MOTION prompt, not a subject one: the subject is the
+                // photo. "a cat walking" against a picture of a harbour is the
+                // instruction fighting the image it was given.
+                params = mapOf(
+                    "prompt" to "gentle camera push in, subtle motion",
+                    "negative" to "",
+                ),
+            ),
+            Node("photo", "core.image", params = mapOf("uri" to "")),
+            Node(
+                "video", "nd.sample",
+                params = mapOf("seed" to "0", "upscale" to "true"),
+                inputs = sources("prompt" to "prompt", "image" to "photo"),
+            ),
+            Node("output", "core.output", inputs = sources("media" to "video")),
+        )
     ),
+    flowLayout("prompt", "photo", "video", "output"),
+)
+
+/**
+ * ⭐⭐ **Text to video** — a prompt in, a clip out, in the shape of every other
+ * recipe here.
+ *
+ * ⚠⚠ **No [ctxKeyParams].** The video path loads its own QNN context binaries
+ * in-process and binds nothing at backend launch, so the checkpoint in the top
+ * bar is irrelevant to it — and a video node never forces a model load.
+ *
+ * ⚠ The first frame is made INSIDE the sampler. It used to be its own node you
+ * could look at and re-roll before paying 20 s for the clip; that went with the
+ * fusion, and it is the one thing this shape costs.
+ */
+fun textToVideoWorkflow(): Workflow = Workflow(
+    Graph(
+        listOf(
+            Node(
+                "prompt", "core.prompt",
+                params = mapOf(
+                    "prompt" to "a cat walking through tall grass, cinematic",
+                    "negative" to "",
+                ),
+            ),
+            Node(
+                "video", "nd.sample",
+                params = mapOf("seed" to "0", "upscale" to "true"),
+                inputs = sources("prompt" to "prompt"),
+            ),
+            Node("output", "core.output", inputs = sources("media" to "video")),
+        )
+    ),
+    flowLayout("prompt", "video", "output"),
 )

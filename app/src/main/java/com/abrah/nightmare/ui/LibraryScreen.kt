@@ -6,6 +6,7 @@ import androidx.compose.ui.res.stringResource
 import com.abrah.nightmare.R
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.pager.HorizontalPager
@@ -22,10 +23,16 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.layout.size
 import kotlinx.coroutines.launch
 
 /** The two halves of the library: what you can render WITH, and what you can render. */
@@ -37,6 +44,8 @@ import kotlinx.coroutines.launch
  * render it, and a hardcoded word would pin the screen to one language.
  */
 enum class LibraryTab(@StringRes val label: Int) {
+    // ⚠ "Results", kept — it was renamed History for a day and the user asked
+    // for the name back (2026-09-17); only the LAYOUT follows DreamUI's History.
     MODELS(R.string.tab_models), FLOWS(R.string.tab_flows), RESULTS(R.string.tab_results)
 }
 
@@ -70,18 +79,10 @@ fun LibraryScreen(
     onDeviceInfo: (() -> Unit)? = null,
 ) {
     Column(modifier.fillMaxSize().statusBarsPadding().padding(16.dp)) {
-        // ⚠ The title follows the tab rather than saying "Library": the ✕ closes
-        // to the canvas either way, and a name the user did not choose is one
-        // more word between them and the list.
-        ScreenHeader(
-            stringResource(tab.label),
-            onClose = onClose,
-            afterTitle = {
-                if (tab == LibraryTab.MODELS && onDeviceInfo != null) {
-                    DeviceInfoButton(onClick = onDeviceInfo)
-                }
-            },
-        )
+        // ⭐ The APP's name and logo, not the tab's — the tab row directly under
+        // it already says Models / Flows / Results, so a title repeating it was
+        // redundant (the user's call, 2026-09-17).
+        BrandHeader(onClose = onClose)
         TabRow(
             selectedTabIndex = tab.ordinal,
             containerColor = MaterialTheme.colorScheme.background,
@@ -92,10 +93,27 @@ fun LibraryScreen(
                     selected = t == tab,
                     onClick = { onTab(t) },
                     text = {
-                        Text(
-                            stringResource(t.label),
-                            fontWeight = if (t == tab) FontWeight.SemiBold else FontWeight.Normal,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                stringResource(t.label),
+                                fontWeight = if (t == tab) FontWeight.SemiBold else FontWeight.Normal,
+                            )
+                            // ⭐ The device glyph rides WITH the "模型" label — the
+                            // user's call, and the reason is the label itself: this is
+                            // the tab that asks "will this checkpoint load on MY
+                            // phone", and the sheet it opens (HTP arch + VTCM) is the
+                            // answer. ⚠ Only this tab: [onDeviceInfo] is null on Flows
+                            // and Results, so neither grows a control that is not
+                            // about it.
+                            // ⚠ 8dp of clearance, so the glyph does not touch the
+                            // label's last stroke (the user's call).
+                            if (t == LibraryTab.MODELS && onDeviceInfo != null) {
+                                DeviceInfoButton(
+                                    onClick = onDeviceInfo,
+                                    modifier = Modifier.padding(start = 8.dp),
+                                )
+                            }
+                        }
                     },
                 )
             }
@@ -104,6 +122,48 @@ fun LibraryScreen(
             LibraryTab.MODELS -> models()
             LibraryTab.FLOWS -> flows()
             LibraryTab.RESULTS -> results()
+        }
+    }
+}
+
+/**
+ * ⭐⭐ "Nightmare", stylised, beside the logo, with the ✕ in the corner every
+ * panel over the canvas keeps it ([ScreenHeader]'s corner, same icon, same tint).
+ */
+@Composable
+fun BrandHeader(onClose: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(com.abrah.nightmare.R.drawable.brand_logo),
+            contentDescription = null,
+            modifier = Modifier
+                .size(40.dp)
+                .clip(RoundedCornerShape(11.dp)),
+        )
+        Text(
+            "Nightmare",
+            style = MaterialTheme.typography.headlineMedium.copy(
+                fontWeight = FontWeight.Black,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                letterSpacing = (-0.5).sp,
+                // ⭐ The logo's own violet, fading to lavender.
+                brush = androidx.compose.ui.graphics.Brush.linearGradient(
+                    listOf(Color(0xFF9B6BFF), Color(0xFFD9C8FF)),
+                ),
+            ),
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        androidx.compose.material3.IconButton(onClick = onClose) {
+            androidx.compose.material3.Icon(
+                androidx.compose.material.icons.Icons.Filled.Close,
+                contentDescription = "close — back to the canvas",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -133,19 +193,48 @@ fun LibraryScreen(
 fun SwipeTabs(
     labels: List<String>,
     modifier: Modifier = Modifier,
+    /**
+     * ⚠⚠ True when the caller gives this a FIXED height and every page should
+     * fill it. Inside a bottom sheet a pager sized by its page resizes the whole
+     * sheet on every swipe, so the pills and cards jump away from the finger and
+     * a tap lands on the scrim and closes it — reported 2026-09-17 on Add node.
+     */
+    fillHeight: Boolean = false,
+    /** ⚠ For a golden, which cannot swipe. */
+    initialPage: Int = 0,
+    /** ⭐ The settled page, for a caller whose state follows the tab (History's filter). */
+    onPage: (Int) -> Unit = {},
     page: @Composable (Int) -> Unit,
 ) {
-    val state = rememberPagerState(pageCount = { labels.size })
+    val state = rememberPagerState(initialPage = initialPage, pageCount = { labels.size })
+    androidx.compose.runtime.LaunchedEffect(state.currentPage) { onPage(state.currentPage) }
     val scope = rememberCoroutineScope()
 
-    Column(modifier.fillMaxSize()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
+    // ⭐ Keeps the selected pill on screen when a swipe lands on one that is
+    // scrolled out of view.
+    val row = androidx.compose.foundation.lazy.rememberLazyListState()
+    androidx.compose.runtime.LaunchedEffect(state.currentPage) {
+        row.animateScrollToItem((state.currentPage - 1).coerceAtLeast(0))
+    }
+
+    Column(modifier.fillMaxWidth()) {
+        // ⚠⚠⚠ **Scrollable, each pill its own text's width — never `weight(1f)`.**
+        // Five tabs (three families, Upscalers, Video) split one phone width
+        // into slivers: "Upscalers" did not fit, and when selected it went
+        // SemiBold, got WIDER, wrapped to a second line and made the whole row
+        // taller — so the page under it jumped down every time that tab took
+        // focus. Reported from the phone 2026-09-16 as a "snapping animation"
+        // on the Upscalers and Video tabs, and as text that does not fit.
+        // ⇒ One line, one weight whether selected or not (colour carries the
+        // selection), and room to scroll instead of room to squeeze.
+        androidx.compose.foundation.lazy.LazyRow(
+            state = row,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            labels.forEachIndexed { i, label ->
+            items(labels.size) { i ->
+                val label = labels[i]
                 val on = i == state.currentPage
                 Surface(
                     onClick = { scope.launch { state.animateScrollToPage(i) } },
@@ -162,36 +251,43 @@ fun SwipeTabs(
                         1.dp,
                         MaterialTheme.colorScheme.outlineVariant,
                     ),
-                    // ⚠ Weighted, so two families split the width evenly and a
-                    // third would still fit rather than pushing off the edge.
-                    modifier = Modifier.weight(1f),
                 ) {
                     Text(
                         label,
                         style = MaterialTheme.typography.labelLarge,
-                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
+                        fontWeight = FontWeight.Medium,
                         color = if (on) {
                             MaterialTheme.colorScheme.onSecondaryContainer
                         } else {
                             MaterialTheme.colorScheme.onSurfaceVariant
                         },
+                        maxLines = 1,
+                        softWrap = false,
                         textAlign = TextAlign.Center,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 8.dp),
+                            .widthIn(min = 72.dp)
+                            .padding(horizontal = 18.dp, vertical = 8.dp),
                     )
                 }
             }
         }
-        // ⚠⚠ Height is the leftover column, NOT wrap-content of the current
-        // page. Wrap-content remeasures as the incoming page comes on; a
-        // shorter family (or one whose lazy list has not composed yet) first
-        // shrinks the pager, then snaps back -- the "content drops then pops"
-        // on Models family swipe. Weight pins the slot so both pages share
-        // one height, and each LazyColumn fills it.
+        // ⚠⚠ **`key(i)`, or a page inherits the scroll of the one before it.**
+        // A pager REUSES composition slots between pages, so the `LazyListState`
+        // a `LazyColumn` remembers is handed to whichever page lands in that
+        // slot next. Swiping from a scrolled checkpoint list to the two-row
+        // Upscalers tab composed it at the old offset, which then clamped to 0
+        // — the list visibly started halfway down and snapped to the top.
+        // Reported from the phone 2026-09-15.
+        //
+        // ⚠ Keyed for EVERY page, not just the short one: the same reuse makes
+        // any two tabs of unequal length do it, and the upscalers tab is only
+        // where it is most obvious.
         HorizontalPager(
             state = state,
-            modifier = Modifier.fillMaxWidth().weight(1f),
-        ) { i -> page(i) }
+            modifier = Modifier.fillMaxWidth().then(if (fillHeight) Modifier.weight(1f) else Modifier),
+            verticalAlignment = androidx.compose.ui.Alignment.Top,
+        ) { i ->
+            key(i) { page(i) }
+        }
     }
 }

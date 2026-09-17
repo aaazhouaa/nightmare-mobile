@@ -50,6 +50,40 @@ data class Result(
     val batchId: String? = null,
     /** ⭐ What made this item different, e.g. `cfg 7.5`. Empty when it is alone. */
     val batchLabel: String = "",
+    /**
+     * ⭐⭐ The kept CLIP, when this result came from a video graph — and null
+     * for every picture.
+     *
+     * ⚠⚠ A COPY in the results directory, not the path the graph produced.
+     * That one is in `cacheDir/video/`, which Android clears whenever it wants
+     * to, so a starred clip would play until the first time the phone got
+     * short of space and then silently be a still. The PNG beside it is kept
+     * for exactly the same reason.
+     *
+     * ⚠ The PNG is still written and is still the poster: the card in the tab
+     * is a grid of thumbnails, and decoding a frame out of an MP4 to draw one
+     * would be work for a picture that already exists.
+     */
+    val videoPath: String? = null,
+    /**
+     * ⭐⭐ Starred — the Favourites filter in the Results tab.
+     *
+     * ⚠⚠ **Separate from being kept, and that is the whole point of the icon
+     * change of 2026-09-15.** The disk keeps a picture; the star keeps it AND
+     * flags it. Before this the star WAS the keep, so "in Results" and
+     * "favourite" were one fact and there was nothing to filter by.
+     *
+     * ⚠ Defaults false, so every result kept before this field existed reads
+     * back as an ordinary one rather than as a favourite.
+     */
+    val favourite: Boolean = false,
+    /**
+     * ⭐ Kept by the output node's AUTOSAVE rather than by a person. ⚠ Only these
+     * are deleted when the picture is Cleared from the node (the user's call,
+     * 2026-09-17) — something kept or starred by hand was a decision, and a
+     * Clear on the canvas must not undo it. Defaults false for older files.
+     */
+    val auto: Boolean = false,
 ) {
     val label: String get() = prompt?.take(60)?.ifBlank { "" } ?: ""
 }
@@ -84,7 +118,45 @@ class ResultsStore(private val dir: File) {
     private fun png(id: String) = File(dir, "$id.png")
     private fun meta(id: String) = File(dir, "$id.json")
 
+    /** ⚠ See [Result.videoPath] — absent for every picture result. */
+    private fun mp4(id: String) = File(dir, "$id.mp4")
+
     fun imageFile(id: String): File = png(id)
+
+    /**
+     * ⭐ The kept CLIP, or null when this result is an ordinary picture.
+     *
+     * ⚠⚠ One `stat`, and the same answer [all] derives. Reading it out of
+     * [all] instead costs a directory scan and a JSON parse per result, which
+     * a caller in a loop over a selection pays once per item — and the file is
+     * the fact here, exactly as [Result.videoPath] says.
+     */
+    fun clipFile(id: String): File? = mp4(id).takeIf { it.isFile }
+
+    /**
+     * ⭐⭐ Star or un-star a result that is already kept.
+     *
+     * ⚠⚠ It rewrites the metadata in place rather than deleting and re-keeping:
+     * the PNG, the clip and the FLOW are the expensive parts and none of them
+     * changes. ⚠ Returns the new state so a caller can draw the star without
+     * re-listing the whole directory.
+     *
+     * ⚠ Silently false for an id that is not kept — starring something that is
+     * not there is not an error, it is a no-op the UI can ignore.
+     */
+    fun setFavourite(id: String, on: Boolean): Boolean {
+        val f = meta(id)
+        if (!f.isFile) return false
+        return try {
+            val j = org.json.JSONObject(f.readText()).put("favourite", on)
+            val tmp = File(dir, "$id.json.tmp")
+            tmp.writeText(j.toString())
+            if (!tmp.renameTo(f)) { tmp.copyTo(f, overwrite = true); tmp.delete() }
+            on
+        } catch (e: Exception) {
+            false
+        }
+    }
 
     /**
      * Keeps [bitmap] and the graph that made it.
@@ -108,18 +180,52 @@ class ResultsStore(private val dir: File) {
         /** ⭐ Non-null when this is one item of a sweep. See [Result.batchId]. */
         batchId: String? = null,
         batchLabel: String = "",
+        /**
+         * ⭐ The MP4 this result was made from, copied in beside the PNG.
+         *
+         * ⚠ ~1-2 MB for a 2 s clip against ~2.6 MB for the picture beside it,
+         * so keeping it costs about what keeping the still already did. ⚠ A
+         * copy that FAILS does not fail the keep: a result with a poster and a
+         * flow is still worth having, and a clip is the one part of it the
+         * gallery may already hold.
+         */
+        video: File? = null,
+        /** ⭐ True when the STAR kept this rather than the disk. */
+        favourite: Boolean = false,
+        /** ⭐ True when AUTOSAVE kept it. See [Result.auto]. */
+        auto: Boolean = false,
     ): Result {
         dir.mkdirs()
-        val id = "r" + System.currentTimeMillis()
+        // ⚠⚠⚠ **A millisecond is not unique, and a batch keeps in a tight loop.**
+        // `"r" + currentTimeMillis()` alone collided whenever two results were
+        // kept inside the same millisecond: the second silently overwrote the
+        // first's PNG and metadata, and `clipFile` then handed a picture the
+        // other result's MP4. Found 2026-09-15 by a test that had been green for
+        // days — timing, not logic, decided whether it failed.
+        //
+        // ⚠ A suffix rather than nanoTime: the id is a FILE NAME and it sorts,
+        // so it has to stay readable and monotonic. The loop is bounded by how
+        // many results share one millisecond, which is single digits.
+        var id = "r" + System.currentTimeMillis()
+        var n = 1
+        while (png(id).exists() || meta(id).exists()) {
+            id = "r" + System.currentTimeMillis() + "_" + n++
+        }
         val tmpPng = File(dir, "$id.png.tmp")
         tmpPng.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
         if (!tmpPng.renameTo(png(id))) {
             tmpPng.copyTo(png(id), overwrite = true); tmpPng.delete()
         }
 
+        if (video != null && video.isFile) {
+            runCatching { video.copyTo(mp4(id), overwrite = true) }
+        }
         val r = Result(
             id, System.currentTimeMillis(), imageId, seed, model, prompt,
             bitmap.width, bitmap.height, batchId, batchLabel,
+            videoPath = mp4(id).takeIf { it.isFile }?.path,
+            favourite = favourite,
+            auto = auto,
         )
         val json = JSONObject()
             .put("savedAt", r.savedAt)
@@ -133,6 +239,8 @@ class ResultsStore(private val dir: File) {
             // an absent key means "not a batch" or "an older file".
             .put("batchId", r.batchId ?: JSONObject.NULL)
             .put("batchLabel", r.batchLabel)
+            .put("favourite", r.favourite)
+            .put("auto", r.auto)
             // ⭐ The graph, as the same JSON a saved workflow uses — so
             // reopening a result is exactly reopening a workflow, with no
             // second format to keep in step.
@@ -191,6 +299,12 @@ class ResultsStore(private val dir: File) {
                         height = j.optInt("height"),
                         batchId = j.optString("batchId").takeIf { it.isNotBlank() && it != "null" },
                         batchLabel = j.optString("batchLabel"),
+                        favourite = j.optBoolean("favourite", false),
+                        auto = j.optBoolean("auto", false),
+                        // ⚠ Read off the DISK rather than out of the metadata:
+                        // the file is the fact, and a `hasVideo` flag in the
+                        // JSON could outlive the clip it names.
+                        videoPath = mp4(id).takeIf { it.isFile }?.path,
                     )
                 } catch (e: Exception) {
                     null
@@ -222,6 +336,16 @@ class ResultsStore(private val dir: File) {
      * exactly what they saw.
      */
     fun fullBytes(id: String): ByteArray? = png(id).takeIf { it.isFile }?.readBytes()
+
+    /**
+     * ⭐ The kept PNG as a FILE, for a caller that can stream it.
+     *
+     * ⚠⚠ [fullBytes] reads the whole picture into the heap, which is ~40 MB
+     * for a 4096² upscale — the same defect as `ImageStore.png()`, in the
+     * other direction. A save or a share only ever copies these bytes, so
+     * nothing needs them in memory. [com.abrah.nightmare.ImageSaver.saveBitmap].
+     */
+    fun pngFile(id: String): File? = png(id).takeIf { it.isFile }
 
     fun full(id: String): Bitmap? = png(id).takeIf { it.isFile }?.let {
         BitmapFactory.decodeFile(it.path)
@@ -256,9 +380,9 @@ class ResultsStore(private val dir: File) {
             p["prompt"]?.takeIf { it.isNotBlank() }?.let { out += "prompt" to it }
             p["negative"]?.takeIf { it.isNotBlank() }?.let { out += "negative" to it }
         }
-        g.nodes.firstOrNull { it.type == "sd.sample" }?.params?.let { p ->
+        g.nodes.firstOrNull { it.type in com.abrah.nightmare.SD_SAMPLER_TYPES }?.params?.let { p ->
             p["model"]?.let { out += "model" to it }
-            val size = listOfNotNull(p["width"], p["height"]).joinToString("×")
+            val size = listOfNotNull(p["width"], p["height"]).joinToString("x")
             if (size.isNotBlank()) out += "size" to size
             p["steps"]?.let { out += "steps" to it }
             p["cfg"]?.let { out += "cfg" to it }
@@ -266,9 +390,18 @@ class ResultsStore(private val dir: File) {
             p["seed"]?.takeIf { it != "0" }?.let { out += "seed" to it }
             // ⚠ Only when a latent is wired: on txt2img it is not read, and
             // showing it would imply it did something.
-            g.nodes.firstOrNull { it.type == "sd.sample" }
+            g.nodes.firstOrNull { it.type in com.abrah.nightmare.SD_SAMPLER_TYPES }
                 ?.takeIf { it.inputs.containsKey("latent") }
                 ?.let { p["denoise"]?.let { d -> out += "denoise" to d } }
+        }
+        // ⭐ …and the video recipe, which keeps its prompt on the sampler and
+        // names no checkpoint at all. ⚠ Listed here rather than in a second
+        // details function: a kept clip is a kept result like any other.
+        g.nodes.firstOrNull { it.type == "nd.clip_encode" }?.params?.let { p ->
+            p["prompt"]?.takeIf { it.isNotBlank() }?.let { out += "prompt" to it }
+            out += "size" to if (p["upscale"].equals("false", true)) "512x320" else "1024x640"
+            out += "frames" to "49"
+            p["seed"]?.takeIf { it != "0" }?.let { out += "seed" to it }
         }
         out += "nodes" to g.nodes.size.toString()
         return out
@@ -277,6 +410,9 @@ class ResultsStore(private val dir: File) {
     fun delete(id: String) {
         png(id).delete()
         meta(id).delete()
+        // ⚠ The clip too, or un-starring a video leaves the biggest half of it
+        // on disk with nothing left pointing at it.
+        mp4(id).delete()
     }
 
     /** Bytes on disk, for a line that tells the user what this is costing. */

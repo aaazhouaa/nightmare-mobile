@@ -22,6 +22,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -71,12 +73,16 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import com.abrah.nightmare.NodeType
 import com.abrah.nightmare.ui.LogTextStyle
 import com.abrah.nightmare.ui.nightmareButtonColors
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 
 /**
  * The canvas, with the run bar over it.
@@ -89,6 +95,8 @@ import com.abrah.nightmare.ui.nightmareButtonColors
 fun CanvasScreen(
     state: CanvasState,
     types: Map<String, NodeType>,
+    /** ⭐ What Add node offers — [types] less anything this phone cannot run (VideoGate). */
+    paletteTypes: Map<String, NodeType> = types,
     status: Map<String, NodeStatus>,
     busy: Boolean,
     image: ImageBitmap?,
@@ -148,6 +156,25 @@ fun CanvasScreen(
      */
     onSave: (String) -> Unit = {},
     savedAs: String? = null,
+    /**
+     * ⭐ What the save dialog offers when this flow has no name yet — the recipe
+     * it came from plus the first free index, `t2i_01`.
+     *
+     * ⚠ A suggestion in an editable box, never a silent filename.
+     */
+    suggestedName: String = "",
+    /** ⭐ Installed checkpoints as `id to label`, for a sampler's own picker. */
+    installedModels: List<CheckpointChoice> = emptyList(),
+    onSetModel: (String, String) -> Unit = { _, _ -> },
+    /** ⭐ Backend relaunches this graph will cost, said before Run. */
+    plannedLoads: Int = 0,
+    /** ⭐ A family swap waiting on a yes, or null. */
+    pendingSwap: com.abrah.nightmare.HarnessViewModel.ModelSwap? = null,
+    /** @param takeRecipe / takePrompt — the two boxes in [ModelSwapDialog]. */
+    onConfirmSwap: (
+        com.abrah.nightmare.HarnessViewModel.ModelSwap, Boolean, Boolean,
+    ) -> Unit = { _, _, _ -> },
+    onCancelSwap: () -> Unit = {},
     /** Resolves an image id to pixels, for node previews and the viewer. */
     imageFor: (String) -> ImageBitmap? = { null },
     /**
@@ -189,6 +216,9 @@ fun CanvasScreen(
     onSetAspect: (String) -> Unit = {},
     onEditMask: (node: String, (com.abrah.nightmare.MaskState) -> com.abrah.nightmare.MaskState) -> Unit =
         { _, _ -> },
+    /** ⭐ The mask editor's Tap tool — `HarnessViewModel.tapMask`. */
+    onTapMask: (node: String, x: Float, y: Float, done: (String?) -> Unit) -> Unit =
+        { _, _, _, done -> done(null) },
     /**
      * ⭐ Why a workflow name will not do, or null — `WorkflowStore.validName`.
      * ⚠ Passed IN rather than duplicated here: two copies of a naming rule
@@ -210,6 +240,12 @@ fun CanvasScreen(
     /** ⭐ Hand a node's picture to another app. */
     onShareImage: (String) -> Unit = {},
     /** ⭐ Keep a rendered image AND the flow that made it, in Results. */
+    onStarImage: (String) -> Unit = {},
+    /** ⚠ Whether the picture behind an id is FLAGGED — the star's tint. */
+    isFavourite: (String) -> Boolean = { false },
+    /** ⚠ Non-null when this flow's autosave keeps every Run — the disk is dimmed. */
+    keepDisabledReason: String? = null,
+    onDisabledKeep: ((String) -> Unit)? = null,
     onKeepImage: (String) -> Unit = {},
     /** ⭐ Is this picture already kept? Drives the star's filled/outline state. */
     isKept: (String) -> Boolean = { false },
@@ -239,6 +275,50 @@ fun CanvasScreen(
             .background(CanvasColors.background)
             .onSizeChanged { canvasSize = it },
     ) {
+        // ⭐⭐ **The loop's clock.** One ticker for the whole screen, driving both
+        // the thumbnails on the canvas and the one in the open sheet.
+        //
+        // ⚠⚠ It only runs while a clip is actually on the canvas. A permanent
+        // 12 Hz invalidation would redraw every node, every wire and the grid
+        // forever on a graph that has no video in it at all — on battery, for
+        // nothing. `state.videos.isEmpty()` is the whole condition.
+        //
+        // ⚠ `withFrameMillis` rather than `delay`: it ties the tick to the
+        // display's own frame callback, so the loop pauses with the window
+        // instead of waking a backgrounded app twelve times a second.
+        // ⚠ The TERMINAL clips only -- see [clipNodes]. A sampler feeding an
+        // output node draws its poster still and lets the end of the chain play.
+        // ⚠ Remembered: this walks every node's inputs, and it is read from a
+        // draw scope that runs at 12 Hz while a clip is on the canvas.
+        val playing = remember(state.workflow.graph, state.videos) {
+            clipNodes(state.workflow.graph, state.videos)
+        }
+        val animate = playing.isNotEmpty()
+        var clipTick by remember { mutableIntStateOf(0) }
+        LaunchedEffect(animate) {
+            if (!animate) return@LaunchedEffect
+            var last = 0L
+            while (true) {
+                withFrameMillis { now ->
+                    if (now - last >= 1000L / com.abrah.nightmare.ClipStore.FPS) {
+                        last = now
+                        clipTick++
+                    }
+                }
+            }
+        }
+
+        // ⚠ Reads `clipTick` INSIDE the lambda, which is what makes the canvas
+        // redraw — a draw scope records its state reads. Hoisting the frame out
+        // here would animate nothing.
+        val clipFrameFor: (String) -> androidx.compose.ui.graphics.ImageBitmap? = { id ->
+            state.videos[id]?.takeIf { id in playing }?.let { path ->
+                com.abrah.nightmare.ClipStore.get(path)?.let { f ->
+                    f[clipTick % f.size]
+                }
+            }
+        }
+
         GraphCanvas(
             workflow = state.workflow,
             types = types,
@@ -250,6 +330,7 @@ fun CanvasScreen(
             pending = state.pending,
             previews = state.previews,
             imageFor = imageFor,
+            clipFrameFor = clipFrameFor,
             modifier = Modifier
                 .fillMaxSize()
                 .canvasGestures(
@@ -338,9 +419,9 @@ fun CanvasScreen(
             // least likely of the three to be what anyone wanted. The harness
             // is still there, behind Settings > Diagnostics.
             //
-            // The device-info glyph used to sit between Save and this gear; it
-            // moved next to the "模型" title (LibraryScreen), because that is
-            // the page that asks "will this checkpoint load on MY phone".
+            // ⚠⚠ The device-info glyph lives next to the "模型" title on the
+            // Models page now (LibraryScreen), because that is the page that
+            // asks "will this checkpoint load on MY phone".
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.Filled.Settings,
@@ -351,6 +432,7 @@ fun CanvasScreen(
         }
 
         RunBar(
+            plannedLoads = plannedLoads,
             onResults = onResults,
             state = state,
             busy = busy,
@@ -374,14 +456,22 @@ fun CanvasScreen(
             // ⚠ The FIRST sampler. A graph with two has two seeds and no single
             // answer; the row names the one Run reaches first and leaves the
             // rest to the inspector rather than lying about either.
-            seed = state.workflow.graph.nodes.firstOrNull { it.type == "sd.sample" }?.let { n ->
+            // ⚠⚠ ANY sampler ([com.abrah.nightmare.SAMPLER_TYPES]), not just
+            // `sd.sample`: the text-to-video recipe rolls a seed like every
+            // other recipe and had no lock at all, so a clip worth keeping
+            // could not be asked for again. Reported from the phone, 2026-09-12.
+            seed = state.workflow.graph.nodes.firstOrNull {
+                com.abrah.nightmare.isSampler(it.type)
+            }?.let { n ->
                 SeedState(
                     value = n.params["seed"]?.trim()?.takeIf { it.isNotEmpty() && it != "0" },
                     lastRolled = seedFor(state.workflow.graph, n.id) { status[it]?.detail },
                 )
             },
             onToggleSeed = {
-                state.workflow.graph.nodes.firstOrNull { it.type == "sd.sample" }?.let { n ->
+                state.workflow.graph.nodes.firstOrNull {
+                    com.abrah.nightmare.isSampler(it.type)
+                }?.let { n ->
                     val pinned = n.params["seed"]?.trim()?.takeIf { it.isNotEmpty() && it != "0" }
                     if (pinned != null) {
                         onEdit { st -> st.setParam(n.id, "seed", "0") }
@@ -422,12 +512,31 @@ fun CanvasScreen(
         onShareImage = onShareImage,
         onKeepImage = onKeepImage,
         isKept = isKept,
+        installedModels = installedModels,
+        onSetModel = onSetModel,
+        // ⚠⚠⚠ **All four, or the two surfaces disagree.** The inspector and the
+        // fullscreen viewer draw the SAME [PictureActions]; these were wired
+        // into the viewer and not here, so in the node view the star did nothing
+        // and the save tick stayed live while autosave dimmed it one tap away.
+        // Reported 2026-09-15 — *"the ticks in fullscreen view and node view
+        // aren't same behavior"*. ⚠ The rule this broke is the oldest one in
+        // `docs/ARCHITECTURE.md` §5.6: a rule honoured in N−1 of N places is a
+        // bug, and the missed place is the one the user opens first.
+        onStarImage = onStarImage,
+        isFavourite = isFavourite,
+        keepDisabledReason = keepDisabledReason,
+        onDisabledKeep = onDisabledKeep,
         onClearOutput = onClearOutput,
         imageFor = imageFor,
-        onViewFullscreen = { id -> onEdit { s -> s.copy(editing = null, viewing = id) } },
+        // ⚠ `s.editing` IS the node whose inspector is open, so the viewer
+        // opened from it knows its node too — same reason the canvas tap does.
+        onViewFullscreen = { id ->
+            onEdit { s -> s.copy(editing = null, viewing = id, viewingNode = s.editing) }
+        },
         onSetParam = { node, name, value -> onEdit { s -> s.setParam(node, name, value) } },
         onSetParams = { node, values -> onEdit { s -> s.setParams(node, values) } },
         onEditMask = onEditMask,
+        onTapMask = onTapMask,
         onSetResolution = onSetResolution,
         onSetAspect = onSetAspect,
         // ⚠ A pure state edit, like every other canvas change: renameNode
@@ -436,6 +545,18 @@ fun CanvasScreen(
         onDelete = { id -> onEdit { s -> s.removeNode(id) } },
         onDismiss = { onEdit { s -> s.closeInspector() } },
     )
+
+    // ⭐⭐⭐ **The checkpoint swap's question**, over the inspector it came from.
+    //
+    // ⚠⚠⚠ It did not exist until 2026-09-15, while `pendingSwap` had been a
+    // parameter of this function for a day — declared, passed in from
+    // `MainActivity`, and read by nothing. So a cross-family pick set the state
+    // and drew no dialog: on the phone the picker simply did nothing. ⚠ A
+    // parameter no line of the body mentions is dead wiring, and the compiler
+    // says nothing about it; the golden below is what will notice next time.
+    pendingSwap?.let { swap ->
+        ModelSwapDialog(swap, onConfirmSwap, onCancelSwap)
+    }
 
     // ⭐ Fullscreen. A 190-unit node preview is a thumbnail; this is where a
     // person actually looks at what they made.
@@ -446,11 +567,27 @@ fun CanvasScreen(
     // it can be swapped or dropped) and which sampler made it (so it can show
     // the seed) -- and the reverse lookup keeps `viewing` a plain image id, so
     // nothing has to keep the two halves in step.
-    val viewedNode = state.viewing?.let { id ->
-        state.previews.entries.firstOrNull { it.value.first == id }?.key
-    }
-    val viewedIsPhoto = viewedNode
-        ?.let { state.workflow.graph.byId[it] }?.type == "image.load"
+    // ⚠⚠ The node the TAP named, and only as a fallback the reverse lookup —
+    // which is ambiguous whenever two nodes hold the same picture (see
+    // [CanvasState.viewingNode]). The fallback covers a viewer opened from
+    // somewhere that has no node, and nothing else.
+    val viewedNode = state.viewingNode
+        ?: state.viewing?.let { id ->
+            state.previews.entries.firstOrNull { it.value.first == id }?.key
+        }
+    val viewedType = viewedNode?.let { state.workflow.graph.byId[it] }?.type
+    val viewedIsPhoto = viewedType == "core.image"
+    /**
+     * ⭐⭐ A SAMPLER's picture is an INPUT, not a result — it is the framed
+     * photo going in ([applyFramedPreviews]) — so the viewer offers nothing.
+     *
+     * ⚠⚠ Every action in that row acts on a RESULT: keep it, download it, share
+     * it, delete it. Offering them over a crop preview means "delete" clears a
+     * render that was never made and "keep" files an input as if it were
+     * output. The user's call, 2026-09-15: *"in sample fullscreen view, don't
+     * need any btns."*
+     */
+    val viewedIsInput = viewedIsPhoto || viewedType in com.abrah.nightmare.SD_SAMPLER_TYPES
     // ⚠⚠ Hoisted OUT of the `let` below: `rememberImagePick` registers an
     // activity-result launcher, and a launcher registered inside a conditional
     // is registered and torn down as the condition flips -- which is exactly
@@ -462,46 +599,91 @@ fun CanvasScreen(
         // one: the new photo resolves into a new image id a moment later, and a
         // viewer still holding the previous id would sit there showing the
         // thing the user just replaced.
-        onEdit { s -> s.copy(viewing = null) }
+        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
     }
     state.viewing?.let { id ->
         imageFor(id)?.let { bmp ->
             FullscreenImage(
                 bmp,
-                onDismiss = { onEdit { s -> s.copy(viewing = null) } },
+                onDismiss = { onEdit { s -> s.copy(viewing = null, viewingNode = null) } },
+                // ⭐⭐ The clip, when the node being viewed is the one that OWNS
+                // it. ⚠ Found through `viewedNode` rather than carried in
+                // `viewing`, for the reason the block above gives: `viewing`
+                // stays a plain image id and nothing has to keep two halves in
+                // step.
+                //
+                // ⚠⚠⚠ **Filtered by [clipNodes], exactly as the canvas and the
+                // sheet are.** Without the filter, opening the SAMPLER full
+                // screen played the finished video — and once Save and Share
+                // learned about clips, the sampler shared it too. Reported from
+                // the phone, 2026-09-13: *"i still don't get why the sample in
+                // fullscreen/share is showing the video output"*. The `VIDEO`
+                // value flows sampler → output so every node on the chain holds
+                // the same path; `clipNodes` picking the END is the ONE rule
+                // that decides what a node shows, saves and sends, and a
+                // surface that opts out of it is a surface that disagrees with
+                // the three that do.
+                // ⚠⚠ Resolved from the image id AGAIN rather than from
+                // `viewedNode`, and not for tidiness: several nodes share one
+                // poster (the clip flows sampler → output and both record it),
+                // so `viewedNode` is whichever the map yielded first and may
+                // not be the one that owns the clip. Asking for the OWNER is
+                // the same question `HarnessViewModel.clipForImage` asks, and
+                // the two must agree or the button and the picture disagree.
+                videoPath = clipNodes(state.workflow.graph, state.videos).let { owners ->
+                    state.previews.entries
+                        .filter { it.value.first == id }
+                        .map { it.key }
+                        .firstOrNull { it in owners }
+                        ?.let { state.videos[it] }
+                },
                 seed = viewedNode?.let { n ->
                     seedFor(state.workflow.graph, n) { status[it]?.detail }
                 },
+                hasSampler = viewedNode?.let { samplerFor(state.workflow.graph, it) } != null,
+                // ⚠ The SAMPLER only, not every input. A photo's viewer keeps
+                // its pick and bin — choosing the picture IS what that viewer is
+                // for. The sampler's preview is a derived crop with nothing to
+                // act on.
+                chromeless = viewedType in com.abrah.nightmare.SD_SAMPLER_TYPES,
                 onPick = if (viewedIsPhoto) pickForViewed else null,
                 onClear = if (viewedIsPhoto && viewedNode != null) {
                     {
                         onClearImage(viewedNode)
-                        onEdit { s -> s.copy(viewing = null) }
+                        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
                     }
                 } else null,
                 // ⚠ Only for a RENDER. A photo the user chose is already in
                 // their gallery, and offering to save it back would make a
                 // second copy of a file they already have.
-                onSave = if (!viewedIsPhoto) {
+                onSave = if (!viewedIsInput) {
                     { onSaveImage(id) }
                 } else null,
                 // ⭐ Share, wherever Save is offered. ⚠ Including an UPSCALE's
                 // output: the whole point of a 4x is sending it somewhere.
-                onShare = if (!viewedIsPhoto) {
+                onShare = if (!viewedIsInput) {
                     { onShareImage(id) }
                 } else null,
                 // ⭐⭐ Keep it, WITH the graph. ⚠ Distinct from the gallery
                 // button beside it and the difference is the whole point: the
                 // gallery gets a picture, this gets a picture you can reopen as
                 // a flow.
-                onKeep = if (!viewedIsPhoto) {
+                onKeep = if (!viewedIsInput) {
                     { onKeepImage(id) }
                 } else null,
+                // ⭐ The STAR keeps it too — the difference is the flag Results
+                // filters on ([PictureActions]).
+                onStar = if (!viewedIsInput) {
+                    { onStarImage(id) }
+                } else null,
                 kept = isKept(id),
-                onDeleteOutput = if (!viewedIsPhoto && viewedNode != null) {
+                favourite = isFavourite(id),
+                keepDisabledReason = keepDisabledReason,
+                onDisabledKeep = onDisabledKeep,
+                onDeleteOutput = if (!viewedIsInput && viewedNode != null) {
                     {
                         onClearImage(viewedNode)
-                        onEdit { s -> s.copy(viewing = null) }
+                        onEdit { s -> s.copy(viewing = null, viewingNode = null) }
                     }
                 } else null,
                 // ⚠ Offered only when there IS a rolled seed and it is not
@@ -527,45 +709,17 @@ fun CanvasScreen(
     // ⭐⭐ A confirm before deleting nodes, because delete is the one canvas
     // action with no undo -- the wires that pointed at those nodes go with them.
     if (confirmingDelete && state.selection.isNotEmpty()) {
-        val n = state.selection.size
-        // ⚠ The SAME display names the canvas headers draw — 文本编码(clip)_8,
-        // counter and all — so what the dialog lists is what the user sees on
-        // the canvas underneath it. A raw id here would name nothing.
-        val nodeNames = types.keys.associateWith { nodeDisplayName(it) }
-        val byId = state.workflow.graph.byId
-        val listed = state.selection.sorted().joinToString(", ") { id ->
-            val node = byId[id]
-            node?.let { nodeNames[it.type]?.let { name -> name + nodeCounterSuffix(id, it.type) } } ?: id
-        }
-        AlertDialog(
-            onDismissRequest = { confirmingDelete = false },
-            title = { Text(if (n == 1) stringResource(R.string.canvas_delete_node_title) else stringResource(R.string.canvas_delete_n_nodes, n)) },
-            text = {
-                Text(
-                    // ⚠ Names them. "Delete 3 nodes?" over a canvas the dialog
-                    // is covering is a question the user cannot check.
-                    listed +
-                        "\n\n" + stringResource(R.string.canvas_delete_body),
-                    style = LogTextStyle,
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = { confirmingDelete = false; onEdit { s -> s.removeSelected() } },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) { Text(stringResource(R.string.delete)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmingDelete = false }) { Text(stringResource(R.string.cancel)) }
-            },
+        ConfirmDeleteNodes(
+            ids = state.selection.sorted(),
+            onConfirm = { onEdit { s -> s.removeSelected() } },
+            onDismiss = { confirmingDelete = false },
         )
     }
 
     if (saving) {
         SaveWorkflowDialog(
             initial = savedAs.orEmpty(),
+            suggested = suggestedName,
             onDismiss = { saving = false },
             onSave = { saving = false; onSave(it) },
             validate = validateWorkflowName,
@@ -574,7 +728,7 @@ fun CanvasScreen(
 
     if (state.showPalette) {
         NodePalette(
-            types = types,
+            types = paletteTypes,
             onPick = { type ->
                 // The middle of what is on screen, in world units.
                 val centre = state.viewport.forDevice(density).toWorld(
@@ -737,6 +891,8 @@ private fun TopBar(
 @Composable
 private fun SaveWorkflowDialog(
     initial: String,
+    /** ⚠ Used only when [initial] is blank — a re-save keeps its own name. */
+    suggested: String = "",
     onDismiss: () -> Unit,
     onSave: (String) -> Unit,
     /**
@@ -745,7 +901,25 @@ private fun SaveWorkflowDialog(
      */
     validate: (String) -> String? = { null },
 ) {
-    var name by remember { mutableStateOf(initial) }
+    // ⚠ The suggestion only when there is nothing to keep: re-saving an
+    // existing flow must offer ITS name, or Save quietly becomes Save As.
+    //
+    // ⭐⭐ A [TextFieldValue] with the caret at the END, and the keyboard up on
+    // open. The user's call, 2026-09-15: the box arrives pre-filled with
+    // `t2i_01`, and the next thing anyone does is type — so a dialog that
+    // needs a tap to focus and another to reach the end of the word is two taps
+    // of nothing.
+    //
+    // ⚠ The caret at the END rather than a full selection, unlike the node
+    // rename: a suggested name is usually kept and EXTENDED ("t2i_01" →
+    // "t2i_01 harbour"), where a node's existing id is usually replaced.
+    val focus = remember { FocusRequester() }
+    var field by remember {
+        val text = initial.ifBlank { suggested }
+        mutableStateOf(TextFieldValue(text, TextRange(text.length)))
+    }
+    val name = field.text
+    LaunchedEffect(Unit) { focus.requestFocus() }
     // ⚠⚠ **The reason this exists.** Save used to close the dialog and call the
     // view model, which set `workflowError` — a field rendered ONLY on the
     // Workflows screen. So an invalid name closed the dialog, saved nothing,
@@ -764,10 +938,11 @@ private fun SaveWorkflowDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
+                    value = field,
+                    onValueChange = { field = it },
                     label = { Text(stringResource(R.string.name)) },
                     singleLine = true,
+                    modifier = Modifier.focusRequester(focus),
                 )
                 // ⚠ The rule is stated BEFORE it is broken, not only after:
                 // "letters, digits, spaces, - and _ only" is not guessable, and
@@ -834,6 +1009,8 @@ private fun RunBar(
      */
     seed: SeedState? = null,
     onToggleSeed: () -> Unit = {},
+    /** ⭐ Backend relaunches this graph will cost. 0 on a single-checkpoint one. */
+    plannedLoads: Int = 0,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -846,28 +1023,10 @@ private fun RunBar(
         // transient toast. "That would make a loop" is a rule the user is
         // learning; a message that vanishes teaches nothing.
         // ⚠ Run failures first: they are the ones a user is waiting on.
-        runError?.let {
-            Text(
-                it,
-                style = LogTextStyle,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.errorContainer)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-        }
-        state.message?.let {
-            Text(
-                it,
-                style = LogTextStyle,
-                color = MaterialTheme.colorScheme.error,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-            )
-        }
+        // ⚠ Both through [ErrorNotice]: a refused wire and a failed Run are the
+        // same kind of news and were drawn two ways (`docs/UI.md` §8.5).
+        runError?.let { com.abrah.nightmare.ui.ErrorNotice(it) }
+        state.message?.let { com.abrah.nightmare.ui.ErrorNotice(it) }
         // ⭐⭐ What is happening RIGHT NOW, directly above the button that
         // started it. ⚠ Below the errors and above the controls: a failure is
         // the more urgent thing to read, and Run must stay at the bottom edge
@@ -903,6 +1062,29 @@ private fun RunBar(
             batch = batchProgress,
             onCancelBatch = onCancelBatch,
         )
+
+        // ⭐⭐⭐ **What the relaunches will cost, BEFORE the button is pressed.**
+        //
+        // `docs/ARCHITECTURE.md` §4: a graph using two checkpoints is scheduled
+        // rather than refused now, and each switch is a kill + relaunch of the
+        // backend costing 2.3–5 s — about a whole render. ⚠ The user's own rule
+        // for this feature: *no refusal and no silent reorder*, which only works
+        // if the cost is visible while they can still change the graph.
+        //
+        // ⚠ Hidden at zero, which is every single-checkpoint graph: a row that
+        // always says "0 model loads" is a row people stop reading.
+        if (plannedLoads > 0 && !busy) {
+            Text(
+                // ⚠ ~3.5 s, the middle of the measured 2.3–5 s. Said as "about"
+                // because it is a range and a precise-looking number would be a
+                // promise the backend does not make.
+                "$plannedLoads model load${if (plannedLoads == 1) "" else "s"} this run " +
+                    "— about ${plannedLoads * 7 / 2} s of loading",
+                style = LogTextStyle,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+            )
+        }
 
         // ⭐⭐ A CONTEXTUAL row while multi-select is on, replacing the normal
         // one rather than crowding beside it. Four controls already fill this
@@ -1184,8 +1366,32 @@ private fun SelectionBar(
 private fun FullscreenImage(
     image: ImageBitmap,
     onDismiss: () -> Unit,
+    /**
+     * ⭐⭐ The MP4 to PLAY here instead of drawing [image], when this node made
+     * a clip.
+     *
+     * ⚠⚠ [image] is still required and is still the poster: the file can be
+     * gone (it lives in `cacheDir`, which Android may clear) and a viewer that
+     * then showed nothing would be worse than one showing the first frame.
+     * [com.abrah.nightmare.ui.ClipPlayer] draws nothing for a missing file, so
+     * the still behind it is what remains.
+     *
+     * ⚠ Zoom is OFF while a clip is playing — see the gesture block below.
+     */
+    videoPath: String? = null,
     /** The seed that made it, when a sampler upstream has one. */
     seed: String? = null,
+    /** ⚠ Whether a sampler is upstream at all — the row shows either way. */
+    hasSampler: Boolean = false,
+    /**
+     * ⭐⭐ Nothing over the picture at all.
+     *
+     * ⚠ True for a viewer opened on an INPUT — a photo being framed, or a
+     * sampler's framed preview. Every control up there acts on a RESULT, and
+     * so does every readout: a seed, a "tap to close" hint and a bin all belong
+     * to something the graph produced.
+     */
+    chromeless: Boolean = false,
     /** Non-null only for a picture the user CHOSE, i.e. a `load_image` node. */
     onPick: (() -> Unit)? = null,
     onClear: (() -> Unit)? = null,
@@ -1195,6 +1401,12 @@ private fun FullscreenImage(
     onShare: (() -> Unit)? = null,
     /** ⭐ Keep it in Results, with the graph that made it. */
     onKeep: (() -> Unit)? = null,
+    /** ⭐ The STAR: keep it AND flag it Favourite. [PictureActions] has the table. */
+    onStar: (() -> Unit)? = null,
+    favourite: Boolean = false,
+    /** ⚠ Non-null when the flow's autosave already keeps every Run — the disk is dimmed. */
+    keepDisabledReason: String? = null,
+    onDisabledKeep: ((String) -> Unit)? = null,
     /** ⭐ Whether this picture is already in Results — the star's amber/grey state. */
     kept: Boolean = false,
     /**
@@ -1213,11 +1425,6 @@ private fun FullscreenImage(
      */
     onLockSeed: (() -> Unit)? = null,
 ) {
-    var confirmingDelete by remember { mutableStateOf(false) }
-    var saved by remember { mutableStateOf(false) }
-    // ⚠ Passed in now — see the star below. A local latch could not express
-    // un-starring, and could not know the picture was already kept.
-    
     // ⚠⚠ BACK CLOSES THE VIEWER. Without this the system back went to the
     // activity, which has no back stack -- so the one gesture every Android user
     // makes to leave a fullscreen picture QUIT THE APP, losing the canvas
@@ -1246,7 +1453,14 @@ private fun FullscreenImage(
             .fillMaxSize()
             .background(Color.Black.copy(alpha = 0.94f))
             .onSizeChanged { box = it }
-            .pointerInput(Unit) {
+            // ⚠⚠ **No pinch-zoom on a clip.** The player is a `SurfaceView`;
+            // scaling one through `graphicsLayer` moves the frame and leaves
+            // the video surface where it was, which draws the clip in the wrong
+            // place at the wrong size with nothing on screen explaining it. The
+            // picture keeps every gesture it had.
+            .then(
+                if (videoPath != null) Modifier
+                else Modifier.pointerInput(Unit) {
                 detectTransformGestures { centroid, pan, zoom, _ ->
                     val next = (scale * zoom).coerceIn(1f, 8f)
                     // ⚠⚠ The point under the fingers STAYS under the fingers.
@@ -1259,7 +1473,8 @@ private fun FullscreenImage(
                     scale = next
                     offset = clamp(moved, next)
                 }
-            }
+                }
+            )
             .pointerInput(Unit) {
                 detectTapGestures(
                     // ⚠ Double tap is the fast way in and the fast way out. A
@@ -1284,6 +1499,17 @@ private fun FullscreenImage(
             },
         contentAlignment = Alignment.Center,
     ) {
+        // ⭐⭐ A clip PLAYS here; a picture is drawn. ⚠ Same box, same padding
+        // and the same action row underneath, because it is the same viewer —
+        // Save, Share, Keep and the seed all mean what they meant, and a
+        // second fullscreen built for video would be a second place for them
+        // to drift.
+        if (videoPath != null) {
+            com.abrah.nightmare.ui.ClipPlayer(
+                path = videoPath,
+                modifier = Modifier.fillMaxSize().padding(12.dp),
+            )
+        } else {
         Image(
             bitmap = image,
             contentDescription = stringResource(R.string.cd_picture_fullscreen),
@@ -1300,73 +1526,76 @@ private fun FullscreenImage(
                     translationY = offset.y
                 },
         )
-        Row(
+        }
+        // ⚠⚠ The actions at the TOP, like the Results viewer's — which moved
+        // there because the gesture bar and the swipe live along the bottom
+        // edge, and that is just as true here. `docs/UI.md` §8.3.
+        // ⚠⚠ A COLUMN, not one Row. The seed pill used to sit at the END of the
+        // action row, and with five actions in front of it the pill ran off the
+        // right edge — its copy and lock buttons were drawn OFF-SCREEN. Seen on
+        // the phone 2026-09-15: the pill wrapped to two lines and neither button
+        // was there. ⇒ Actions on one line, the seed on its own. There is no
+        // shortage of vertical space over a full-screen picture and there is
+        // plainly a shortage of horizontal.
+        // ⚠⚠⚠ **ONE gate for the whole overlay.** Gating the BUTTONS on "this is
+        // an input" and leaving the seed row and the hint ungated is how a
+        // sampler's fullscreen still showed `seed random` and `tap to close`
+        // after the buttons were removed — reported 2026-09-15, and it was the
+        // same half-fix twice. A viewer over an INPUT shows the picture and
+        // nothing else.
+        if (!chromeless) Column(
             Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(16.dp),
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                // ⚠ `docs/UI.md` §7.2 — an inset is not padding.
+                .padding(top = 32.dp, end = 8.dp, bottom = 8.dp, start = 8.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+          ) {
             // ⚠ White rather than the theme's colours: this row sits on the
             // picture, not on a surface, and a primary-tinted icon over an
             // arbitrary photo is a coin toss for contrast.
             if (onPick != null && onClear != null) {
                 ImageActions(onPick = onPick, onClear = onClear, tint = Color.White)
             }
-            // ⭐ Keep it. ⚠ Confirms by CHANGING, not with a dialog: writing a
-            // file is reversible from the gallery, so a modal would be in the
-            // way of the one action people repeat.
-            onSave?.let { save ->
-                IconButton(onClick = { save(); saved = true }) {
-                    Icon(
-                        if (saved) Icons.Filled.Check else com.abrah.nightmare.ui.SaveIcon,
-                        contentDescription = if (saved) stringResource(R.string.cd_saved_gallery) else stringResource(R.string.cd_save_gallery),
-                        tint = Color.White,
-                    )
-                }
-            }
-            // ⭐ Share, next to Save — the two "send this picture somewhere"
-            // actions belong together, and the order is the same everywhere:
-            // destructive, save, share, keep, then the primary.
-            onShare?.let { share ->
-                IconButton(onClick = share) {
-                    Icon(
-                        com.abrah.nightmare.ui.ShareIcon,
-                        contentDescription = stringResource(R.string.cd_share_picture),
-                        tint = Color.White,
-                    )
-                }
-            }
-            onKeep?.let { keep ->
-                IconButton(onClick = keep) {
-                    Icon(
-                        Icons.Filled.Star,
-                        contentDescription =
-                            if (kept) stringResource(R.string.cd_kept_in_results) else stringResource(R.string.cd_keep_with_flow),
-                        // ⚠⚠ The REAL kept state, passed in, not a local latch.
-                        // This was `var kept` flipped to true on click: it never
-                        // went back, so un-starring left a filled star, and
-                        // reopening the viewer on an already-kept picture showed
-                        // an empty one. Reported from the phone 2026-09-11.
-                        tint = if (kept) com.abrah.nightmare.ui.StarKept
-                        else com.abrah.nightmare.ui.StarIdle,
-                    )
-                }
-            }
-            onDeleteOutput?.let {
-                IconButton(onClick = { confirmingDelete = true }) {
-                    Icon(
-                        Icons.Filled.Delete,
-                        contentDescription = stringResource(R.string.cd_clear_output),
-                        tint = Color.White,
-                    )
-                }
-            }
+            // ⭐ The SAME row the inspector draws, in the same order.
+            PictureActions(
+                tint = Color.White,
+                deleteTint = Color.White,
+                isClip = videoPath != null,
+                onDelete = onDeleteOutput,
+                // ⚠ The disk KEEPS and the arrow DOWNLOADS since 2026-09-15;
+                // `onSave` was always the gallery write, so it moved rather
+                // than changed. [PictureActions] has the table.
+                onKeep = onKeep,
+                onDownload = onSave,
+                onShare = onShare,
+                onStar = onStar,
+                kept = kept,
+                favourite = favourite,
+                keepDisabledReason = keepDisabledReason,
+                onDisabledKeep = onDisabledKeep,
+                starKeptTint = com.abrah.nightmare.ui.StarKept,
+                starIdleTint = com.abrah.nightmare.ui.StarIdle,
+            )
+          }
             // ⚠ The lock goes INSIDE the seed's own container, not in the
-            // loose row above: a lock icon beside save and delete has no
-            // visible subject.
-            seed?.let { SeedRow(it, tint = Color.White, onLock = onLockSeed) }
+            // loose row: a lock icon beside save and delete has no visible subject.
+            // ⚠⚠ Shown whenever a SAMPLER is upstream, not only when a seed is
+            // already known. [seedFor] returns null while the sampler still says
+            // `0` ("roll a new one each Run") and nothing has rolled yet — so
+            // before the first Run the row vanished entirely, and with it the
+            // copy button. Reported 2026-09-15 as "seed doesn't have a copy btn
+            // in fullscreen": the button was never missing, the whole row was.
+            if (seed != null) {
+                SeedRow(seed, tint = Color.White, onLock = onLockSeed)
+            } else if (hasSampler) {
+                SeedRow(null, tint = Color.White, onLock = null)
+            }
             if (onPick == null && seed == null && onSave == null) {
                 Text(
                     if (scale > 1.01f) stringResource(R.string.r2_canvas_double_tap_fit)
@@ -1376,33 +1605,161 @@ private fun FullscreenImage(
                 )
             }
         }
+    }
+}
 
-        // ⚠⚠ A confirm, because clearing an output cannot be undone and the
-        // picture is often the only copy — the render is not written anywhere
-        // until someone saves it.
-        if (confirmingDelete && onDeleteOutput != null) {
-            AlertDialog(
-                onDismissRequest = { confirmingDelete = false },
-                title = { Text(stringResource(R.string.canvas_clear_picture_title)) },
-                text = {
+/**
+ * ⭐⭐ THE confirm for deleting nodes — from the run bar's selection and from the
+ * inspector alike.
+ *
+ * ⚠⚠ They were two dialogs, titled `Delete this node?` and `Delete "id"?`, while
+ * the inspector's comment claimed they matched. The design review, 2026-09-15.
+ * ⚠ It NAMES them: the dialog covers the canvas, so "Delete 3 nodes?" is a
+ * question the user cannot check.
+ */
+@Composable
+internal fun ConfirmDeleteNodes(ids: List<String>, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    com.abrah.nightmare.ui.ConfirmDelete(
+        title = if (ids.size == 1) "Delete \"${ids[0]}\"?" else "Delete ${ids.size} nodes?",
+        body = (if (ids.size == 1) "" else ids.joinToString(", ") + "\n\n") +
+            "Every wire into or out of " + (if (ids.size == 1) "it" else "them") +
+            " goes too, and this cannot be undone.",
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+    )
+}
+
+/**
+ * ⭐⭐⭐ **Point one sampler at another checkpoint, and say what else moves.**
+ *
+ * ⚠⚠ **Two radio groups, not two checkboxes**, and the difference is the
+ * DEFAULT. A checkbox's unticked state is "no", so the safe default was "take
+ * nothing" — which made the recommended answer the one that needed two extra
+ * taps, and left the dialog saying nothing about which answer is usually right.
+ * A radio pair states both answers and can recommend one. The user's call,
+ * 2026-09-15: *"the options can be radio: Use model prompts (recommended)
+ * (default) and use same prompt. and one more radio set for other params"*.
+ *
+ * ⚠⚠⚠ **Recommended means DEFAULT here, or the word is decoration.** Both
+ * groups therefore default to the checkpoint's own values, which is also what
+ * the top-bar picker already does (`modelRecipeRetarget`, `modelPromptRetarget`)
+ * — asking for a checkpoint is asking for its published recipe. ⚠ This reverses
+ * the "off by default" note of earlier the same day, and it is safe to reverse
+ * precisely because the dialog now SHOWS the text it would write: the argument
+ * for defaulting to "keep mine" was that a silent overwrite of a typed sentence
+ * is the worst trade in the app, and nothing here is silent.
+ *
+ * ⚠ A family change is stated as a fact rather than a warning — every wire
+ * survives it, because the two sampler types declare the same ports
+ * (`docs/ARCHITECTURE.md` §5.7). What DOES change is the render size, and that
+ * is the half worth saying.
+ */
+@Composable
+private fun ModelSwapDialog(
+    swap: com.abrah.nightmare.HarnessViewModel.ModelSwap,
+    onConfirm: (com.abrah.nightmare.HarnessViewModel.ModelSwap, Boolean, Boolean) -> Unit,
+    onCancel: () -> Unit,
+) {
+    var takePrompt by remember(swap) { mutableStateOf(true) }
+    var takeRecipe by remember(swap) { mutableStateOf(true) }
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Switch to ${swap.spec.label}") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                swap.fromFamily?.let { from ->
                     Text(
-                        if (saved) stringResource(R.string.r2_canvas_clear_saved)
-                        else stringResource(R.string.r2_canvas_clear_unsaved),
+                        "${swap.spec.label} is ${swap.spec.family.label}, not ${from.label}. " +
+                            "The sampler changes family — every wire is kept — and it " +
+                            "renders at ${swap.spec.native}.",
                         style = LogTextStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                },
-                confirmButton = {
-                    Button(
-                        onClick = { confirmingDelete = false; onDeleteOutput() },
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.error,
-                        ),
-                    ) { Text(stringResource(R.string.canvas_clear)) }
-                },
-                dismissButton = {
-                    TextButton(onClick = { confirmingDelete = false }) { Text(stringResource(R.string.cancel)) }
-                },
-            )
+                }
+                swap.promptNode?.let { id ->
+                    SwapChoice(
+                        heading = "Prompt on “$id”",
+                        takeTheirs = takePrompt,
+                        onChange = { takePrompt = it },
+                        theirs = "Use ${swap.spec.label}’s prompts (recommended)",
+                        // ⚠ Both fields, because the negative is half of a
+                        // checkpoint's style and is the one nobody re-reads.
+                        detail = swap.prompt + "\n— " + swap.negative.ifBlank { "no negative" },
+                        mine = "Keep the prompt I have",
+                    )
+                }
+                swap.recipe?.let { r ->
+                    SwapChoice(
+                        heading = "Sampling settings",
+                        takeTheirs = takeRecipe,
+                        onChange = { takeRecipe = it },
+                        theirs = "Use ${swap.spec.label}’s settings (recommended)",
+                        detail = r,
+                        mine = "Keep my steps, CFG and scheduler",
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(swap, takeRecipe, takePrompt) }) { Text("Switch") }
+        },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
+/**
+ * One either/or: take the checkpoint's value, or keep the one on the graph.
+ *
+ * ⚠ The whole row is the target, not just the button — a 20dp radio is below
+ * the 48dp minimum and the label beside it is what a finger aims at.
+ */
+@Composable
+private fun SwapChoice(
+    heading: String,
+    takeTheirs: Boolean,
+    onChange: (Boolean) -> Unit,
+    theirs: String,
+    detail: String,
+    mine: String,
+) {
+    Column {
+        Text(
+            heading,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        SwapRadio(selected = takeTheirs, onClick = { onChange(true) }, label = theirs, detail = detail)
+        SwapRadio(selected = !takeTheirs, onClick = { onChange(false) }, label = mine, detail = null)
+    }
+}
+
+@Composable
+private fun SwapRadio(
+    selected: Boolean,
+    onClick: () -> Unit,
+    label: String,
+    detail: String?,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 2.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Column(Modifier.padding(top = 12.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            detail?.let {
+                Text(
+                    it,
+                    style = LogTextStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

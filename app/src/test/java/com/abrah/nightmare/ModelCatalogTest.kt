@@ -196,7 +196,8 @@ class ModelCatalogTest {
         for (spec in ModelCatalog.all) {
             assertTrue(
                 "${spec.id} --type ${spec.backendType}",
-                spec.backendType in listOf("sd15npu", "sdxl"),
+                // ⚠ `anima` since 2026-09-16 — `main.cpp` has built it all along.
+                spec.backendType in listOf("sd15npu", "sdxl", "anima"),
             )
             assertTrue("${spec.id} has no required files", spec.requiredFiles.isNotEmpty())
             assertTrue("${spec.id} has no resolution", spec.resolutions.isNotEmpty())
@@ -301,5 +302,76 @@ class ModelCatalogTest {
             resolutions = listOf(Res(1024, 1024), Res(512, 512)),
         )
         assertEquals(Res(1024, 1024), spec.native)
+    }
+
+    // ---- the general-purpose prompts ------------------------------------
+
+    /**
+     * ⭐⭐⭐ **No checkpoint opens on a blank prompt box.** That is the whole
+     * point of [Family.prompt], and the case it was added for is the one with
+     * no catalogue entry at all — an IMPORTED model, whose own text is empty
+     * by design ([CustomModels]).
+     */
+    @Test
+    fun everyCheckpointHasSomethingToStartFrom() {
+        for (spec in ModelCatalog.all + ModelCatalog.all.first().copy(prompt = "", negative = "")) {
+            assertTrue("${spec.id} opens on nothing", spec.starterPrompt.isNotBlank())
+            assertTrue("${spec.id} has no negative", spec.starterNegative.isNotBlank())
+        }
+    }
+
+    /**
+     * ⚠⚠ A checkpoint's OWN text still wins. The family default is a fallback,
+     * not a replacement — the upstream-verbatim rule of 2026-09-12 stands.
+     */
+    @Test
+    fun aCheckpointsOwnPromptBeatsTheFamilyDefault() {
+        val anime = ModelCatalog.byId("anythingv5")!!
+        assertEquals(anime.prompt, anime.starterPrompt)
+        assertTrue("it must not be the generic one", anime.starterPrompt != Family.SD15.prompt)
+    }
+
+    /**
+     * ⚠⚠⚠ **No SUBJECT in a general-purpose prompt**, which is the property
+     * that makes it general. The SDXL default used to append "a majestic cat
+     * sitting on a windowsill at sunset," to eight checkpoints whose authors
+     * said nothing — a cat the user had to delete before typing.
+     *
+     * ⚠ Tested as "no `a <noun>` phrase", which is crude and is the shape every
+     * subject in this file happens to have; it is a tripwire for someone
+     * pasting a demo prompt in here, not a grammar.
+     */
+    @Test
+    fun theFamilyDefaultsNameNoSubject() {
+        for (f in Family.entries) {
+            for (text in listOf(f.prompt, f.negative)) {
+                assertTrue(
+                    "${f.name} names a subject: $text",
+                    Regex("\ba (cat|girl|man|woman|dog|photo of)\b").find(text) == null,
+                )
+            }
+        }
+    }
+
+    /**
+     * ⭐ Anima is catalogued with its AUTHOR's recipe — read off all nine
+     * archives' `config.json` on 2026-09-16 — and only the samplers its backend
+     * tells apart. A turbo checkpoint on 20 steps / cfg 7.5 / `dpm` burns.
+     */
+    @Test
+    fun animaCarriesItsPublishedRecipe() {
+        assertEquals(9, ModelCatalog.animaModels.size)
+        for (spec in ModelCatalog.animaModels) {
+            assertEquals(Family.ANIMA, spec.family)
+            assertEquals("anima", spec.backendType)
+            assertEquals(Triple("euler", 10, 1.0), Triple(spec.scheduler, spec.steps, spec.cfg))
+            assertEquals(75, spec.minHtpArch)
+            assertTrue(spec.lowram)
+            assertTrue("unet_part1.bin" in spec.requiredFiles)
+            assertTrue(spec.url(spec.best!!).startsWith("https://huggingface.co/xororz/anima-qnn/"))
+        }
+        assertEquals(listOf("euler", "euler_a"), ModelCatalog.schedulersFor(Family.ANIMA))
+        assertEquals("anima.sample", SdSampler.typeFor(Family.ANIMA, inpaint = false))
+        assertEquals("anima.inpaint", SdSampler.typeFor(Family.ANIMA, inpaint = true))
     }
 }

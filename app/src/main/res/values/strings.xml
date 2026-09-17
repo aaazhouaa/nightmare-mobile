@@ -47,7 +47,7 @@
     <string name="batch_runs">%1$d runs</string>
     <string name="batch_one_run">1 run</string>
     <string name="batch_kept">every run is kept in Results, with the flow that made it</string>
-    <string name="batch_nothing_to_sweep">nothing on this canvas can be swept yet — add a Sampler, or a node with a number you can vary</string>
+    <string name="batch_nothing_to_sweep">nothing on this canvas can be swept yet — add a sample node, or a node with a number you can vary</string>
     <string name="batch_run_n">Run %1$d</string>
     <string name="batch_progress">batch %1$d of %2$d</string>
     <string name="batch_stop">Stop after this one</string>
@@ -62,7 +62,7 @@
     <string name="theme_light">Light</string>
     <string name="theme_canvas_note">the canvas is drawn dark either way — its palette is its own</string>
     <string name="community_title">Bring your own nodes</string>
-    <string name="community_intro">A node is two files: a manifest that declares its ports and knobs, and a script that runs it. Zip them and import from Flows, or push the folder to this app\'s plugin directory. No toolchain, no compile step, no new version of the app.</string>
+    <string name="community_intro">A node is two files: a manifest that declares its ports and knobs, and a script that runs it. Zip them and import the pack above, or push the folder to this app\'s plugin directory. No toolchain, no compile step, no new version of the app.</string>
 
     <string name="community_files_title">The two files</string>
     <string name="community_files_body">node.json declares the pack id, the node type, its inputs and outputs, its widgets, and which host ops it needs permission for.\n\nindex.js calls __nm.register(&lt;pack&gt;:&lt;Type&gt;, { run: fn }). Your run(ctx, inputs, widgets) returns whatever the last host op returned.</string>
@@ -80,7 +80,7 @@
     <string name="community_cannot_body">There is no host op that runs a model, so a node cannot segment, detect or estimate anything. That is the next tier and it is not built.\n\nScripts run in a QuickJS sandbox and permissions are denied by default, so a pack cannot reach the network or your files. Nothing yet bounds how long one may run.</string>
 
     <string name="community_reference">Reference</string>
-    <string name="community_repo">github.com/AbrahamPaulJ/nightmare-mobile\n\nThe examples/ folder has four working packs, from a one op wrapper to a two node toolkit. The README covers the same ground as this page with the full manifest.\n\nThe repository is private for now, so the link only works if you have been given access.</string>
+    <string name="community_repo">github.com/AbrahamPaulJ/nightmare-mobile\n\nThe examples/ folder has four working packs, from a one op wrapper to a two node toolkit. The README covers the same ground as this page with the full manifest.</string>
     <string name="community_experimental">Experimental. The plugin format can still change between versions, and there is no validation gate on an imported pack yet, so import packs the way you would run any other code you did not write.</string>
 
     <!-- Flows. -->
@@ -91,9 +91,11 @@
     <string name="pack_import_note">A .zip of JavaScript nodes. They appear in the palette beside the built-ins.</string>
     <string name="flows_import_warning">⚠ A pack runs its own code. Import only ones you trust.</string>
     <string name="flows_recommended">Recommended</string>
+    <string name="flows_saved">Saved</string>
+    <string name="r2_flows_empty">Nothing saved yet — build a flow on the canvas, then press Save there.</string>
     <string name="save">Save</string>
     <string name="cancel">Cancel</string>
-    <string name="save_workflow">Save this workflow</string>
+    <string name="save_workflow">Save this flow</string>
     <string name="save_workflow_named">Save \"%1$s\"</string>
     <string name="name">Name</string>
     <string name="save_replaces">this replaces the saved copy</string>
@@ -101,14 +103,13 @@
     <!-- Results. -->
     <string name="open_flow">Open flow</string>
     <string name="close">Close</string>
-    <string name="cd_forget_result">Forget this one</string>
+    <string name="cd_delete_result">Delete this picture</string>
     <string name="cd_open_fullscreen">Tap to see it full screen</string>
 
     <!-- Models and upscalers. -->
     <string name="download">Download</string>
     <string name="download_mb">Download %1$d MB</string>
     <string name="delete">Delete</string>
-    <string name="remove">Remove</string>
     <string name="use">Use</string>
     <string name="in_use">In use</string>
     <string name="rename_node">Node name</string>
@@ -125,10 +126,19 @@
     <string name="shape_is_free">This model renders one size and crops to shape. No reload.</string>
     <string name="unsupported">Unsupported</string>
     <string name="installed_mb">installed · %1$d MB</string>
-    <string name="not_installed_mb">not installed  %1$d MB download</string>
+    <string name="in_use_mb">in use · %1$d MB</string>
+    <string name="incomplete_missing">incomplete · missing %1$s</string>
+    <string name="not_installed_mb">not installed · %1$d MB download</string>
     <string name="cannot_run_it">this device cannot run it</string>
     <string name="upscalers">Upscalers</string>
     <string name="upscalers_note">8-24 MB each. Add an Upscale node to a flow to use one.</string>
+    <string name="video">Video</string>
+    <string name="video_models">Neodragon (video)</string>
+    <string name="video_models_note">One download of %1$s GB, in 21 parts. It resumes, so a dropped connection costs only the file it was on.</string>
+    <string name="video_about">Text and image to video on the NPU. No backend, no checkpoint.</string>
+    <string name="mb_of_total">%1$d of %2$d MB</string>
+    <string name="video_delete_title">Delete the video models?</string>
+    <string name="video_delete_body">Frees %1$d MB. Getting them back is a %2$d MB download. Every video flow will refuse to run until you install them again.</string>
 
     <!-- Mask editor. -->
     <string name="cd_paint">Paint</string>
@@ -136,7 +146,7 @@
     <string name="cd_undo_stroke">Undo the last stroke</string>
     <string name="cd_invert_mask">Invert the mask</string>
     <string name="cd_clear_mask">Clear the mask</string>
-    <string name="mask_brush_px">brush  %1$d px</string>
+    <string name="mask_brush_px">Brush  %1$d px</string>
     <string name="mask_paint_hint">paint over what you want REPAINTED · pinch to zoom</string>
     <string name="mask_covered">%1$d%% covered · the red area is what gets repainted</string>
 
@@ -192,6 +202,9 @@
     <string name="palette_cat_image">Image</string>
     <string name="palette_cat_conditioning">Conditioning</string>
     <string name="palette_cat_misc">Plugins</string>
+    <string name="palette_tab_common">Common</string>
+    <string name="palette_tab_generate">Generate</string>
+    <string name="palette_tab_inpaint">Inpaint</string>
     <string name="palette_ports">%1$d in · %2$d out</string>
 
     <!-- Node type display names (keyed by the short node label). -->
@@ -285,6 +298,8 @@
 
     <!-- Results screen. -->
     <string name="cd_save_selected">save the selected pictures to the gallery</string>
+    <string name="cd_star_selected">star the selected</string>
+    <string name="cd_unstar_selected">unstar the selected</string>
     <string name="cd_forget_selected">forget the selected pictures</string>
     <string name="results_forget_batch_title">Forget this batch?</string>
     <string name="results_forget_n">Forget %1$s</string>
@@ -317,6 +332,8 @@
     <!-- HarnessViewModel toasts (non-Composable: resolve via application). -->
     <string name="vm_picture_gone">That picture is no longer in memory — Run again</string>
     <string name="vm_saved_gallery">Saved to the gallery</string>
+    <string name="vm_clip_saved_gallery">Clip saved to the gallery</string>
+    <string name="vm_saved_what">Saved %1$s to the gallery</string>
     <string name="vm_save_failed">Could not save: %1$s</string>
     <string name="vm_picture_missing">That picture is missing</string>
     <string name="vm_share_failed">Could not share: %1$s</string>
@@ -342,6 +359,7 @@
 
     <!-- ===== Round 2: models screen ===== -->
     <string name="r2_models_hint_sd15">About 1 GB each. Use Wi-Fi.</string>
+    <string name="r2_models_hint_anima">About 4.3 GB each, and ~9 GB free while it unpacks. Slow: about 80 s a picture. Close other apps while it renders. Use Wi-Fi.</string>
     <string name="r2_models_hint_sdxl">About 3.5 GB each, and ~7.5 GB free while it unpacks. Use Wi-Fi.</string>
     <string name="r2_models_delete_frees">Frees %1$d MB. </string>
     <string name="r2_models_upscaler_restore">Getting it back is a %1$d MB download. Any flow with an Upscale node set to it will fail until you install it again.</string>
@@ -352,6 +370,7 @@
     <string name="r2_models_import_desc">A zip of QNN model files, converted on a PC. SD 1.5 or SDXL — it works out which.</string>
     <string name="r2_models_name_reserved">That is a built-in model\'s name; pick another.</string>
     <string name="r2_models_name_invalid">No slashes, colons or leading dots.</string>
+    <string name="r2_models_name_note_empty">Leave it empty to use the zip\'s file name. It becomes the folder name and the id saved into every workflow.</string>
     <string name="r2_models_name_note">This becomes the folder name and the id saved into every workflow that uses it.</string>
     <string name="r2_models_status_in_use">in use  %1$d MB</string>
     <string name="r2_models_incomplete">incomplete -- missing %1$s</string>
@@ -382,6 +401,10 @@
     <string name="r2_main_unsaved_flow">unsaved flow</string>
     <string name="r2_main_holding">holding %1$s</string>
     <string name="r2_main_idle">%1$s (idle)</string>
+    <string name="r2_main_idle_suffix"> (idle)</string>
+    <string name="r2_main_loading"> (loading…)</string>
+    <string name="r2_main_graphs">graphs</string>
+    <string name="r2_main_no_checkpoint">no checkpoint needed</string>
     <string name="r2_main_sampling">sampling  %1$d / %2$d</string>
     <string name="r2_main_open_flow_body">The flow on the canvas has unsaved edits. Opening this one replaces it, and the edits are gone.</string>
     <string name="r2_main_stub_resize">Resize (not wired)</string>
@@ -403,6 +426,7 @@
     <!-- ===== Round 2: node inspector ===== -->
     <string name="r2_ins_small_picture">this picture is %1$s, smaller than the %2$s being asked for — the bars are padding, not a crop. Enlarging it instead would only make it soft.</string>
     <string name="r2_ins_crop_hint_out">drag to move · pinch to zoom · out %1$s</string>
+    <string name="r2_ins_crop_locked">locked · unlock to move or zoom · out %1$s</string>
     <string name="r2_ins_crop_hint_own">drag to move · pinch to zoom · the frame is the output, at its own size</string>
     <string name="r2_ins_mask_no_source">no picture to paint on yet — wire an image into this node, and the picture appears here as soon as it can be worked out.</string>
     <string name="r2_ins_crop_no_pick">No picture yet — choose one on the Load Image node this is wired to.</string>
@@ -455,6 +479,7 @@
     <string name="rename">Rename</string>
     <string name="results_n_pictures">%1$d pictures</string>
     <string name="results_one_picture">1 picture</string>
+    <string name="results_one_clip">1 clip</string>
     <string name="results_no_prompt">no prompt</string>
     <string name="batch_nth_run">run %1$d</string>
     <string name="models_imported_tag">imported</string>
@@ -466,4 +491,10 @@
         <item quantity="one">%1$d picture saved to Results</item>
         <item quantity="other">%1$d pictures saved to Results</item>
     </plurals>
+    <string name="cd_tap_object">Select an object</string>
+    <string name="mask_tap_working">Finding the object…</string>
+    <string name="mask_tap_hint">Tap an object to select it. Tap it again for more of it, and once more to let it go.</string>
+    <string name="tools">Tools</string>
+    <string name="tools_note">Small helpers that run on the phone\'s CPU. Wire one into a flow to use it.</string>
+    <string name="segmenter_about">Tap an object in an Inpaint mask to select it. Wire a Segment model node into Inpaint.</string>
 </resources>

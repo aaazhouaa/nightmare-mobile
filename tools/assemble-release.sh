@@ -74,11 +74,22 @@ echo "    jvm=$JVM"
 for CAND in "$ROOT/app/build/outputs/apk/release/app-release.apk" \
             "$ROOT/app/build/outputs/apk/release/app-release-unsigned.apk"; do
     if [ -f "$CAND" ]; then
-        # No keystore on this machine means the artifact is unsigned; keep the
-        # name honest instead of slapping -signed on it.
+        # ⚠ `app-release-unsigned.apk` should no longer appear: buildTypes.release
+        # falls back to the DEBUG key when the formal keystore is absent, so every
+        # build here is signed and installable. The branch stays because a
+        # unsigned artifact means AGP ignored that fallback, and naming it
+        # honestly beats printing `-signed` over a package nobody can install.
         case "$CAND" in
-            *unsigned*) cp -f "$CAND" "$UNSIGNED_FALLBACK"; echo "==> APK $UNSIGNED_FALLBACK (unsigned: no keystore at ../.secrets/nightmare-keystore/)"; ls -lah "$UNSIGNED_FALLBACK" ;;
-            *)          cp -f "$CAND" "$OUT"; echo "==> APK $OUT"; ls -lah "$OUT" ;;
+            *unsigned*)
+                cp -f "$CAND" "$UNSIGNED_FALLBACK"
+                echo "==> APK $UNSIGNED_FALLBACK" >&2
+                echo "==> WARN: UNSIGNED — buildTypes.release did not fall back to the debug key." >&2
+                echo "          This APK cannot be installed. Check the signingConfig in app/build.gradle.kts." >&2
+                ls -lah "$UNSIGNED_FALLBACK" ;;
+            *)
+                cp -f "$CAND" "$OUT"
+                echo "==> APK $OUT"
+                ls -lah "$OUT" ;;
         esac
         break
     fi

@@ -187,6 +187,34 @@ class NodeCtx(
     val images: ImageStore,
     val android: android.content.Context? = null,
     val onProgress: (Ops.Progress) -> Unit,
+    /**
+     * ⭐⭐ A line of narration, WHILE the node runs.
+     *
+     * ⚠⚠ [onProgress] cannot carry this and should not be made to: a fraction
+     * says how far along something is, and what a person waiting 25 s wants is
+     * *what is happening*. The video node spends its first seconds mapping 3 GB
+     * of context binaries — a phase with no steps to count, where a percentage
+     * is honestly 0 and a name is honestly "loading the text encoders".
+     *
+     * ⚠ Defaulted to a no-op, so every node with nothing to narrate and every
+     * existing construction of this class is unchanged.
+     */
+    val say: (String) -> Unit = {},
+    /**
+     * ⭐⭐ Which of THIS node's output ports something downstream actually
+     * reads.
+     *
+     * ⚠⚠ It exists for one real cost: `nd.clip_encode` produces two
+     * conditionings, and the one the first frame needs requires `clipl`
+     * (234 MB) to be mapped and executed. In an image-to-video graph nothing
+     * consumes it, and paying for it anyway would undo the saving that makes
+     * i2v the cheaper path (`docs/NEODRAGON.md` §8).
+     *
+     * ⚠ Empty means "nothing downstream", which is the honest answer for a
+     * terminal node — a node must still produce its primary output, because
+     * that is what the canvas draws.
+     */
+    val wanted: Set<String> = emptySet(),
 )
 
 /**
@@ -213,6 +241,92 @@ interface NodeType {
 
     /** Groups nodes in the palette, and is the only thing that earns a hue (docs/UI.md §1). */
     val category: String
+
+    /**
+     * ⭐⭐ What the PALETTE calls this, when the stripped type name is not enough.
+     *
+     * ⚠⚠ The sampler fork of 2026-09-15 put FOUR entries in `generate` whose
+     * stripped names are `sample`, `sample`, `inpaint`, `inpaint` — a list with
+     * two identical rows and nothing to choose between them. Reported the same
+     * day: *"why are there two sample in generate without any other desc?"*
+     *
+     * ⚠ Defaults to the stripped type name, so every other node and every plugin
+     * is unchanged.
+     */
+    val paletteName: String get() = name.substringAfterLast('.').substringAfterLast(':')
+
+    /** ⭐ One line under the palette row saying what it is FOR. Empty for none. */
+    val about: String get() = ""
+
+    /**
+     * ⭐⭐ Which palette CARD this type belongs on, and the chip that picks it.
+     *
+     * ⚠ Types sharing a [paletteGroup] draw as ONE card whose chips are their
+     * [paletteVariant]s — three families of the same job are one thing a person
+     * wants, not three rows (the user's call, 2026-09-16). Defaults to the type
+     * name with no variant, so every other node and every plugin is its own card.
+     */
+    val paletteGroup: String get() = name
+    val paletteVariant: String? get() = null
+
+    /**
+     * ⭐⭐ What a node of this type is called ON THE CANVAS, given how it is wired —
+     * `SDXL Inpaint`, `SD 1.5 Image to image`. Null for the stripped type name.
+     *
+     * ⚠⚠ The user's call, 2026-09-16: *"remove the word sample all around"* and
+     * name a node by its family and what it is doing. The TYPE id (`sdxl.sample`)
+     * is what a saved flow and a manifest depend on and does not change.
+     */
+    fun titleFor(node: Node): String? = null
+
+    /** ⭐ The id a NEW node of this type is given, before [Graph.freeId] numbers it. Null for the stripped name. */
+    val defaultId: String? get() = null
+
+    /**
+     * ⭐⭐ How wide a NEW node of this type is, in world units, or null for the
+     * ordinary 190.
+     *
+     * ⚠ A node the user has resized keeps their size — this is only the birth
+     * width. ⚠⚠ It is here rather than in the layout because the reason is the
+     * TYPE's: a prompt holds prose, an output holds the picture you came to
+     * look at, and both were columns 26 characters wide. The user's call,
+     * 2026-09-15.
+     */
+    val defaultWidth: Float? get() = null
+
+    /**
+     * ⭐⭐⭐ False for a node that RENDERS: its result belongs to `core.output`.
+     *
+     * ⚠⚠ The user's call, 2026-09-15 — *"sample shouldn't show output"*. A
+     * render appearing on the node that made it reads as the end of the flow,
+     * so a graph could finish with its picture nowhere in particular and still
+     * look complete. ⇒ **One place shows a result, and a graph has to say where
+     * it goes.** [rendersNowhere] refuses a run that does not.
+     *
+     * ⚠ It is NOT `appSide == false`: `image.crop` shows its picture and always
+     * should — that picture is an INPUT being framed, not a result. The
+     * distinction is "did this node make it", not "was it expensive".
+     *
+     * ⚠⚠ This reverses the reasoning of 2026-09-13 that deleted the output node
+     * because "every terminal node draws its own result". That rule was ours and
+     * the user changed it (`CLAUDE.md`, *The rules here are ours to change*).
+     */
+    val showsResult: Boolean get() = true
+
+    /**
+     * ⭐ True for a type that still RUNS but is no longer offered in the palette.
+     *
+     * ⚠⚠ The rework of docs/ARCHITECTURE.md §5.7 replaces ten types with one
+     * fused sampler, and the two sets have to coexist for exactly one build —
+     * long enough to render the old inpaint graph and the new one at the same
+     * seed and compare them. Unregistering the old types instead would make that
+     * comparison impossible, and shipping them in the palette would offer a user
+     * two ways to do the same thing.
+     *
+     * ⚠ They are DELETED in the next push, not hidden forever. A permanently
+     * hidden node type is a node type nobody maintains.
+     */
+    val hidden: Boolean get() = false
 
     /**
      * The knobs the inspector shows.
@@ -293,6 +407,23 @@ interface NodeType {
     fun requiredInputSize(node: Node, port: String): Pair<Int, Int>? = null
 
     /**
+     * ⭐⭐ **The exact size this node's FRAMING view produces**, or null when it
+     * does not frame or its size is already a param.
+     *
+     * ⚠⚠ It exists for the one node whose framing size is in neither place:
+     * the video sampler renders 512x320 because that is what its compiled QNN
+     * context was built for, and no param says so. `framingOutSize` guessed from
+     * `out_w`/`out_h` then `width`/`height`, found neither, and the cropper came
+     * out the shape of the user's photo — which the encoder then centre-cropped
+     * without saying. Reported 2026-09-15.
+     *
+     * ⚠ Distinct from [requiredInputSize], which is a demand made of whatever
+     * is WIRED IN and is null for every node that fits what it is given. This is
+     * what the node emits after fitting it.
+     */
+    fun framesTo(node: Node): Pair<Int, Int>? = null
+
+    /**
      * ⭐⭐ The exact pixel size this node PROMISES, or null when it cannot.
      *
      * ⚠⚠ Null is not "unknown to us", it is **"this node refuses to promise"**,
@@ -336,16 +467,39 @@ interface NodeType {
     fun effectiveParams(node: Node): Map<String, String> = applyDefaults(widgets, node)
 
     suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value
+
+    /**
+     * ⭐⭐ Every output port this node produces — the general form of [run].
+     *
+     * ⚠⚠ Defaulted to "[run]'s value, under the first port", so every
+     * single-output node in the app is unchanged and none of them had to be
+     * touched. A type that genuinely makes two things overrides THIS and lets
+     * [run] delegate to it.
+     *
+     * ⚠ The executor caches per PORT, so a two-output node whose consumers
+     * were added one at a time does not recompute the half it already had.
+     */
+    suspend fun runPorts(
+        ctx: NodeCtx,
+        node: Node,
+        inputs: Map<String, Value>,
+        // ⚠⚠ `firstOrNull`, not `first`: a SINK declares no outputs at all
+        // (`save_image`), and its value is still recorded -- under a name no
+        // wire can spell -- so the sink keeps appearing in `GraphRun.outputs`
+        // while staying unwireable. `first()` here crashed every sink in the
+        // app the moment multi-output landed.
+    ): Map<String, Value> =
+        mapOf(outputs.firstOrNull()?.name.orEmpty() to run(ctx, node, inputs))
 }
 
 /**
  * ⚠ Throws rather than defaulting. A missing widget is a malformed graph, and a
  * default here would render something plausible that the user did not ask for.
  */
-private fun Node.str(name: String): String =
+internal fun Node.str(name: String): String =
     params[name] ?: throw IllegalArgumentException("node \"$id\": missing param \"$name\"")
 
-private fun Node.int(name: String): Int =
+internal fun Node.int(name: String): Int =
     str(name).toIntOrNull()
         ?: throw IllegalArgumentException("node \"$id\": param \"$name\" is not an int: ${params[name]}")
 
@@ -386,7 +540,9 @@ private fun Node.dbl(name: String): Double =
  * (that is `applyDefaults`' rule), which is correct: it is the value the node
  * would use again if the user switched back.
  */
-private fun aspectWidget(): Array<Widget> =
+/** ⚠ `internal`: the fused sampler declares the same knob, and a second
+ * copy of "which families crop to shape" is the drift `aspectAgrees` stops. */
+internal fun aspectWidget(): Array<Widget> =
     if (!SelectedModel.spec.fixedCanvas) emptyArray()
     else arrayOf(
         Widget(
@@ -578,6 +734,76 @@ fun modelRecipeRetarget(
     return out
 }
 
+/**
+ * ⭐⭐ The new model's STARTER PROMPT, written onto the graph -- but only over
+ * text the app itself put there.
+ *
+ * ⚠⚠ **This is the one retarget that must not overwrite the user.**
+ * [modelRecipeRetarget] overwrites `steps`/`cfg` by design, because asking for
+ * a checkpoint is asking for its published recipe. A prompt is the opposite:
+ * it is the sentence the user came to write, and a model switch that erased it
+ * would be the worst kind of data loss -- silent, and on the one field nothing
+ * else in the app can reconstruct.
+ *
+ * ⚠ So "untouched" is decided by VALUE, not by tracking edits: a field is the
+ * app's to rewrite when it is blank or still carries some catalogue model's own
+ * prompt, which is exactly the set of strings this function and the recipes
+ * ever write. Anything else was typed by a person and is left alone. That is
+ * `local-dream`'s `!prefs.hasSaved` rule without the per-model store -- a graph
+ * is not a screen, and the text lives in the file rather than in preferences.
+ *
+ * ⚠ Both fields or neither, and keyed on the node declaring BOTH widgets --
+ * the CLIP-encode shape. A plugin node with a lone `prompt` string widget means
+ * something else by it.
+ */
+/**
+ * ⚠⚠ The literals the RECIPES carried before they read the model — app-written
+ * text that predates [ModelSpec.prompt] being consumed at all.
+ *
+ * Without them the feature looks broken on the one graph everybody has: the
+ * canvas autosave was built from a recipe that hardcoded these, so every
+ * existing canvas would read as "the user typed this" and never pick up a
+ * checkpoint's own prompt. ⚠ The risk is the mirror image and it is small: a
+ * user who deliberately kept `a cat on grass` loses it on a model switch, and
+ * can type it back. ⚠ Frozen — never extend this with a value the app still
+ * writes, or the untouched test stops meaning anything.
+ */
+private val LEGACY_RECIPE_TEXT = setOf(
+    "a cat on grass",
+    "blurry, lowres",
+    "masterpiece, best quality, highly detailed,",
+)
+
+fun modelPromptRetarget(
+    graph: Graph,
+    types: Map<String, NodeType>,
+    spec: ModelSpec,
+): Map<String, Map<String, String>> {
+    val out = LinkedHashMap<String, Map<String, String>>()
+    // ⚠ Every model's, not just the previously selected one: A -> B -> C must
+    // still recognise A's prompt as ours. ⚠ `all` rather than `builtIn`, so an
+    // imported model's `config.json` prompt counts too.
+    // ⚠⚠ The FAMILY defaults count as ours too, and leaving them out was the
+    // bug waiting to happen: since 2026-09-15 a new graph opens on
+    // [ModelSpec.starterPrompt], which is the family text whenever a checkpoint
+    // has none — so text this app wrote a minute ago would have read as
+    // "the user typed this" and frozen forever.
+    val ours = ModelCatalog.all.flatMap { listOf(it.prompt, it.negative) }.toSet() +
+        Family.entries.flatMap { listOf(it.prompt, it.negative) } +
+        "" + LEGACY_RECIPE_TEXT
+    val wanted = mapOf("prompt" to spec.starterPrompt, "negative" to spec.starterNegative)
+    for (n in graph.nodes) {
+        val t = types[n.type] ?: continue
+        val has = t.widgets.map { it.name }.toSet()
+        if (!has.containsAll(wanted.keys)) continue
+        val change = wanted.filterKeys { k ->
+            n.params[k].orEmpty() in ours && n.params[k] != wanted[k]
+        }
+        if (change.isNotEmpty()) out[n.id] = change
+    }
+    return out
+}
+
 
 /**
  * conditioning + seed -> latent handle. The fused sampler of ARCHITECTURE §3.
@@ -597,10 +823,125 @@ fun modelRecipeRetarget(
  * tensor whose halves the UNet reads as the CFG batch, so a graph that wired
  * them separately would be lying about what the backend can do.
  */
+/**
+ * ⭐⭐⭐ **The process scheduler** — a topological order that switches backend
+ * context as few times as it can.
+ *
+ * `docs/ARCHITECTURE.md` §4. `--type`, `--model_dir` and `--patch` bind at
+ * BACKEND LAUNCH, so changing checkpoint or resolution is a kill + relaunch
+ * costing **2.3–5 s** — about a whole render. A graph using two checkpoints was
+ * REFUSED until 2026-09-15; now it is ordered.
+ *
+ * ⭐ The rule, in one sentence a user can predict: **finish everything runnable
+ * under the checkpoint that is already loaded before switching.** When nothing
+ * is runnable under it, switch to whichever key has the most ready work.
+ *
+ * ⚠⚠ Not optimal in general — minimising transitions over a DAG is a hard
+ * problem — and it does not need to be: a canvas holds a handful of samplers,
+ * and a rule a person can state beats one they cannot. ⚠ Where two keys tie,
+ * the user's own node ORDER breaks it, which is §4's rule for batch axes and
+ * the same instinct here.
+ *
+ * ⚠ A node with a NULL key (every app-side node, `image.upscale`, the video
+ * path) runs under whatever is loaded and never forces a switch — that property
+ * is what makes a mixed graph tractable at all.
+ *
+ * @param order a valid topological order; the result is a permutation of it.
+ */
+fun scheduleByKey(
+    order: List<Node>,
+    keyOf: (Node) -> ContextKey?,
+    /**
+     * ⭐ The key the backend ALREADY holds, when one does. Work under it runs
+     * first, so a graph naming the loaded checkpoint never starts by leaving it.
+     */
+    start: ContextKey? = null,
+): List<Node> {
+    if (order.size < 2) return order
+    val keys = order.associate { it.id to keyOf(it) }
+    if (keys.values.filterNotNull().distinct().size < 2) return order
+
+    // Dependencies as ids, so "ready" is a set test rather than a graph walk.
+    val deps = order.associate { n -> n.id to n.inputs.values.map { it.node }.toSet() }
+    val done = mutableSetOf<String>()
+    val left = order.toMutableList()
+    val out = ArrayList<Node>(order.size)
+    // ⚠ Starts at what is loaded, or null — then the FIRST key is chosen by the
+    // same rule as every other switch rather than by whichever node is first.
+    var current: ContextKey? = start
+
+    while (left.isNotEmpty()) {
+        val ready = left.filter { done.containsAll(deps.getValue(it.id)) }
+        // ⚠ A graph whose remaining nodes are all blocked is a cycle, which
+        // `topoSort` refuses before this runs. Emitting the rest unchanged is
+        // the safe answer rather than looping forever.
+        if (ready.isEmpty()) { out += left; break }
+
+        // Everything that needs no key, and everything already under it.
+        val free = ready.filter { keys[it.id] == null || keys[it.id] == current }
+        if (free.isNotEmpty()) {
+            for (n in free) { out += n; done += n.id }
+            left.removeAll(free.toSet())
+            continue
+        }
+        // Nothing runnable here: switch to the key with the most ready work.
+        // ⚠ `maxByOrNull` keeps the FIRST maximum, and `ready` is in the user's
+        // node order — so a tie is broken the way they laid the graph out.
+        current = ready.mapNotNull { keys[it.id] }
+            .groupingBy { it }.eachCount()
+            .entries.maxByOrNull { it.value }?.key
+    }
+    return out
+}
+
+/**
+ * ⭐⭐ The context key a Run must LAUNCH with: the first one [scheduleByKey]
+ * will reach. Null when the graph names none, or cannot be ordered.
+ *
+ * ⚠⚠ Launching for anything else is a wasted start. Run used to launch for the
+ * GLOBAL selection, so a sampler naming another checkpoint paid a start for the
+ * selected model and then a relaunch for its own — on every Run, because the
+ * next Run launched the selection again. Reported from the phone, 2026-09-16:
+ * *"its always starting the model on every run"*.
+ *
+ * ⚠ [loaded] is passed through for the same reason the executor passes it: a
+ * two-checkpoint graph should begin with whichever one is already up.
+ */
+fun launchKeyFor(graph: Graph, types: Map<String, NodeType>, loaded: ContextKey?): ContextKey? {
+    val order = (topoSort(graph) as? Order.Ok)?.nodes ?: return null
+    fun keyOf(n: Node) = try {
+        types[n.type]?.contextKey(n)
+    } catch (e: IllegalArgumentException) {
+        null
+    }
+    return scheduleByKey(order, ::keyOf, loaded).firstNotNullOfOrNull(::keyOf)
+}
+
+/**
+ * ⭐ How many backend relaunches [order] will cost, for the run bar to say so
+ * BEFORE the button is pressed.
+ *
+ * ⚠ Counted off the SCHEDULED order, never the graph: the whole point of
+ * [scheduleByKey] is that the count depends on the order chosen.
+ */
+fun keyTransitions(order: List<Node>, keyOf: (Node) -> ContextKey?): Int {
+    var current: ContextKey? = null
+    var n = 0
+    for (node in order) {
+        val k = keyOf(node) ?: continue
+        if (k != current) { if (current != null) n++; current = k }
+    }
+    return n
+}
+
 object SampleNode : NodeType {
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
-    override val name = "sd.sample"
+    override val name = "sd.sample_legacy"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
     /**
      * ⚠ 2: the prompt left the node, so nothing it cached under 1 is comparable.
      * ⚠ 3: `scheduler` is sent. Everything cached under 2 was rendered with the
@@ -685,7 +1026,7 @@ object SampleNode : NodeType {
         // at a knob that no longer exists.
         val cond = inputs["cond"]
             ?: throw IllegalArgumentException(
-                "node \"${node.id}\": nothing is wired into \"cond\" -- " +
+                "node \"${node.id}\": nothing is wired into \"cond\" — " +
                     "the prompt lives in a Text Encode node now; connect one"
             )
         if (!(cond is Value.Handle && cond.kind == "cond")) {
@@ -734,6 +1075,10 @@ object VaeDecodeNode : NodeType {
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
     override val name = "sd.vae_decode"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
     override val version = "1"
     override val inputs = listOf(Port("latent", "LATENT"))
     override val outputs = listOf(Port("image", "IMAGE"))
@@ -782,15 +1127,30 @@ object VaeDecodeNode : NodeType {
                 "node \"${node.id}\": input \"latent\" carries ${latent.describe()}, not a latent"
             )
         }
-        val w = node.int("width")
-        val h = node.int("height")
-        return when (val r = ctx.host.vaeDecode(latent.id, w, h)) {
+        return decode(ctx, latent.id, node.int("width"), node.int("height"), nodeAspect(node))
+    }
+
+    /**
+     * ⭐⭐ latent -> pixels, aspect crop included — and the ONLY implementation.
+     *
+     * ⚠⚠ The fused sampler ends with this call (docs/ARCHITECTURE.md §5.7). The
+     * aspect crop below is the half that must not be re-typed anywhere: it
+     * exists because `/sample` returns before the C++ does its own crop, so a
+     * second copy that forgot it would letterbox every non-square picture.
+     */
+    suspend fun decode(
+        ctx: NodeCtx,
+        latentId: String,
+        w: Int,
+        h: Int,
+        aspect: String?,
+    ): Value.Image {
+        return when (val r = ctx.host.vaeDecode(latentId, w, h)) {
             is Ops.Result.Ok -> {
                 val full = ctx.images.decode(r.value.png)
                     ?: throw OpFailure("vae_decode", 200,
                         "returned ${r.value.png.size} B that would not decode as an image")
-                val target = nodeAspect(node)
-                    ?.let { ModelCatalog.aspectTarget(it, Res(w, h)) }
+                val target = aspect?.let { ModelCatalog.aspectTarget(it, Res(w, h)) }
                 if (target == null || (target.width == full.width && target.height == full.height)) {
                     // ⭐ The backend already hashed these pixels, so its rgb_sha
                     // IS the content address -- no reason to hash a megabyte
@@ -805,7 +1165,7 @@ object VaeDecodeNode : NodeType {
                 // that comment warns about.
                 if (target.width > full.width || target.height > full.height) {
                     throw OpFailure("vae_decode", 200,
-                        "aspect ${nodeAspect(node)} wants ${target.width}x${target.height} " +
+                        "aspect $aspect wants ${target.width}x${target.height} " +
                             "out of a ${full.width}x${full.height} canvas")
                 }
                 val cropped = cropCenter(full, target.width, target.height)
@@ -825,7 +1185,7 @@ object VaeDecodeNode : NodeType {
 
 /** ⚠ Carries the backend's own words. Its error bodies name the real problem. */
 class OpFailure(op: String, val code: Int, val body: String) :
-    RuntimeException("$op failed http $code -- ${body.take(160)}")
+    RuntimeException("$op failed http $code — ${body.take(160)}")
 
 /**
  * ⭐ A picture from the device, as the start of a graph — **whole, and at its
@@ -849,11 +1209,12 @@ class OpFailure(op: String, val code: Int, val body: String) :
  * disbelieve.
  */
 object LoadImageNode : NodeType {
-    override val name = "image.load"
+    override val name = "core.image"
     override val version = "2"
     override val inputs = emptyList<Port>()
     override val outputs = listOf(Port("image", "IMAGE"))
-    override val category = "image"
+    /** ⚠ `source`, with the prompt: it is where a flow STARTS, not a pixel op. */
+    override val category = "source"
     override val cacheable = false
     override val widgets = listOf(
         // A content:// URI from the picker, or an absolute path.
@@ -897,7 +1258,7 @@ object LoadImageNode : NodeType {
             // ⚠ Named, because this is what a URI outliving its permission grant
             // looks like -- a saved workflow reopened after a reboot.
             throw IllegalStateException(
-                "node \"${node.id}\": no longer permitted to read $uri -- pick the image again"
+                "node \"${node.id}\": no longer permitted to read $uri — pick the image again"
             )
         }
 
@@ -929,6 +1290,10 @@ object TextEncodeNode : NodeType {
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
     override val name = "sd.clip_encode"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
     override val version = "1"
     override val inputs = emptyList<Port>()
     override val outputs = listOf(Port("cond", "COND"))
@@ -937,18 +1302,34 @@ object TextEncodeNode : NodeType {
      * ⭐ The ONLY place a prompt is written. [SampleNode] used to carry a copy
      * and ignore it whenever this node was wired; it no longer has one.
      *
-     * ⚠ Empty defaults rather than none. A node added from the palette must
-     * arrive with every param present, or it fails with "missing param" -- an
-     * error about the app rather than about the empty prompt the user can
-     * plainly see. The backend refuses an empty prompt by name, which is the
-     * message that actually helps.
+     * ⚠ A default rather than none. A node added from the palette must arrive
+     * with every param present, or it fails with "missing param" -- an error
+     * about the app rather than about the empty prompt the user can plainly
+     * see.
+     *
+     * ⭐⭐ **And the default is the CHECKPOINT's, not a literal** -- the same
+     * rule [SampleNode] applies to `steps`/`cfg`/`scheduler`, extended to the
+     * two fields upstream carries beside them ([ModelSpec.prompt]). A prompt
+     * style is the thing a checkpoint's author knows and we cannot guess: an
+     * anime model and a photographic one want opposite negatives, and the app
+     * shipped the catalogue's per-model text while showing every new node an
+     * empty box. ⭐ `local-dream`'s `Model.codeDefaults` + `config.json`, which
+     * DreamUI dropped for one hardcoded prompt. The user's ask, 2026-09-12.
+     *
+     * ⚠ An IMPORTED model's is empty unless its own `config.json` says
+     * otherwise ([CustomModels.Config]) -- deliberately. We know nothing about
+     * a checkpoint someone brought, and handing it a built-in's prompt would
+     * bias it toward a model it is not.
      */
-    override val widgets = listOf(
+    override val widgets get() = listOf(
         Widget(
-            "prompt", "string", "",
+            "prompt", "string", SelectedModel.spec.starterPrompt,
             hint = "要画的内容——采样器通过 cond 连线读取它",
         ),
-        Widget("negative", "string", "", hint = "要从画面中排除的内容"),
+        Widget(
+            "negative", "string", SelectedModel.spec.starterNegative,
+            hint = "要从画面中排除的内容",
+        ),
     )
 
     override fun contextKey(node: Node): ContextKey? = null
@@ -972,6 +1353,10 @@ object VaeEncodeNode : NodeType {
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
     override val name = "sd.vae_encode"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
     override val version = "1"
     override val inputs = listOf(Port("image", "IMAGE"))
     override val outputs = listOf(Port("latent", "LATENT"))
@@ -1054,7 +1439,9 @@ object OutputNode : NodeType {
             ?: throw IllegalArgumentException(
                 "node \"${node.id}\": input \"image\" is not connected"
             )
-        if (node.params["save"]?.lowercase() != "true") return image
+        // ⚠ `effectiveParams`, so an unset knob reads its declared default
+        // rather than being false by accident. See [VideoOutputNode].
+        if (!effectiveParams(node)["save"].equals("true", ignoreCase = true)) return image
 
         val png = ctx.images.png(image.id)
             ?: throw IllegalStateException(
@@ -1097,7 +1484,13 @@ object CropNode : NodeType {
     override val version = "3"
     override val inputs = listOf(Port("image", "IMAGE"))
     override val outputs = listOf(Port("image", "IMAGE"))
-    override val category = "image"
+    /**
+     * ⭐ `edit` — the one node left whose job is to DECIDE something about a
+     * picture. ⚠ It is no longer how a photo is made to fit: the sampler fits
+     * whatever it is given (§5.7). This is how a framing is chosen once and fed
+     * to two branches.
+     */
+    override val category = "edit"
     // ⭐ Its picture is its interface, so a tap on the node's preview opens the
     // framing view rather than the fullscreen viewer.
     override val interactive = true
@@ -1148,6 +1541,19 @@ object CropNode : NodeType {
     const val BLUR_SOURCE_WIDTH = 48
     const val PAD = "pad"
 
+    /**
+     * ⭐⭐ The crop is FINISHED — a tick locks it, a pencil unlocks it.
+     *
+     * ⚠⚠ Asked for 2026-09-15, and the reason is the drag: framing and painting
+     * now share one node, so a finger meant for the mask that lands on the
+     * cropper re-frames the shot and silently moves every stroke with it. A
+     * lock makes "I am done framing" a thing the user can say.
+     *
+     * ⚠ A PARAM, not editor state: it is part of what a saved flow means, and a
+     * crop that unlocked itself on reload would be a lock that protects nothing.
+     */
+    const val LOCKED = "crop_locked"
+
     /** ⚠ A ceiling on a derived-from-nothing output, so a silly rect cannot OOM. */
     const val MAX_OUT = 8192
 
@@ -1192,39 +1598,45 @@ object CropNode : NodeType {
         return if (w > 0 && h > 0) w to h else null
     }
 
-    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
-        val image = inputs["image"] as? Value.Image
-            ?: throw IllegalArgumentException("node \"${node.id}\": input \"image\" is not connected")
-        val src = ctx.images.get(image.id)
-            ?: throw IllegalStateException("node \"${node.id}\": image ${image.id} is no longer in the store")
-
+    /**
+     * ⭐⭐ The framing, as pixels — and the ONLY implementation of it.
+     *
+     * ⚠⚠ The fused sampler fits a photo to the model's size by calling THIS
+     * (docs/ARCHITECTURE.md §5.7). Two surfaces that must agree call the same
+     * function; two hand-rolled croppers stop agreeing the first time one of
+     * them learns about padding (§5.6 step 4).
+     *
+     * @return the pixels, and the frame in SOURCE coordinates that produced them
+     *   — the caller needs the second to say where the picture was cut from.
+     */
+    fun render(
+        src: android.graphics.Bitmap,
+        x: Float,
+        y: Float,
+        w: Float,
+        h: Float,
+        outW: Int,
+        outH: Int,
+        pad: String?,
+    ): Pair<android.graphics.Bitmap, Frame> {
         // The frame in SOURCE pixels. ⚠ Floats, and they may fall outside the
         // bitmap: that is the padded case, and clamping here would silently
         // re-frame the crop rather than pad it.
-        val rect = CropGeometry.frameOf(
-            node.dbl("x").toFloat(), node.dbl("y").toFloat(),
-            node.dbl("w").toFloat(), node.dbl("h").toFloat(),
-            src.width, src.height,
-        )
-        val (outW, outH) = CropGeometry.outputSize(
-            node.params["out_w"]?.toIntOrNull() ?: 0,
-            node.params["out_h"]?.toIntOrNull() ?: 0,
-            rect,
-            MAX_OUT,
-        )
+        val rect = CropGeometry.frameOf(x, y, w, h, src.width, src.height)
+        val (ow, oh) = CropGeometry.outputSize(outW, outH, rect, MAX_OUT)
 
         val bmp = android.graphics.Bitmap.createBitmap(
-            outW, outH, android.graphics.Bitmap.Config.ARGB_8888,
+            ow, oh, android.graphics.Bitmap.Config.ARGB_8888,
         )
         val canvas = android.graphics.Canvas(bmp)
         // Source pixels -> output pixels.
         val m = android.graphics.Matrix().apply {
-            setScale(outW / rect.width(), outH / rect.height())
+            setScale(ow / rect.width(), oh / rect.height())
             preTranslate(-rect.left, -rect.top)
         }
         val paint = android.graphics.Paint().apply { isFilterBitmap = true; isAntiAlias = true }
 
-        if (node.params[PAD] == PAD_BLUR) {
+        if (pad == PAD_BLUR) {
             // ⭐ The picture's own edges, reflected outwards and softened.
             //
             // ⚠ A MIRROR shader rather than eight hand-placed copies: the tiling
@@ -1242,7 +1654,7 @@ object CropNode : NodeType {
             // ⚠ Black underneath: a shader that does not quite reach a corner
             // must not leave the bitmap's own transparency there.
             canvas.drawColor(android.graphics.Color.BLACK)
-            canvas.drawRect(0f, 0f, outW.toFloat(), outH.toFloat(), paint)
+            canvas.drawRect(0f, 0f, ow.toFloat(), oh.toFloat(), paint)
             // ⚠⚠ …and the picture SHARP on top of it. The blur is padding, not
             // a filter: blurring the part the user framed would be destroying
             // the thing they framed.
@@ -1251,7 +1663,28 @@ object CropNode : NodeType {
             canvas.drawColor(android.graphics.Color.BLACK)
             canvas.drawBitmap(src, m, paint)
         }
-        return Value.Image(ctx.images.put(bmp), bmp.width, bmp.height)
+        return bmp to rect
+    }
+
+    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        val image = inputs["image"] as? Value.Image
+            ?: throw IllegalArgumentException("node \"${node.id}\": input \"image\" is not connected")
+        val src = ctx.images.get(image.id)
+            ?: throw IllegalStateException("node \"${node.id}\": image ${image.id} is no longer in the store")
+        val (bmp, rect) = render(
+            src,
+            node.dbl("x").toFloat(), node.dbl("y").toFloat(),
+            node.dbl("w").toFloat(), node.dbl("h").toFloat(),
+            node.params["out_w"]?.toIntOrNull() ?: 0,
+            node.params["out_h"]?.toIntOrNull() ?: 0,
+            node.params[PAD],
+        )
+        // ⭐ Says where it came from, so `image.paste` can stitch a patch back
+        // into the photo this frame was cut from.
+        return Value.Image(
+            ctx.images.put(bmp), bmp.width, bmp.height,
+            region = Region(rect.left, rect.top, rect.right, rect.bottom, src.width, src.height, image.region),
+        )
     }
 }
 
@@ -1312,6 +1745,10 @@ fun blurSource(src: android.graphics.Bitmap): android.graphics.Bitmap {
  */
 object MaskNode : NodeType {
     override val name = "image.mask"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
     override val version = "1"
     override val inputs = listOf(Port("image", "IMAGE"))
     override val outputs = listOf(Port("image", "IMAGE"))
@@ -1321,6 +1758,9 @@ object MaskNode : NodeType {
 
     /** The whole mask, as one string. ⚠ See [MaskState.encode]. */
     const val OPS = "ops"
+
+    /** ⚠ The longest edge rasterised when nothing downstream demands a size. */
+    const val NO_DEMAND_MAX_EDGE = 2048
 
     override val widgets = listOf(
         // ⚠ Hidden from typing in practice but still a real param, because it is
@@ -1363,23 +1803,241 @@ object MaskNode : NodeType {
     override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
         val src = inputs["image"] as? Value.Image
             ?: throw IllegalArgumentException(
-                "node \"${node.id}\": \"image\" is not connected -- wire the picture " +
+                "node \"${node.id}\": \"image\" is not connected — wire the picture " +
                     "you want to paint on"
             )
         // ⚠ The size comes from the demand when there is one and from the
         // picture otherwise, so a mask node with nothing downstream still
         // renders something rather than refusing.
-        val w = node.params["out_w"]?.toIntOrNull()?.takeIf { it > 0 } ?: src.w
-        val h = node.params["out_h"]?.toIntOrNull()?.takeIf { it > 0 } ?: src.h
+        // ⚠ With no demand the picture's own size — capped, because an
+        // `image.mask_crop` consumer demands nothing and the frame upstream may
+        // be a 4096 px photo. A mask is read in NORMALISED terms downstream, so
+        // a smaller raster of it loses nothing but memory (DreamUI caps its
+        // source at 2048 for the same reason).
+        val cap = (NO_DEMAND_MAX_EDGE.toFloat() / maxOf(src.w, src.h)).coerceAtMost(1f)
+        val w = node.params["out_w"]?.toIntOrNull()?.takeIf { it > 0 }
+            ?: (src.w * cap).toInt().coerceAtLeast(1)
+        val h = node.params["out_h"]?.toIntOrNull()?.takeIf { it > 0 }
+            ?: (src.h * cap).toInt().coerceAtLeast(1)
         val state = stateOf(node)
         if (state.isEmpty) {
             throw IllegalArgumentException(
-                "node \"${node.id}\": nothing is painted -- tap the node and paint the " +
+                "node \"${node.id}\": nothing is painted — tap the node and paint the " +
                     "area to repaint"
             )
         }
         val bmp = MaskRaster.rasterise(state, w, h)
         return Value.Image(ctx.images.put(bmp), w, h)
+    }
+}
+
+/**
+ * ⭐⭐⭐ **"Only masked"** — cut the part of the picture around the mask, at the
+ * render size, and the same part of the mask with it.
+ *
+ * ⚠⚠ DreamUI's toggle of the same name, with its logic ([InpaintCrop]); ON by
+ * default there and here (the user's call, 2026-09-15). Off, or when the mask
+ * is already most of the frame, it hands on the whole frame at the render size
+ * — which is what the inpaint flow did before this node existed.
+ *
+ * ⚠ TWO outputs because they must be cut by the SAME rect: an image cropped one
+ * way and a mask cropped another is a repaint in the wrong place, and it still
+ * renders. Both carry [Value.Image.region] so `image.paste` can put the result
+ * back.
+ *
+ * ⚠ `sizedByConsumer` on its OUTPUTS only: it demands nothing of its inputs —
+ * the whole point is that the frame upstream keeps its own pixels.
+ */
+object MaskCropNode : NodeType {
+    override val name = "image.mask_crop"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
+    override val version = "1"
+    override val inputs = listOf(Port("image", "IMAGE"), Port("mask", "IMAGE"))
+    override val outputs = listOf(Port("image", "IMAGE"), Port("mask", "IMAGE"))
+    override val category = "mask"
+    override val sizedByConsumer = true
+
+    const val ONLY_MASKED = "only_masked"
+
+    override val widgets = listOf(
+        Widget(
+            ONLY_MASKED, "bool", "true",
+            hint = "Generate over a crop around the mask: more detail where you painted, " +
+                "and the rest of the picture keeps its full resolution. Ignored when the " +
+                "mask covers most of the picture.",
+        ),
+        Widget("out_w", "int", "0", 0.0, 8192.0),
+        Widget("out_h", "int", "0", 0.0, 8192.0),
+    )
+
+    override fun contextKey(node: Node): ContextKey? = null
+
+    override fun outputSize(node: Node): Pair<Int, Int>? {
+        val w = node.params["out_w"]?.toIntOrNull() ?: 0
+        val h = node.params["out_h"]?.toIntOrNull() ?: 0
+        return if (w > 0 && h > 0) w to h else null
+    }
+
+    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value =
+        runPorts(ctx, node, inputs).getValue("image")
+
+    override suspend fun runPorts(
+        ctx: NodeCtx,
+        node: Node,
+        inputs: Map<String, Value>,
+    ): Map<String, Value> {
+        val image = inputs["image"] as? Value.Image
+            ?: throw IllegalArgumentException(
+                "node \"${node.id}\": \"image\" is not connected — wire the picture to repaint"
+            )
+        val mask = inputs["mask"] as? Value.Image
+            ?: throw IllegalArgumentException(
+                "node \"${node.id}\": \"mask\" is not connected — wire the Mask node"
+            )
+        val src = ctx.images.get(image.id)
+            ?: throw IllegalStateException("node \"${node.id}\": image ${image.id} is no longer in the store")
+        val maskBmp = ctx.images.get(mask.id)
+            ?: throw IllegalStateException("node \"${node.id}\": mask ${mask.id} is no longer in the store")
+
+        // ⚠ Unwired, the render size is unknown; a square the size of the model's
+        // is the least surprising stand-in.
+        val outW = node.params["out_w"]?.toIntOrNull()?.takeIf { it > 0 } ?: SelectedModel.res.width
+        val outH = node.params["out_h"]?.toIntOrNull()?.takeIf { it > 0 } ?: SelectedModel.res.height
+
+        val only = effectiveParams(node)[ONLY_MASKED].equals("true", ignoreCase = true)
+        val c = cut(src, maskBmp, outW, outH, only)
+        val region = Region(
+            c.rect[0].toFloat(), c.rect[1].toFloat(),
+            (c.rect[0] + c.rect[2]).toFloat(), (c.rect[1] + c.rect[3]).toFloat(),
+            src.width, src.height, image.region,
+        )
+        return linkedMapOf(
+            "image" to Value.Image(ctx.images.put(c.image), outW, outH, region),
+            "mask" to Value.Image(ctx.images.put(c.mask), outW, outH, region),
+        )
+    }
+
+    /** The picture and its mask, cut by the SAME rect, plus that rect. */
+    class Cut(
+        val image: android.graphics.Bitmap,
+        val mask: android.graphics.Bitmap,
+        /** x, y, w, h in [src] pixels. */
+        val rect: IntArray,
+    )
+
+    /**
+     * ⭐⭐ "Only masked", as pixels — and the ONLY implementation of it.
+     *
+     * ⚠⚠ The fused sampler cuts its render window with THIS
+     * (docs/ARCHITECTURE.md §5.7). The half that must never be re-typed is the
+     * mask mapping: the mask is addressed in the image's NORMALISED terms, so a
+     * mask rasterised at a different size cuts the same part. An image cropped
+     * one way and a mask cropped another is a repaint in the wrong place, and
+     * it still renders.
+     */
+    fun cut(
+        src: android.graphics.Bitmap,
+        maskBmp: android.graphics.Bitmap,
+        outW: Int,
+        outH: Int,
+        only: Boolean,
+    ): Cut {
+        val rect = (if (only) InpaintCrop.compute(InpaintPixels.bounds01(maskBmp), src.width, src.height, outW, outH) else null)
+            ?: InpaintCrop.whole(src.width, src.height, outW, outH)
+
+        val mx = maskBmp.width.toFloat() / src.width
+        val my = maskBmp.height.toFloat() / src.height
+        val maskRect = intArrayOf(
+            (rect[0] * mx).toInt().coerceIn(0, maskBmp.width - 1),
+            (rect[1] * my).toInt().coerceIn(0, maskBmp.height - 1),
+            0, 0,
+        ).also {
+            it[2] = (rect[2] * mx).toInt().coerceIn(1, maskBmp.width - it[0])
+            it[3] = (rect[3] * my).toInt().coerceIn(1, maskBmp.height - it[1])
+        }
+        return Cut(
+            InpaintPixels.cut(src, rect, outW, outH),
+            InpaintPixels.cut(maskBmp, maskRect, outW, outH),
+            rect,
+        )
+    }
+}
+
+/**
+ * ⭐⭐⭐ Put a repainted patch back where it was cut from — and, with **"Stitch to
+ * original"**, all the way back into the photo the frame came from.
+ *
+ * ⚠⚠ DreamUI's `composite` and its "Stitch to original image" toggle
+ * ([InpaintPixels.composite]); OFF by default, as there. Blended along the mask,
+ * never pasted as a rectangle — the seam is the whole reason the inpaint output
+ * "did not join up with the original", reported 2026-09-15.
+ *
+ * ⚠ The pixels it composites INTO come from wires (`frame`, `original`), and only
+ * the rects come from [Value.Image.region] — see [Region].
+ */
+object PasteNode : NodeType {
+    override val name = "image.paste"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
+    override val version = "1"
+    override val inputs = listOf(
+        Port("patch", "IMAGE"),
+        Port("cut", "IMAGE"),
+        Port("mask", "IMAGE"),
+        Port("frame", "IMAGE"),
+        Port("original", "IMAGE"),
+    )
+    override val outputs = listOf(Port("image", "IMAGE"))
+    override val category = "image"
+
+    const val STITCH = "stitch"
+
+    override val widgets = listOf(
+        Widget(
+            STITCH, "bool", "false",
+            hint = "Off: the result is the frame you chose. On: it is pasted back into the " +
+                "whole original photo, at the photo's own size.",
+        ),
+    )
+
+    override fun contextKey(node: Node): ContextKey? = null
+
+    override suspend fun run(ctx: NodeCtx, node: Node, inputs: Map<String, Value>): Value {
+        fun need(port: String, why: String): Value.Image =
+            inputs[port] as? Value.Image
+                ?: throw IllegalArgumentException("node \"${node.id}\": \"$port\" is not connected — $why")
+        val patch = need("patch", "wire the decoded picture")
+        val cut = need("cut", "wire the Mask Crop's image")
+        val mask = need("mask", "wire the Mask Crop's mask")
+        val frame = need("frame", "wire the picture the crop was cut from")
+        val inner = cut.region
+            ?: throw IllegalArgumentException(
+                "node \"${node.id}\": \"cut\" does not say where it was cut from — wire a Mask Crop into it"
+            )
+        fun bmp(v: Value.Image) = ctx.images.get(v.id)
+            ?: throw IllegalStateException("node \"${node.id}\": image ${v.id} is no longer in the store — Run again")
+
+        val stitch = effectiveParams(node)[STITCH].equals("true", ignoreCase = true)
+        val original = inputs["original"] as? Value.Image
+        val outer = frame.region
+        val out = if (stitch && original != null && outer != null) {
+            // ⭐ Into the photo: the patch's rect in the frame, carried through the
+            // frame's own rect in the photo.
+            val r = InpaintCrop.toParent(inner, outer)
+            InpaintPixels.composite(bmp(original), bmp(patch), android.graphics.RectF(r[0], r[1], r[2], r[3]), bmp(mask))
+        } else {
+            InpaintPixels.composite(
+                bmp(frame), bmp(patch),
+                android.graphics.RectF(inner.left, inner.top, inner.right, inner.bottom),
+                bmp(mask),
+            )
+        }
+        return Value.Image(ctx.images.put(out), out.width, out.height)
     }
 }
 
@@ -1412,6 +2070,10 @@ object LatentBlendNode : NodeType {
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
     override val name = "sd.latent_blend"
+    /** ⚠ Replaced by the fused sampler — docs/ARCHITECTURE.md §5.7. Registered
+     * for one build so the old graph and the new one can be rendered side by
+     * side at the same seed, then deleted. [NodeType.hidden]. */
+    override val hidden = true
     override val version = "1"
     /**
      * ⚠⚠ **`base` and `repaint`, not `a` and `b`.** The backend's field names
@@ -1460,17 +2122,17 @@ object LatentBlendNode : NodeType {
         // better sentence than "an input is missing".
         val a = inputs["base"] as? Value.Handle
             ?: throw IllegalArgumentException(
-                "node \"${node.id}\": \"base\" is not connected -- it takes the latent " +
+                "node \"${node.id}\": \"base\" is not connected — it takes the latent " +
                     "to keep, from a Sampler or a VAE Encode"
             )
         val b = inputs["repaint"] as? Value.Handle
             ?: throw IllegalArgumentException(
-                "node \"${node.id}\": \"repaint\" is not connected -- it takes the latent " +
+                "node \"${node.id}\": \"repaint\" is not connected — it takes the latent " +
                     "that shows through the mask's white area"
             )
         val mask = inputs["mask"] as? Value.Image
             ?: throw IllegalArgumentException(
-                "node \"${node.id}\": \"mask\" is not connected -- it takes an " +
+                "node \"${node.id}\": \"mask\" is not connected — it takes an " +
                     "IMAGE, and its WHITE area is where \"repaint\" shows through"
             )
         val png = ctx.images.png(mask.id)
@@ -1503,11 +2165,20 @@ object LatentBlendNode : NodeType {
  * 4x by a node that never looked.
  */
 object UpscaleNode : NodeType {
+    /** ⚠⚠ It RENDERS, so its result belongs to `core.output` too — the rule is
+     * everywhere or it is two rules ([NodeType.showsResult]). */
+    override val showsResult = false
     override val name = "image.upscale"
     override val version = "1"
     override val inputs = listOf(Port("image", "IMAGE"))
     override val outputs = listOf(Port("image", "IMAGE"))
-    override val category = "image"
+    /**
+     * ⚠ `edit`, beside crop — it was `generate` for having its own model, like a
+     * sampler. The user's call, 2026-09-17: it is one picture in and one out
+     * whatever made the picture, so it belongs with the light, family-agnostic
+     * nodes in the palette's Common tab ([com.abrah.nightmare.canvas.paletteTabs]).
+     */
+    override val category = "edit"
     /** ⚠ Reaches the backend, so never run for a preview. [NodeType.appSide]. */
     override val appSide = false
 
@@ -1604,11 +2275,40 @@ object UpscaleNode : NodeType {
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
 }
 
-val NODE_TYPES: Map<String, NodeType> =
+val NODE_TYPES: Map<String, NodeType> = (
     listOf(
-        LoadImageNode, CropNode, MaskNode, UpscaleNode, TextEncodeNode, SampleNode,
-        VaeDecodeNode, VaeEncodeNode, LatentBlendNode, OutputNode,
-    ).associateBy { it.name }
+        // ⭐⭐⭐ The set of docs/ARCHITECTURE.md §5.7 — what a person wires.
+        PromptNode, LoadImageNode, CropNode, UpscaleNode, MediaOutputNode,
+        // ⭐ Six SD samplers (three families × sample/inpaint): one class, two
+        // arguments of difference.
+        // docs/ARCHITECTURE.md §5.7 has why the fork is capability AND family.
+    ) + SdSampler.ALL + listOf(
+        // ⚠⚠ The ten it replaces, `hidden` and running, for ONE build: long
+        // enough to render the old inpaint graph and the new one at the same
+        // seed and compare them. Deleted in the next push.
+        MaskNode, MaskCropNode, PasteNode, TextEncodeNode, SampleNode,
+        VaeDecodeNode, VaeEncodeNode, LatentBlendNode,
+        // ⭐ The video path (docs/NEODRAGON.md). ⚠ Listed here like any other
+        // built-in ON PURPOSE: it reaches the NPU in-process rather than
+        // through the backend server, and a registry that made that visible
+        // would be leaking a transport detail into the palette.
+        //
+        // ⚠⚠⚠ **`nd.video_sample`, `video.output` and `image.output` are GONE**,
+        // 2026-09-13. The first was one node doing five jobs; the other two
+        // existed only to hold a `save` switch, and every terminal node draws
+        // its own result and carries save/share/star. `WorkflowIo` rebuilds a
+        // saved graph that names any of them, so nothing a user kept fails to
+        // open. `docs/NEODRAGON.md` §8.
+        // ⭐⭐ ONE video sampler, 2026-09-15 — the user's call. The five-node
+        // split of 2026-09-13 is reversed: `nd.clip_encode` became `core.prompt`
+        // (text, shared with the SD path), and the first frame, the encode, the
+        // sample and the decode are all inside this node. ⚠ The first frame is
+        // no longer a node you can see before the clip; that is the cost, and it
+        // was accepted to make t2v and i2v the same three nodes as t2i and i2i.
+        com.abrah.nightmare.npu.VideoSampleNode,
+        // ⭐ Tap to select — wired into an inpaint node (docs/SEGMENTER.md).
+        SelectObjectNode,
+    )).associateBy { it.name }
 
 /**
  * `cacheKey -> value`, bounded, least-recently-used first out.
@@ -1687,6 +2387,25 @@ class Executor(
      * itself rather than a null dereference.
      */
     private val android: android.content.Context? = null,
+    /**
+     * ⭐⭐⭐ Load a different backend context mid-graph, returning whether it
+     * came up — the relaunch that makes two checkpoints in one graph possible.
+     *
+     * ⚠⚠ A CALLBACK, not something the executor does itself: launching the
+     * server is a process, a notification and a health poll, and every one of
+     * those belongs to the layer that already owns them
+     * (`HarnessOps.ensureBackend`). The executor decides WHEN; the host decides
+     * HOW. ⚠ Null in tests and in any runner that cannot switch — a graph
+     * needing two keys is then refused by name rather than run against the
+     * wrong one.
+     */
+    private val switchKey: (suspend (ContextKey) -> Boolean)? = null,
+    /**
+     * ⚠ What the backend holds as a run begins, for [scheduleByKey] to start
+     * from. Must be the SAME answer [launchKeyFor] was given, or the pre-run
+     * launch and the schedule disagree and pay a relaunch between them.
+     */
+    private val loadedKey: () -> ContextKey? = { null },
 ) {
 
     suspend fun run(
@@ -1705,6 +2424,14 @@ class Executor(
          * did nothing (`docs/UI.md` §5).
          */
         onStart: (nodeId: String, type: String) -> Unit = { _, _ -> },
+        /**
+         * ⭐ A node's own narration, forwarded live — see [NodeCtx.say].
+         *
+         * ⚠ Fired from whatever thread the node runs on, which for a long node
+         * is an IO worker. Compose state takes writes off the main thread and
+         * the rest of this app already relies on that.
+         */
+        onLog: (nodeId: String, text: String) -> Unit = { _, _ -> },
     ): GraphRun {
         val t0 = System.nanoTime()
         fun sinceMs() = (System.nanoTime() - t0) / 1_000_000
@@ -1745,21 +2472,15 @@ class Executor(
                     return GraphRun(emptyList(), emptyMap(), sinceMs(),
                         "node \"${n.id}\" input \"$port\" names output \"${src.port}\" on " +
                             "\"${src.node}\", which has $have")
-                } else if (src.port != from.outputs.first().name) {
-                    // ⚠⚠ The format can address a second output; the RUNTIME
-                    // cannot produce one yet -- `NodeType.run` returns a single
-                    // value, so only the first port is ever filled. Refused here,
-                    // statically and by name, because the alternative is a node
-                    // that sits at BLOCKED "waiting on sp" forever and blames the
-                    // consumer for a limitation of the producer.
-                    // ⇒ Lifting this is `run` returning a port map (and the cache
-                    // holding one). It changes no file on disk, which is why the
-                    // wire format went first.
-                    return GraphRun(emptyList(), emptyMap(), sinceMs(),
-                        "node \"${n.id}\" input \"$port\" wants output \"${src.port}\" of " +
-                            "\"${src.node}\", but a node still produces only its first " +
-                            "(\"${from.outputs.first().name}\") -- multi-output execution is not built")
                 }
+                // ✅ A NON-FIRST port is legal now. It used to be refused here
+                // because `NodeType.run` returned one value, so only the first
+                // port was ever filled -- the wire format could address a second
+                // output and the runtime could not produce one. [NodeType.runPorts]
+                // closed that gap on 2026-09-13, which is what `nd.clip_encode`'s
+                // two conditionings needed (`docs/NEODRAGON.md` §8). The branch
+                // above still catches a port the type does not declare, which is
+                // the only thing left that can be wrong here.
             }
         }
 
@@ -1773,23 +2494,29 @@ class Executor(
         } catch (e: IllegalArgumentException) {
             return GraphRun(emptyList(), emptyMap(), sinceMs(), e.message ?: "bad params")
         }
-        if (keys.size > 1) {
-            // ⚠⚠ Say what the USER can do about it. "the process scheduler is
-            // v1.1" is true and useless: it describes our roadmap, not their
-            // graph. The overwhelmingly common cause is a mixture of `model`
-            // values -- those params are LOCKED, so the user cannot have typed
-            // them, which means the app let the selection drift under a graph it
-            // had already written. Naming the models is what makes that
-            // recognisable. Reported from the phone, 2026-09-09.
-            val models = keys.map { it.model }.distinct()
-            val fix = if (models.size > 1) {
-                "the graph names ${models.size} models (${models.joinToString(", ")}) -- " +
-                    "open Models and select one, which rewrites every node"
-            } else {
-                "they differ by resolution (${keys.joinToString(", ")}), " +
-                    "and v1 pins one for the whole graph"
-            }
-            return GraphRun(emptyList(), emptyMap(), sinceMs(), "cannot run: $fix")
+        // ⭐⭐⭐ **Two checkpoints in one graph are SCHEDULED, not refused** —
+        // 2026-09-15, the user's call. The refusal that stood here named the
+        // models and told the user to pick one; what replaces it is
+        // [scheduleByKey], which orders the graph so each checkpoint is loaded
+        // once, and a relaunch between groups. `docs/ARCHITECTURE.md` §4.
+        //
+        // ⚠ The ORDER is computed even for one key: it is a no-op there
+        // (`scheduleByKey` returns its input), so there is one path rather than
+        // a fast one and a scheduled one that could diverge.
+        val scheduled = try {
+            scheduleByKey(order, { nodeTypes.getValue(it.id).contextKey(it) }, loadedKey())
+        } catch (e: IllegalArgumentException) {
+            return GraphRun(emptyList(), emptyMap(), sinceMs(), e.message ?: "bad params")
+        }
+        // ⚠⚠ A graph that needs a switch and has no way to make one is refused
+        // HERE rather than failing at the first node of the second group — at
+        // which point half the renders have already been paid for.
+        if (keys.size > 1 && switchKey == null) {
+            return GraphRun(
+                emptyList(), emptyMap(), sinceMs(),
+                "cannot run: this graph needs ${keys.size} checkpoints and this runner " +
+                    "cannot switch between them",
+            )
         }
 
         // The residency snapshot, taken once. ⚠ An unreachable /handles is a
@@ -1803,11 +2530,26 @@ class Executor(
         // a reason that has nothing to do with it.
         val resident = if (keys.isEmpty()) emptySet() else host.residentHandles()
             ?: return GraphRun(emptyList(), emptyMap(), sinceMs(),
-                "GET /handles unreachable -- backend down, nothing can run")
+                "GET /handles unreachable — backend down, nothing can run")
         val pruned = cache.prune { v ->
             when (v) {
                 is Value.Handle -> v.id in resident
                 is Value.Image -> v.id in images
+                // ⚠⚠ A clip is kept while its FILE is there, not while its
+                // poster frame is. The poster lives in a store bounded at
+                // twelve, so keying on it would drop a perfectly good 2 s
+                // render as soon as a dozen other nodes had drawn something --
+                // and re-rendering it costs 25 s.
+                is Value.Video -> java.io.File(v.path).isFile
+                // ⚠⚠ A store lookup, not a backend question: these never
+                // leave this process ([Value.Tensors]). ⚠ The store is bounded
+                // at four because a video latent is tens of MB, so an eviction
+                // here is ordinary and means "run that node again".
+                is Value.Tensors -> v.id in com.abrah.nightmare.npu.TensorStore
+                // ⚠ Never stale: it is the text itself, not a handle to
+                // something a store or a server might have dropped.
+                is Value.Prompt -> true
+                is Value.Capability -> true
             }
         }
 
@@ -1826,7 +2568,34 @@ class Executor(
         fun resolve(src: Source): Value? = values[src.node]?.get(src.port ?: outName(src.node))
         var stopped: String? = null
 
-        for (node in order) {
+        // ⚠ Tracks what the BACKEND holds, so a group boundary is a change of
+        // key rather than "this node names one".
+        var loaded: ContextKey? = null
+        for (node in scheduled) {
+            // ⭐⭐ The relaunch. ⚠ Before the node runs and after everything the
+            // previous key needed is done — which is what [scheduleByKey]
+            // guarantees, and why the switch can be this simple.
+            val want = try {
+                nodeTypes.getValue(node.id).contextKey(node)
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+            if (want != null && want != loaded) {
+                // ⚠⚠ A failed switch stops the graph. Carrying on would run the
+                // rest against whatever is still loaded and produce plausible
+                // pictures from the wrong checkpoint — the silent failure this
+                // whole key mechanism exists to prevent.
+                if (loaded != null || switchKey != null) {
+                    val ok = switchKey?.invoke(want) ?: false
+                    if (!ok) {
+                        return GraphRun(
+                            runs, values.mapValues { (id, byPort) -> byPort.getValue(outName(id)) },
+                            sinceMs(), "could not load $want",
+                        )
+                    }
+                }
+                loaded = want
+            }
             val type = nodeTypes.getValue(node.id)
             onStart(node.id, node.type)
 
@@ -1858,33 +2627,57 @@ class Executor(
             // ⚠ A node with a side effect is never served from the cache, and
             // never put into it either -- storing it would only invite a later
             // change to start trusting it.
-            val hit = if (type.cacheable) cache.get(key) else null
-            if (hit != null) {
-                values[node.id] = mutableMapOf(outName(node.id) to hit)
-                val r = NodeRun(node.id, node.type, Outcome.CACHED, 0, hit.describe())
+            // ⭐⭐ Which ports anything downstream reads — see [NodeCtx.wanted].
+            // Computed from the graph, which is the only thing that knows.
+            val wanted = order.flatMap { c -> c.inputs.values.filter { it.node == node.id } }
+                .mapTo(mutableSetOf()) { it.port ?: outName(node.id) }
+            val ports = type.outputs.map { it.name }
+            // ⚠⚠ Cached per OUTPUT PORT. A two-output node whose consumers were
+            // wired one at a time must not recompute the half it already has,
+            // and a flat per-node entry cannot express "I have `cond` but not
+            // `frame_cond`".
+            val hits = if (type.cacheable) {
+                ports.mapNotNull { portName ->
+                    cache.get(portKey(key, portName))?.let { portName to it }
+                }.toMap()
+            } else {
+                emptyMap()
+            }
+            // ⚠ Everything downstream wants, plus the PRIMARY port, must be
+            // present. The primary is the one the canvas draws, so a hit that
+            // lacked it would leave the node blank.
+            val need = (wanted + ports.take(1)).filter { it in ports }
+            if (hits.isNotEmpty() && need.isNotEmpty() && need.all { it in hits }) {
+                values[node.id] = hits.toMutableMap()
+                val shown = hits[outName(node.id)] ?: hits.values.first()
+                val r = NodeRun(node.id, node.type, Outcome.CACHED, 0, shown.describe())
                 runs += r; onNode(r)
                 continue
             }
 
             val n0 = System.nanoTime()
             val r = try {
-                val ctx = NodeCtx(host, images, android) { p ->
-                    onProgress(node.id, p.step, p.total)
-                }
+                val ctx = NodeCtx(
+                    host, images, android,
+                    onProgress = { p -> onProgress(node.id, p.step, p.total) },
+                    say = { line -> onLog(node.id, line) },
+                    wanted = wanted,
+                )
                 // ⚠⚠ The node is run with the SAME params the key was computed
                 // from. Keying on the effective values but running on the
                 // written ones is the classic way a cache starts serving a
                 // result the node never produced -- and it would only show up
                 // once a widget had a default, which is to say once plugins
                 // existed.
-                val v = type.run(ctx, node.copy(params = params), inputs)
-                if (type.cacheable) cache.put(key, v)
-                // ⚠ `run` still returns ONE value, and a single-output type is
-                // the only kind that exists. The wire format now addresses a
-                // port, which is the part a saved workflow locks in; widening
-                // `run` to a port map costs nothing later because it changes no
-                // file on disk. Do it when a node type actually needs two.
-                values[node.id] = mutableMapOf(outName(node.id) to v)
+                val produced = type.runPorts(ctx, node.copy(params = params), inputs)
+                if (type.cacheable) {
+                    produced.forEach { (portName, pv) -> cache.put(portKey(key, portName), pv) }
+                }
+                values[node.id] = produced.toMutableMap()
+                // ⚠ The PRIMARY port is what the run line shows. A node that made
+                // two things describes the one the canvas draws, not an
+                // arbitrary map entry.
+                val v = produced[outName(node.id)] ?: produced.values.first()
                 NodeRun(node.id, node.type, Outcome.RAN,
                     (System.nanoTime() - n0) / 1_000_000, v.describe())
             } catch (e: Exception) {
@@ -1895,6 +2688,15 @@ class Executor(
             }
             runs += r; onNode(r)
         }
+
+        // ⚠⚠⚠ **The video runner is released HERE, once, when the graph is
+        // done** — not per node. Residency across node boundaries is the whole
+        // reason the split is affordable: `clipg` costs 1897 ms to map and 40 ms
+        // to run, and two phases need it. ⚠ Holding it past the run is what put
+        // ~7.5 GB of context in one process and got the app killed
+        // (`docs/NEODRAGON.md` §8), so it is released however the run ended —
+        // including a node that threw.
+        com.abrah.nightmare.npu.VideoRunner.releaseAll()
 
         return GraphRun(
             runs = runs,

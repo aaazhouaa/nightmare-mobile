@@ -27,6 +27,14 @@ object ModelInstaller {
     private const val TAG = "ModelInstaller"
     private const val BUFFER = 1 shl 16
 
+    /**
+     * ⚠ How often [fetch] reports progress, at most. 150 ms is ~7 updates a
+     * second: faster than a person reads a percentage and slower than the
+     * display refreshes, so nothing is gained by a smaller number and the cost
+     * is paid on the main thread.
+     */
+    private const val TICK_MS = 150L
+
     /** Progress, in the shape a UI can render without knowing the phases. */
     data class Progress(val phase: String, val done: Long, val total: Long) {
         val fraction: Float get() = if (total <= 0) 0f else (done.toFloat() / total).coerceIn(0f, 1f)
@@ -40,7 +48,7 @@ object ModelInstaller {
      * ⚠ Blocking. Call it off the main thread; the callers here are coroutines
      * on `Dispatchers.IO`.
      *
-     * @param onProgress called from the worker thread, throttled to ~1 MB.
+     * @param onProgress called from the worker thread, at most every [TICK_MS].
      * @param isCancelled polled during IO so a cancel takes effect promptly
      *   rather than at the end of a gigabyte.
      */
@@ -115,20 +123,41 @@ object ModelInstaller {
         dest: File,
         onProgress: (Progress) -> Unit,
         isCancelled: () -> Boolean,
+    ) = fetch(spec.url(build), dest, build.bytes, "downloading", onProgress, isCancelled)
+
+    /**
+     * ⭐⭐ One resumable, size-checked GET — the only downloader in the app.
+     *
+     * ⚠⚠ Lifted out of [download] rather than copied for the video models
+     * ([com.abrah.nightmare.npu.VideoInstaller]). The resume rules below are the
+     * part that is easy to get subtly wrong — a `200` answering a `Range`
+     * request appends a whole file onto a partial one and produces a file of
+     * the right LENGTH made of the wrong bytes — and two copies of that
+     * reasoning is one copy that eventually stops matching.
+     *
+     * @param bytes the expected size. ⚠⚠ **THE integrity check**: nothing here
+     *   publishes a checksum, and a truncated body arrives as a perfectly
+     *   successful read.
+     */
+    fun fetch(
+        url: String,
+        dest: File,
+        bytes: Long,
+        label: String,
+        onProgress: (Progress) -> Unit,
+        isCancelled: () -> Boolean = { false },
     ) {
-        if (dest.exists() && dest.length() == build.bytes) {
+        if (dest.exists() && dest.length() == bytes) {
             Log.i(TAG, "already downloaded: ${dest.name}")
             return
         }
-        val label = "downloading ${spec.label}"
         var from = if (dest.exists()) dest.length() else 0L
         // A partial LONGER than the target is not a partial; it is junk.
-        if (from > build.bytes) {
+        if (from > bytes) {
             dest.delete()
             from = 0L
         }
 
-        val url = spec.url(build)
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 30_000
             readTimeout = 60_000
@@ -145,33 +174,39 @@ object ModelInstaller {
                 java.io.FileOutputStream(dest, append).use { output ->
                     val buf = ByteArray(BUFFER)
                     var written = from
-                    var since = 0L
+                    var last = 0L
                     while (true) {
                         if (isCancelled()) throw Cancelled()
                         val n = input.read(buf)
                         if (n < 0) break
                         output.write(buf, 0, n)
                         written += n
-                        since += n
-                        // Throttled: every chunk would be thousands of updates a second.
-                        if (since >= 1 shl 20) {
-                            onProgress(Progress(label, written, build.bytes))
-                            since = 0
+                        // ⚠⚠ Throttled on TIME, not bytes. Every chunk would be
+                        // thousands of updates a second — but so was the 1 MB
+                        // rule this replaced, because it scales with the
+                        // CONNECTION: at 60 MB/s it fires 60 times a second, and
+                        // each one crosses to the main thread. A bar cannot show
+                        // more than the display refreshes anyway.
+                        val now = android.os.SystemClock.uptimeMillis()
+                        if (now - last >= TICK_MS) {
+                            last = now
+                            onProgress(Progress(label, written, bytes))
                         }
                     }
-                    onProgress(Progress(label, written, build.bytes))
+                    onProgress(Progress(label, written, bytes))
                 }
             }
         } finally {
             conn.disconnect()
         }
 
-        // ⚠⚠ THE integrity check. There is no published checksum, and a
-        // truncated body arrives as a successful read — this is the only thing
-        // between a dropped connection and a model that fails at first render.
-        if (dest.length() != build.bytes) {
+        if (dest.length() != bytes) {
+            // ⚠ Said for a PERSON — it reaches the Models screen verbatim. It
+            // printed `size mismatch for X.zip: 913410048 != 1056615116` until the
+            // design review, 2026-09-15; the file name stays for the harness log.
             throw IOException(
-                "size mismatch for ${dest.name}: ${dest.length()} != ${build.bytes}"
+                "the download stopped short — ${dest.length() shr 20} of ${bytes shr 20} MB " +
+                    "arrived (${dest.name}). Download again to resume."
             )
         }
     }

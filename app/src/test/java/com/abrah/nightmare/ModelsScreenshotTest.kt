@@ -7,6 +7,7 @@ import com.abrah.nightmare.ui.ModelRow
 import com.abrah.nightmare.ui.ModelsScreen
 import com.abrah.nightmare.ui.NightmareTheme
 import com.github.takahirom.roborazzi.captureRoboImage
+import androidx.compose.ui.graphics.asImageBitmap
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -75,7 +76,7 @@ class ModelsScreenshotTest {
             selected = spec.id == selected,
             progress = if (spec.id == downloading && build != null) {
                 ModelInstaller.Progress(
-                    "downloading ${spec.label}", (build.bytes * fraction).toLong(), build.bytes,
+                    "downloading", (build.bytes * fraction).toLong(), build.bytes,
                 )
             } else {
                 null
@@ -119,13 +120,60 @@ class ModelsScreenshotTest {
         )
     }
 
+    /**
+     * ⭐⭐ The VIDEO tab — the third kind of model.
+     *
+     * ⚠ `rows = emptyList()` is not laziness: with no checkpoint families and
+     * no upscalers, the video tab IS page 0, so this renders it without
+     * teaching `SwipeTabs` to start on a chosen page. It also happens to be a
+     * real state — a phone that downloaded the video models and no checkpoint.
+     */
+    @Test
+    fun videoModelsNotInstalled() = shoot("models-video") {
+        ModelsScreen(
+            rows = emptyList(), busy = false, error = null,
+            onInstall = {}, onCancel = {}, onDelete = {}, onSelect = {},
+            video = com.abrah.nightmare.ui.VideoRow(
+                installedBytes = 0,
+                totalBytes = 8_596_825_402L,
+                missing = listOf("clipg", "mmdit_s0fs"),
+                weightsMissing = emptyList(),
+                supported = true,
+            ),
+        )
+    }
+
+    /**
+     * ⚠ Part-way through, with the host-side weights already down.
+     *
+     * ⚠⚠ They are fetched FIRST although they are 0.7% of the bytes: the app
+     * cannot render a frame without them, so a cancel at 99% must not leave
+     * 8.5 GB on disk that still cannot make a video.
+     */
+    @Test
+    fun videoModelsPartlyDownloaded() = shoot("models-video-weights") {
+        ModelsScreen(
+            rows = emptyList(), busy = true, error = null,
+            onInstall = {}, onCancel = {}, onDelete = {}, onSelect = {},
+            video = com.abrah.nightmare.ui.VideoRow(
+                installedBytes = 1_460_000_000L,
+                totalBytes = 8_596_825_402L,
+                missing = listOf("clipg", "mmdit_s0fs", "mmdit_s1fs"),
+                weightsMissing = emptyList(),
+                supported = true,
+                progress = ModelInstaller.Progress("downloading clipg", 1_460_000_000L, 8_596_825_402L),
+            ),
+        )
+    }
+
     /** A failed install has to say why — "size mismatch" is the common one. */
     @Test
     fun withAnError() = shoot("models-error") {
         ModelsScreen(
             rows = rows(installed = setOf(V1_MODEL), selected = V1_MODEL),
             busy = false,
-            error = "size mismatch for QteaMix_qnn2.28_8gen2.zip: 913410048 != 1056615116",
+            error = "the download stopped short — 871 of 1007 MB arrived " +
+                "(QteaMix_qnn2.28_8gen2.zip). Download again to resume.",
             onInstall = {}, onCancel = {}, onDelete = {}, onSelect = {},
         )
     }
@@ -214,5 +262,49 @@ class ModelsScreenshotTest {
             error = null,
             onOpenRecipe = {}, onOpenSaved = {}, onDeleteSaved = {},
         )
+    }
+
+    /** ⚠ The selection row at 360dp: count, All and six icons must fit ONE row. */
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun historySelectingNarrow() = history(name = "history-selecting-360", selected = setOf("r1", "r2", "r3"))
+
+    /** ⭐ History — the big preview over the grid (DreamUI's layout, 2026-09-17). */
+    @Test
+    fun history() = history(name = "history", selected = emptySet())
+
+    private fun history(name: String, selected: Set<String>) {
+        val colours = listOf(0xFF3A6EA5.toInt(), 0xFFA53A6E.toInt(), 0xFF6EA53A.toInt(), 0xFFA5873A.toInt())
+        fun pic(c: Int): androidx.compose.ui.graphics.ImageBitmap {
+            val b = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888)
+            b.eraseColor(c)
+            return b.asImageBitmap()
+        }
+        val items = (0 until 9).map { i ->
+            com.abrah.nightmare.canvas.Result(
+                id = "r$i", savedAt = i.toLong(), seed = "12$i", model = "qteamix",
+                prompt = "a cat on grass, number $i", width = 512, height = 512,
+                favourite = i % 3 == 0,
+            )
+        }
+        val thumbs = items.associate { it.id to pic(colours[items.indexOf(it) % colours.size]) }
+        captureRoboImage(filePath = "src/test/screenshots/$name.png") {
+            NightmareTheme(darkTheme = true) {
+                LibraryScreen(
+                    tab = LibraryTab.RESULTS, onTab = {}, onClose = {},
+                    models = {}, flows = {},
+                    results = {
+                        com.abrah.nightmare.ui.ResultsScreen(
+                            groups = items.map { com.abrah.nightmare.canvas.ResultGroup(null, listOf(it)) },
+                            results = items,
+                            thumbnailFor = { thumbs[it] },
+                            onOpenFlow = {}, onView = {}, onDelete = {},
+                            onDiskBytes = 42L shl 20,
+                            selected = selected,
+                        )
+                    },
+                )
+            }
+        }
     }
 }

@@ -81,6 +81,17 @@ data class CropRect(val x: Float, val y: Float, val w: Float, val h: Float) {
             abs(w - o.w) < 2e-3f && abs(h - o.h) < 2e-3f
 
     companion object {
+        /**
+         * The whole picture, unframed — the identity crop.
+         *
+         * ⚠ Named rather than written out at each call site: a mask editor on a
+         * node that does no framing still has to say WHICH picture its strokes
+         * are normalised against ([com.abrah.nightmare.MaskFraming]), and
+         * `CropRect(0f, 0f, 1f, 1f)` sprinkled around says it four numbers at a
+         * time.
+         */
+        val WHOLE = CropRect(0f, 0f, 1f, 1f)
+
         /** ⚠ 5%: below this a pinch can zoom past anything useful. */
         const val MIN = 0.05f
 
@@ -187,6 +198,13 @@ fun CropEditor(
      * than with black. ⚠ [CropNode.PAD_BLUR] is the same fill; this draws it.
      */
     padBlur: Boolean = false,
+    /**
+     * ⚠⚠ False when the crop is LOCKED, and then the editor takes no gesture at
+     * all. Ignoring the write alone still swallowed the drag, so the inspector's
+     * scroll could only be reached by a finger outside the frame — which on a
+     * phone is a thin strip of margin. Reported from the phone, 2026-09-16.
+     */
+    interactive: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val onChangeNow by rememberUpdatedState(onChange)
@@ -263,7 +281,7 @@ fun CropEditor(
         Canvas(
             Modifier
                 .fillMaxSize()
-                .pointerInput(source, outW, aspect) {
+                .then(if (!interactive) Modifier else Modifier.pointerInput(source, outW, aspect) {
                     detectTransformGestures { centroid, pan, zoom, _ ->
                         if (scale <= 0f) return@detectTransformGestures
                         // Zoom about the pinch centroid, so whatever is between
@@ -279,7 +297,7 @@ fun CropEditor(
                         emitted = r
                         onChangeNow(r)
                     }
-                }
+                })
         ) {
             // ⚠ Re-framed when the SHAPE changes too, not only the picture: a
             // rewire that changes the demanded size changes the viewport, and a
@@ -336,10 +354,10 @@ fun CropEditor(
  * button beneath it — in landscape, where the window is ~360dp tall, that is the
  * difference between seeing the frame and scrolling to find its bottom edge.
  */
-private const val HEIGHT_SHARE = 0.5f
+internal const val HEIGHT_SHARE = 0.5f
 
 /** ⚠ …but never so small that a finger cannot frame anything in it. */
-private val MIN_FRAME = 140.dp
+internal val MIN_FRAME = 140.dp
 
 /**
  * The picture's own edges, reflected outwards to fill the frame -- BLURRED.
@@ -407,6 +425,25 @@ fun cropRectOf(node: com.abrah.nightmare.Node): CropRect = CropRect(
     node.params["h"]?.toFloatOrNull() ?: 1f,
 ).clamped()
 
+/**
+ * ⭐⭐ [r] refitted to a new output shape — **same centre, as large as fits
+ * inside the old framing** (the user's call, 2026-09-17).
+ *
+ * ⚠ In the SOURCE's pixels, because the rect is normalised per axis: a 0.5 x 0.5
+ * rect on a 4:3 photo is not square. ⚠ Pure, so it is tested without a device.
+ */
+fun refitToAspect(r: CropRect, srcW: Int, srcH: Int, aspect: Float): CropRect {
+    val pw = r.w * srcW
+    val ph = r.h * srcH
+    if (pw <= 0f || ph <= 0f || aspect <= 0f || srcW <= 0 || srcH <= 0) return r
+    val (nw, nh) = if (pw / ph > aspect) (ph * aspect) to ph else pw to (pw / aspect)
+    val w = nw / srcW
+    val h = nh / srcH
+    val cx = r.x + r.w / 2f
+    val cy = r.y + r.h / 2f
+    return CropRect(cx - w / 2f, cy - h / 2f, w, h)
+}
+
 /** Rounded, so the params a workflow stores stay short and stable. */
 fun CropRect.asParams(): List<Pair<String, String>> = listOf(
     "x" to round3(x), "y" to round3(y), "w" to round3(w), "h" to round3(h),
@@ -424,9 +461,51 @@ private fun round3(v: Float) = (Math.round(v * 1000f) / 1000f).toString()
  * the corners of — is the model this editor deliberately replaced, and having
  * both would mean two gesture languages in one view (`docs/UI.md` §5).
  */
-fun cropAspect(node: com.abrah.nightmare.Node, srcW: Int, srcH: Int): Float {
+/**
+ * ⭐ The size the framing will be emitted at — `out_w`/`out_h` on `image.crop`,
+ * the RENDER size on the fused sampler.
+ *
+ * ⚠⚠ One function because two surfaces read it: the editor sizes its viewport
+ * from this and [cropAspect] shapes the frame from it. Two spellings of "what
+ * size is this crop for" would eventually disagree, and the symptom is a frame
+ * whose shape is not the shape of the picture it produces.
+ */
+/**
+ * ⚠⚠⚠ **Ask the node TYPE first.** A framing view has to be the shape of
+ * what the node will actually feed its encoder, and two of the three ways to
+ * know that are params — `out_w`/`out_h` on a crop node, `width`/`height` on an
+ * SD sampler. The **video sampler has neither**: its frame size is a property of
+ * the compiled QNN context (`VideoStructure.frameSize`, 512x320) and appears in
+ * no param, so this fell through to "no idea" and [cropAspect] used the source
+ * photo's own aspect. The image-to-video cropper was therefore whatever shape
+ * the user's photo was, and the 512x320 the sampler wants was taken by a
+ * centre-crop afterwards — silently, on a frame they thought they had chosen.
+ * Reported from the phone, 2026-09-15.
+ *
+ * ⚠ [com.abrah.nightmare.NodeType.framesTo] is where a node states it, so a
+ * plugin node that frames gets the same treatment without a case added here.
+ */
+fun framingOutSize(
+    node: com.abrah.nightmare.Node,
+    type: com.abrah.nightmare.NodeType? = null,
+): Pair<Int, Int> {
+    type?.framesTo(node)?.let { return it }
     val ow = node.params["out_w"]?.toIntOrNull() ?: 0
     val oh = node.params["out_h"]?.toIntOrNull() ?: 0
+    if (ow > 0 && oh > 0) return ow to oh
+    // The sampler frames FOR its own render, so that is the size it emits at.
+    val w = node.params["width"]?.toIntOrNull() ?: 0
+    val h = node.params["height"]?.toIntOrNull() ?: 0
+    return if (w > 0 && h > 0) w to h else 0 to 0
+}
+
+fun cropAspect(
+    node: com.abrah.nightmare.Node,
+    srcW: Int,
+    srcH: Int,
+    type: com.abrah.nightmare.NodeType? = null,
+): Float {
+    val (ow, oh) = framingOutSize(node, type)
     if (ow > 0 && oh > 0) return ow.toFloat() / oh
     val chosen = node.params["aspect"].orEmpty()
     val parts = chosen.split(':')

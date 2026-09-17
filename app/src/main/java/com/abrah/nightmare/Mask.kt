@@ -12,12 +12,10 @@ import kotlin.math.roundToInt
 /**
  * ⭐⭐ Painting an inpaint mask, ported from DreamUI's `MaskRaster.kt`.
  *
- * ⚠ **A trimmed port, not a copy.** DreamUI's version also carries tap-to-segment
- * regions (a SAM 2.1 decode — Tier 1, and there is no host op here that runs a
- * model), ControlNet pose, and the checkerboard padding of a zoom-out crop.
- * None of those exist in this app, and shipping the fields for them would be
- * three dead code paths. What is kept is the part that applies: brush, eraser,
- * invert, grow, feather.
+ * ⚠ **A trimmed port, not a copy.** DreamUI's version also carries ControlNet
+ * pose and the checkerboard padding of a zoom-out crop; neither exists here.
+ * What is kept: brush, eraser, invert, grow, feather — and since 2026-09-17 the
+ * tapped regions of the segmenter ([MaskOp.Tap], `docs/SEGMENTER.md`).
  *
  * ⚠⚠ **White = repaint, black = keep**, matching the backend's own per-step
  * blend (`docs/ARCHITECTURE.md`) and `sd.latent_blend`'s `repaint` port. This
@@ -59,6 +57,64 @@ sealed interface MaskOp {
 
     /** ⚠ Inverts what is masked SO FAR — see [MaskRaster.composite]. */
     data object Invert : MaskOp
+
+    /**
+     * ⭐⭐ A tapped object: the POINT, in the photo's normalised coordinates, and
+     * [k], which of the segmenter's candidates (area-ascending) it shows.
+     *
+     * ⚠⚠ The point, not the pixels (`docs/SEGMENTER.md` §3, option A): a mask is
+     * a string param a shared flow carries, and a bitmap cannot live in it. The
+     * region is re-segmented when drawn — deterministic for one photo and one
+     * point — and cached (`segment.Segmenter`). ⚠ Rasterises to NOTHING until
+     * [MaskTaps.resolve] has turned it into a [Placed]; the sampler refuses a
+     * tapped mask it cannot resolve rather than render without it.
+     */
+    data class Tap(val x: Float, val y: Float, val k: Int) : MaskOp
+
+    /**
+     * ⚠ A resolved region: an ALPHA_8 bitmap stretched over the normalised rect
+     * [x],[y],[w],[h]. IN MEMORY ONLY — [MaskState.encode] never writes one; it
+     * exists so framing and rasterising treat a region as geometry like a stroke.
+     */
+    data class Placed(
+        val alpha: android.graphics.Bitmap,
+        val x: Float = 0f,
+        val y: Float = 0f,
+        val w: Float = 1f,
+        val h: Float = 1f,
+    ) : MaskOp
+}
+
+/** ⭐ Turning stored taps into regions — the one place that does it. */
+object MaskTaps {
+    fun hasTaps(state: MaskState): Boolean = state.ops.any { it is MaskOp.Tap }
+
+    /**
+     * Every [MaskOp.Tap] replaced by its candidate, via [segment]; a tap that
+     * resolves to nothing is dropped. ⚠ [segment] may block (see
+     * `Segmenter.segment`).
+     */
+    fun resolve(
+        state: MaskState,
+        segment: (Float, Float) -> List<android.graphics.Bitmap>?,
+    ): MaskState {
+        if (!hasTaps(state)) return state
+        return state.copy(
+            ops = state.ops.mapNotNull { op ->
+                if (op !is MaskOp.Tap) op
+                else segment(op.x, op.y)?.takeIf { it.isNotEmpty() }
+                    ?.let { MaskOp.Placed(it[op.k.coerceIn(0, it.size - 1)]) }
+            },
+        )
+    }
+
+    /** ⚠ Whether [alpha], stretched over the photo, covers the point. */
+    fun covers(alpha: android.graphics.Bitmap, x: Float, y: Float): Boolean {
+        if (x !in 0f..1f || y !in 0f..1f) return false
+        val px = (x * alpha.width).toInt().coerceIn(0, alpha.width - 1)
+        val py = (y * alpha.height).toInt().coerceIn(0, alpha.height - 1)
+        return (alpha.getPixel(px, py) ushr 24) >= 128
+    }
 }
 
 /**
@@ -96,7 +152,7 @@ data class MaskState(
      * string and a workflow has to round-trip.
      *
      * Format: ops joined by `;`, each `s<r>:x,y|x,y|…` (stroke), `e<r>:…`
-     * (erase) or `i` (invert), then `~<grow>,<feather>`.
+     * (erase), `i` (invert) or `t<x>,<y>,<k>` (a tap), then `~<grow>,<feather>`.
      *
      * ⚠ Three decimals: 1/1000 of a 512 px edge is half a pixel, which is finer
      * than the anti-aliased brush can express — and the string is written into
@@ -108,8 +164,11 @@ data class MaskState(
                 is MaskOp.Invert -> "i"
                 is MaskOp.Stroke -> "s" + strokeText(op.stroke)
                 is MaskOp.Erase -> "e" + strokeText(op.stroke)
+                is MaskOp.Tap -> "t${fmt(op.x)},${fmt(op.y)},${op.k}"
+                // ⚠ Never stored — see [MaskOp.Placed].
+                is MaskOp.Placed -> ""
             }
-        }
+        }.split(";").filter { it.isNotEmpty() }.joinToString(";")
         return "$body~${fmt(growFrac)},${fmt(featherFrac)}"
     }
 
@@ -139,6 +198,12 @@ data class MaskState(
                     when {
                         part.isBlank() -> null
                         part == "i" -> MaskOp.Invert
+                        part.startsWith("t") -> part.substring(1).split(",").let { c ->
+                            val x = c.getOrNull(0)?.toFloatOrNull()
+                            val y = c.getOrNull(1)?.toFloatOrNull()
+                            val k = c.getOrNull(2)?.toIntOrNull()
+                            if (x == null || y == null || k == null) null else MaskOp.Tap(x, y, k)
+                        }
                         part.startsWith("s") || part.startsWith("e") -> {
                             val stroke = parseStroke(part.substring(1)) ?: return@mapNotNull null
                             if (part[0] == 's') MaskOp.Stroke(stroke) else MaskOp.Erase(stroke)
@@ -167,7 +232,96 @@ data class MaskState(
     }
 }
 
+/**
+ * ⭐⭐⭐ **A mask is STORED in the photo's coordinates and PAINTED on the framed
+ * one.** This is the conversion between the two, and it is the whole of it.
+ *
+ * ⚠⚠ Both halves are wanted and they are not the same space:
+ *  - **Stored in the photo's** terms, so re-framing a shot moves the picture and
+ *    the strokes together and a painted eye stays on the eye. The alternative
+ *    ties a painting to whatever the crop happened to be when it was made.
+ *  - **Painted on the framed** one, because that is the view the model sees —
+ *    asked for 2026-09-15 as *"mask should track the crop"*.
+ *
+ * ⚠⚠⚠ Before this existed nothing converted, and NOTHING FAILED: a stroke
+ * painted on the frame was stored as if it had been painted on the whole photo,
+ * and [SdSampler] then put it through the crop a SECOND time. The repaint landed
+ * further down the picture by exactly the frame's offset — eyes came out as lips
+ * (reported 2026-09-16). ⇒ The editor's picture and the editor's coordinates are
+ * one change, not two.
+ *
+ * [x], [y], [w], [h] are the crop's own params: the frame in fractions of the
+ * source, read exactly as [CropGeometry.frameOf] reads them. The whole picture
+ * is `0, 0, 1, 1`, and every function here is then the identity.
+ *
+ * ⚠ A frame may hang OUTSIDE the photo (the padded case), so a converted point
+ * may fall outside 0..1. That is correct and the rasteriser clips it; clamping
+ * here would bend a stroke back inside a frame the user deliberately overhung.
+ */
+object MaskFraming {
+
+    /**
+     * A stroke painted on the frame, in the SOURCE's coordinates.
+     *
+     * ⚠ `radiusFrac` is a fraction of the WIDTH everywhere ([MaskRaster.drawStroke]),
+     * so it scales by [w] alone — the same factor the x axis takes. A frame whose
+     * pixel aspect differs from the picture it renders to would need two, but that
+     * is the stretch case that distorts the photo too.
+     */
+    fun toSource(s: MaskStrokeData, x: Float, y: Float, w: Float, h: Float): MaskStrokeData =
+        if (w <= 0f || h <= 0f) s
+        else MaskStrokeData(
+            s.points.map { (u, v) -> (x + u * w) to (y + v * h) },
+            s.radiusFrac * w,
+        )
+
+    /** The inverse of [toSource]: a stored stroke as the frame sees it. */
+    fun toFrame(s: MaskStrokeData, x: Float, y: Float, w: Float, h: Float): MaskStrokeData =
+        if (w <= 0f || h <= 0f) s
+        else MaskStrokeData(
+            s.points.map { (px, py) -> ((px - x) / w) to ((py - y) / h) },
+            s.radiusFrac / w,
+        )
+
+    /**
+     * The whole stored mask as the frame sees it — what the editor draws over
+     * the framed picture.
+     *
+     * ⚠ `grow` and `feather` are width fractions like the brush, so they scale
+     * with it; leaving them alone would preview a softer edge than the render
+     * produces by the crop's own factor. ⚠ [MaskOp.Invert] is pointwise, so it
+     * survives the mapping untouched — inverting then cropping is cropping then
+     * inverting.
+     */
+    fun toFrame(state: MaskState, x: Float, y: Float, w: Float, h: Float): MaskState =
+        if (w <= 0f || h <= 0f) state
+        else state.copy(
+            ops = state.ops.map { op ->
+                when (op) {
+                    is MaskOp.Invert -> op
+                    is MaskOp.Stroke -> MaskOp.Stroke(toFrame(op.stroke, x, y, w, h))
+                    is MaskOp.Erase -> MaskOp.Erase(toFrame(op.stroke, x, y, w, h))
+                    // ⚠ A point moves like a stroke's; a region's rect likewise.
+                    is MaskOp.Tap -> MaskOp.Tap((op.x - x) / w, (op.y - y) / h, op.k)
+                    is MaskOp.Placed -> MaskOp.Placed(
+                        op.alpha, (op.x - x) / w, (op.y - y) / h, op.w / w, op.h / h,
+                    )
+                }
+            },
+            growFrac = state.growFrac / w,
+            featherFrac = state.featherFrac / w,
+        )
+}
+
 object MaskRaster {
+
+    /**
+     * ⭐ The mask's display colour and strength — ONE pair for the editor, the
+     * inpaint previews and the canvas node, so all three look the same
+     * (2026-09-17: the node drew it white).
+     */
+    const val OVERLAY_RGB = 0xFF3B30
+    const val OVERLAY_ALPHA = 140
 
     /**
      * ⚠ 3-4 chamfer weights: an integer distance transform, straight vs
@@ -245,6 +399,16 @@ object MaskRaster {
             isDither = true
         }
         ops.filterIsInstance<MaskOp.Stroke>().forEach { drawStroke(canvas, paint, it.stroke, w, h) }
+        // ⭐ Regions in the same run as strokes, so grow spreads them together.
+        // ⚠ An ALPHA_8 bitmap draws in the PAINT's colour, so white it is.
+        paint.style = Paint.Style.FILL
+        ops.filterIsInstance<MaskOp.Placed>().forEach { r ->
+            canvas.drawBitmap(
+                r.alpha, null,
+                android.graphics.RectF(r.x * w, r.y * h, (r.x + r.w) * w, (r.y + r.h) * h),
+                paint,
+            )
+        }
         return bmp
     }
 
@@ -352,13 +516,13 @@ object MaskRaster {
     }
 
     /** Distance seed: 0 on painted pixels, "far" elsewhere. */
-    private fun seed(pixels: IntArray, w: Int, h: Int): IntArray {
+    fun seed(pixels: IntArray, w: Int, h: Int): IntArray {
         val far = Int.MAX_VALUE / 4
         return IntArray(pixels.size) { if ((pixels[it] and 0xFF) >= 128) 0 else far }
     }
 
     /** Two-pass 3-4 chamfer distance transform, in place. */
-    private fun chamfer(dist: IntArray, w: Int, h: Int) {
+    fun chamfer(dist: IntArray, w: Int, h: Int) {
         fun at(x: Int, y: Int) = dist[y * w + x]
         for (y in 0 until h) {
             for (x in 0 until w) {
@@ -386,7 +550,7 @@ object MaskRaster {
         }
     }
 
-    private fun smoothstep(t: Float): Float = t * t * (3f - 2f * t)
+    fun smoothstep(t: Float): Float = t * t * (3f - 2f * t)
 
     /**
      * The mask as a translucent tint for drawing OVER the photo.

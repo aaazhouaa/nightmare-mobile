@@ -20,6 +20,15 @@ import java.security.MessageDigest
  * ⭐ Handles, not buffers (docs/ARCHITECTURE.md §6). A conditioning is 473 KB
  * and a latent 64 KB; the graph moves ids and the host moves the bytes.
  */
+/**
+ * ⚠ Here rather than beside [cacheKey]'s digest because [Value.Prompt] is the
+ * only value that has to address ITSELF -- every other one is addressed by a
+ * store that hashed the bytes already.
+ */
+internal fun sha256(text: String): String =
+    MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
+        .joinToString("") { "%02x".format(it) }.take(32)
+
 sealed interface Value {
 
     /**
@@ -45,9 +54,115 @@ sealed interface Value {
      * the store is bounded — so the executor checks it is still held before
      * trusting a cached one.
      */
-    data class Image(val id: String, val w: Int, val h: Int) : Value {
+    data class Image(
+        val id: String,
+        val w: Int,
+        val h: Int,
+        /**
+         * ⭐ Where this picture was CUT from, when it was — set by `image.crop`
+         * and `image.mask_crop`, read by `image.paste` to put a patch back.
+         * Null for everything else. [Region] says why it is rects, not ids.
+         */
+        val region: Region? = null,
+    ) : Value {
         override fun address() = id
         override fun describe() = "image ${w}x$h $id"
+    }
+
+    /**
+     * ⭐⭐ A video: an MP4 on disk, plus one frame to look at.
+     *
+     * ⚠⚠ **A file, not 49 bitmaps.** At 640×1024 ARGB a frame is 2.6 MB, so a
+     * clip held in memory is ~128 MB — and [NodeCache] would pin it for the life
+     * of the canvas. The generator encodes straight to H.264 in cacheDir and
+     * this carries the path; 49 frames become ~1 MB that nothing has to keep on
+     * the heap.
+     *
+     * ⚠ [posterId] is frame 0 in the [ImageStore], and it is what the canvas
+     * draws on the node. Exactly ONE frame enters that store: it is bounded at
+     * twelve entries, so a clip that put all its frames there would evict every
+     * other node's picture.
+     */
+    data class Video(
+        val path: String,
+        val frames: Int,
+        val w: Int,
+        val h: Int,
+        val posterId: String,
+    ) : Value {
+        // ⚠ The FILE NAME, which the producer makes a content address (a hash of
+        // everything the clip was generated from). The path is not usable: it
+        // carries a cache directory that differs between installs, so two
+        // identical clips would look different to a downstream key.
+        override fun address() = path.substringAfterLast('/')
+        override fun describe() = "video ${frames}f ${w}x$h"
+
+        /** ⚠ Valid only while the store still holds it, like any [Image]. */
+        val poster get() = Image(posterId, w, h)
+    }
+
+    /**
+     * ⭐⭐ What a person typed: positive and negative, as TEXT.
+     *
+     * ⚠⚠ **Not a conditioning, and that is the whole point**
+     * (docs/ARCHITECTURE.md §5.7). A COND is encoded BY a checkpoint and belongs
+     * to it, so one prompt node could never feed two samplers on two models —
+     * which is exactly what chaining across checkpoints needs. The encode moved
+     * INSIDE the sampler, where the model is known.
+     *
+     * ⚠ A value rather than a handle, unlike every other type here: the text is
+     * ~100 bytes, there is no store for it to go stale in, and the thing it
+     * would address is cheaper to carry than to look up. ⚠ The 129 ms encode is
+     * not lost — the backend content-addresses conditionings, so the same text
+     * encoded twice is 0–2 ms (§3).
+     */
+    data class Prompt(val positive: String, val negative: String) : Value {
+        // ⚠ The two halves are separated by a byte neither can contain.
+        // Without it a prompt "ab" with no negative and a prompt "a" with
+        // negative "b" address identically, and the cache would serve one
+        // node's picture for the other's.
+        override fun address() = sha256(positive + '\u0000' + negative)
+        // ⚠⚠ SHORT, and it says that it is short. It took 40 characters and
+        // stopped, with no mark — so a run log line read as the whole prompt,
+        // wrapped over two rows of the panel, and pushed the timings that the
+        // log exists for off the side. Reported from the phone, 2026-09-15.
+        // ⚠ An ellipsis only when something was actually cut: a prompt that
+        // fits must not be made to look truncated.
+        override fun describe() =
+            positive.ifBlank { return@describe "(no prompt)" }
+                .let { if (it.length <= PROMPT_BRIEF) it else it.take(PROMPT_BRIEF).trimEnd(' ', ',') + "…" }
+    }
+
+    /**
+     * ⭐⭐ A bundle of float tensors held app-side —
+     * [com.abrah.nightmare.npu.TensorStore].
+     *
+     * ⚠⚠ **Not a [Handle], and the difference is the process.** A `Handle`
+     * names a tensor in the BACKEND, and the executor proves it is still alive
+     * by asking `GET /handles`. These live in this process, produced and
+     * consumed by `libnmqnn.so`, and there is no server to ask — so liveness
+     * is a lookup in the store.
+     *
+     * @param kind `video_cond` or `video_latent`. ⚠ It is what the PORT type
+     *   maps to, and the two must not be merged into one name: a conditioning
+     *   wired into a latent port is a graph that would run and produce
+     *   confident nonsense.
+     */
+    data class Tensors(val id: String, val kind: String) : Value {
+        override fun address() = id
+        override fun describe() = kind.replace('_', ' ')
+    }
+
+    /**
+     * ⭐ A CAPABILITY, not data — what `mask.segment_model` puts on its wire.
+     *
+     * ⚠ Wiring it is the whole point (`docs/SEGMENTER.md` §1): it makes the Tap
+     * tool appear in the inpaint editor. The regions themselves travel as taps
+     * in the mask param, so the value carries nothing and addresses by [kind].
+     */
+    data class Capability(val kind: String) : Value {
+        override fun address() = kind
+        override fun describe() = kind
     }
 
     /**
@@ -61,6 +176,21 @@ sealed interface Value {
     fun address(): String
 
     fun describe(): String
+}
+
+/**
+ * ⭐ The frame a UI should draw for this value, or null when there is nothing to
+ * look at.
+ *
+ * ⚠ It exists so the canvas, the results store and the harness do not each
+ * acquire their own `when` over [Value] — a video is a picture as far as every
+ * one of them is concerned, and the day it stopped being one was the day four
+ * call sites would have had to be found.
+ */
+fun Value.previewImage(): Value.Image? = when (this) {
+    is Value.Image -> this
+    is Value.Video -> poster
+    else -> null
 }
 
 /**
@@ -237,6 +367,136 @@ data class Source(val node: String, val port: String? = null) {
 }
 
 /**
+ * ⭐⭐ The node types that ROLL A SEED — the one list, so nothing can know about
+ * half of them.
+ *
+ * ⚠⚠ It exists because `"sd.sample"` was written as a literal in six places
+ * that each mean "the sampler": the pre-run roll (`HarnessOps.runRolled`), the
+ * seed shown on a picture and the node a lock writes it to
+ * (`canvas.seedFor`/`canvas.samplerFor`), the run bar's lock button, and the
+ * seed filed with a kept result. `nd.video_sample` matched none of them, so a
+ * video graph rolled nothing (`seed 0` hashed to `"0"` and the executor served
+ * the CACHED clip — the exact failure `runRolled`'s own comment describes),
+ * showed no seed, and offered no lock. Reported from the phone, 2026-09-12.
+ *
+ * ⚠ Matched by TYPE, not by "has a widget called seed": `sd.vae_encode` carries
+ * one and rolling it would make every img2img graph full price every Run — the
+ * distinction `runRolled` already drew and the reason this is a list rather
+ * than a predicate over widgets.
+ */
+// ⚠⚠ `nd.first_frame` rolls too: it has its own seed and generates the
+// picture the clip starts from, so a graph whose frame seed never rolled
+// would animate the same still every Run.
+/**
+ * ⭐⭐ The four SD sampler types, as a SET.
+ *
+ * ⚠⚠ The fork of 2026-09-15 (capability × family, `docs/ARCHITECTURE.md` §5.7)
+ * turned every `type == "sd.sample"` into a membership test. A rule that still
+ * compares one string works on SD 1.5 and silently does nothing on SDXL — which
+ * is the shape of bug that renders fine and is wrong.
+ */
+/**
+ * ⭐⭐⭐ **The LAST-NODE rule** — a node is "last" when nothing of its own KIND
+ * is downstream of it.
+ *
+ * The user's rule, 2026-09-15, and it settles two questions with one predicate:
+ *
+ * | applied to | means |
+ * |---|---|
+ * | a sampler | only this one may arm a batch sweep |
+ * | an output | only this one carries save / star / download, and feeds Results |
+ *
+ * ⚠⚠ **Why the LAST sampler and not any.** Sweeping an earlier one re-runs
+ * everything downstream of it, so ten seeds on a two-sampler chain is twenty
+ * renders — a control that does not say so is a control that hides a
+ * twenty-minute job behind one tap.
+ *
+ * ⭐ It handles BRANCHES without a special case, which is why it is stated as
+ * "of its own kind" rather than "the last node in the graph". Two chains that
+ * each end in an output have two last outputs, and each owns its own branch —
+ * the user's call: *allow it; the sweep and Results use the branch you armed*.
+ * A rule phrased as "the single furthest-downstream node" would have had no
+ * answer there.
+ *
+ * ⚠ Cycles cannot reach here — `topoSort` refuses them by name — but the walk
+ * is bounded anyway, because this runs while a sheet is OPENING and a graph
+ * that will not run must still open.
+ */
+fun isLastOfKind(graph: Graph, nodeId: String, kind: (Node) -> Boolean): Boolean {
+    val consumers = graph.nodes
+        .flatMap { n -> n.inputs.values.map { it.node to n.id } }
+        .groupBy({ it.first }, { it.second })
+    val seen = mutableSetOf(nodeId)
+    val queue = ArrayDeque(consumers[nodeId].orEmpty())
+    var hops = 0
+    while (queue.isNotEmpty() && hops++ < 256) {
+        val id = queue.removeFirst()
+        if (!seen.add(id)) continue
+        val n = graph.byId[id] ?: continue
+        if (kind(n)) return false
+        queue.addAll(consumers[id].orEmpty())
+    }
+    return true
+}
+
+/** ⭐ May this sampler arm a sweep? Only the last one in its chain may. */
+fun canSweep(graph: Graph, nodeId: String): Boolean {
+    val node = graph.byId[nodeId] ?: return false
+    if (!isSampler(node.type)) return false
+    return isLastOfKind(graph, nodeId) { isSampler(it.type) }
+}
+
+/** ⭐ Does this output node own its branch's picture actions and Results entry? */
+fun isLastOutput(graph: Graph, nodeId: String): Boolean {
+    val node = graph.byId[nodeId] ?: return false
+    if (node.type != "core.output") return false
+    return isLastOfKind(graph, nodeId) { it.type == "core.output" }
+}
+
+/**
+ * ⚠ How much of a prompt a one-line readout shows. A run-log row is one line
+ * beside a node id and a duration; 28 characters is what fits beside them on a
+ * 411dp phone, and the rest is on the node itself where it can be read.
+ */
+const val PROMPT_BRIEF = 28
+
+val SD_SAMPLER_TYPES = setOf(
+    "sd15.sample", "sdxl.sample", "anima.sample",
+    "sd15.inpaint", "sdxl.inpaint", "anima.inpaint",
+)
+
+/** ⚠ The ones that carry a mask, its editor and the paste back. */
+val SD_INPAINT_TYPES = setOf("sd15.inpaint", "sdxl.inpaint", "anima.inpaint")
+
+val SAMPLER_TYPES = SD_SAMPLER_TYPES + setOf("nd.sample")
+
+/**
+ * ⭐ Every node that FRAMES a picture it was given — the four SD samplers and
+ * the video one.
+ *
+ * ⚠ The inspector draws a framing view for these and the canvas shows their
+ * framed input; `image.crop` is framing too but is its own node, so it is added
+ * where that matters rather than here.
+ */
+val FRAMING_TYPES = SD_SAMPLER_TYPES + setOf("nd.sample")
+
+/**
+ * ⭐ Every node holding a FRAMING of a picture it was handed — the `x/y/w/h`
+ * rect and its lock. ⚠ One home: the inspector draws a framing view for exactly
+ * these, and [Graph.withNewPicture] resets exactly these.
+ */
+val FRAMES_PICTURE_TYPES = setOf("image.crop") + FRAMING_TYPES
+
+/**
+ * ⭐ Every node holding a PAINTING on a picture it was handed.
+ * ⚠⚠ Only the INPAINT samplers — an image-to-image node has no mask editor.
+ */
+val PAINTS_PICTURE_TYPES = setOf("image.mask") + SD_INPAINT_TYPES
+
+/** ⚠ See [SAMPLER_TYPES] — never compare against one of those strings directly. */
+fun isSampler(type: String): Boolean = type in SAMPLER_TYPES
+
+/**
  * Builds a [Node.inputs] map from the compact wire spelling.
  *
  * ⚠ Each value goes through [Source.parse], so `"sample"` is the sole output and
@@ -292,6 +552,37 @@ data class Graph(val nodes: List<Node>) {
     fun withParams(nodeId: String, values: Map<String, String>) = copy(
         nodes = nodes.map { if (it.id == nodeId) it.copy(params = it.params + values) else it }
     )
+
+    /**
+     * ⭐⭐ A new picture on [nodeId] — and every framing and painting downstream
+     * of it forgotten.
+     *
+     * ⚠⚠ Both are stored NORMALISED to the picture they were made on, so they
+     * survive a new photo as numbers and mean nothing on it: a crop around a
+     * face lands on a wall, a mask painted over a hand lands on the sky. Asked
+     * for 2026-09-16, *"choosing a new image should reset the crop and the mask,
+     * for all nodes"* — so DOWNSTREAM, not only the next node: a crop feeding an
+     * inpaint sampler is framing the same new photo.
+     *
+     * ⚠ The LOCK goes too. It protected a framing that no longer exists, and a
+     * lock left on the default rect would refuse the first drag on the new one.
+     * `grow`/`feather`/padding stay — those are settings, not content.
+     */
+    fun withNewPicture(nodeId: String, uri: String): Graph {
+        val framing = setOf("x", "y", "w", "h", CropNode.LOCKED)
+        return copy(nodes = nodes.map { n ->
+            when {
+                n.id == nodeId -> n.copy(params = n.params + ("uri" to uri))
+                !dependsOn(n.id, nodeId) -> n
+                else -> {
+                    var drop = emptySet<String>()
+                    if (n.type in FRAMES_PICTURE_TYPES) drop = drop + framing
+                    if (n.type in PAINTS_PICTURE_TYPES) drop = drop + MaskNode.OPS
+                    if (drop.isEmpty()) n else n.copy(params = n.params - drop)
+                }
+            }
+        })
+    }
 
     /**
      * Remove a node, and every wire that pointed at it.
@@ -398,6 +689,16 @@ private const val SEP = '\u001F'
  * depend on map iteration order, which is stable right up until it is not, and
  * an undelimited concatenation collides (`a=1,b=2` against `a=1b=2`).
  */
+/**
+ * ⚠⚠ One cache entry per OUTPUT PORT of a node.
+ *
+ * [cacheKey] already covers the type, version, params and inputs — everything
+ * that decides what a node produces. The port name is what distinguishes the
+ * two things it produced FROM each other, and without it a two-output node's
+ * second value would overwrite its first.
+ */
+fun portKey(nodeKey: String, port: String): String = "$nodeKey#$port"
+
 fun cacheKey(
     type: String,
     version: String,

@@ -3,6 +3,8 @@
       简体中文. ⚠ Keys and %1$s ordering follow values/strings.xml exactly; the
       positional markers exist so word order can differ from English.
     -->
+    <!-- ⚠ Not translated: the app's name is the same in every language. -->
+    <string name="app_name" translatable="false">Nightmare</string>
     <string name="nav_models">模型</string>
     <string name="nav_flows">流程</string>
     <string name="nav_results">结果</string>
@@ -49,7 +51,7 @@
     <string name="theme_light">浅色</string>
     <string name="theme_canvas_note">画布始终以深色绘制 — 它有自己的配色</string>
     <string name="community_title">自制节点</string>
-    <string name="community_intro">一个节点由两个文件组成：一份声明其端口与参数的清单，和一段运行它的脚本。打包成 zip 后从「流程」导入，或把文件夹推送到本应用的插件目录。无需工具链、无需编译、无需新版本。</string>
+    <string name="community_intro">一个节点由两个文件组成：一份声明其端口与参数的清单，和一段运行它的脚本。打包成 zip 后在上方导入节点包，或把文件夹推送到本应用的插件目录。无需工具链、无需编译、无需新版本。</string>
     <string name="community_files_title">这两个文件</string>
     <string name="community_files_body">node.json 声明包 id、节点类型、输入与输出、控件，以及需要哪些宿主操作权限。\n\nindex.js 调用 __nm.register(&lt;pack&gt;:&lt;Type&gt;, { run: fn })。你的 run(ctx, inputs, widgets) 返回最后一个宿主操作的结果。</string>
     <string name="community_ops_title">ctx.host 可调用的操作</string>
@@ -61,18 +63,20 @@
     <string name="community_cannot_title">目前还不能做什么</string>
     <string name="community_cannot_body">宿主没有运行模型的操作，因此节点无法做分割、检测或估计。那属于下一层级，尚未实现。\n\n脚本运行在 QuickJS 沙箱中，权限默认拒绝，因此插件包无法访问网络或你的文件。但目前还没有对运行时长的限制。</string>
     <string name="community_reference">参考</string>
-    <string name="community_repo">github.com/AbrahamPaulJ/nightmare-mobile\n\nexamples/ 目录中有四个可用的示例包，从单一操作的封装到含两个节点的工具包。README 涵盖与本页相同的内容，并附完整清单。\n\n该仓库目前为私有，只有获得访问权限后链接才有效。</string>
+    <string name="community_repo">github.com/AbrahamPaulJ/nightmare-mobile\n\nexamples/ 目录中有四个可用的示例包，从单一操作的封装到含两个节点的工具包。README 涵盖与本页相同的内容，并附完整清单。</string>
     <string name="community_experimental">实验性。插件格式在版本之间仍可能变动，且导入的包尚无校验机制，请像对待任何来路不明的代码那样谨慎导入。</string>
 
-    <string name="flows_import">导入</string>
-    <string name="pack_import_note">JavaScript 节点包（.zip）。导入后会出现在面板里，和内置节点排在一起。</string>
-    <string name="flows_import_note">别人发给你的流程（.json），导入后会在画布上打开</string>
-    <string name="flows_import_flow">流程</string>
+    <string name="flows_import">导入流程</string>
+    <string name="flows_import_note">别人发给你的流程（.json）。它会在画布上打开。</string>
+    <string name="flows_import_flow">导入</string>
     <string name="flows_import_pack">导入节点包</string>
+    <string name="pack_import_note">一个 JavaScript 节点的 .zip 包。它们会出现在调色板中，与内置节点并列。</string>
     <string name="flows_import_warning">⚠ 节点包会运行自己的代码 — 请只导入你信任的包</string>
     <string name="flows_recommended">推荐</string>
+    <string name="flows_saved">已保存</string>
     <string name="save">保存</string>
     <string name="cancel">取消</string>
+    <string name="r2_flows_empty">还没有保存的流程——在画布上搭好一个流程，然后在那里按“保存”。</string>
     <string name="save_workflow">保存此工作流</string>
     <string name="save_workflow_named">保存 \"%1$s\"</string>
     <string name="name">名称</string>
@@ -80,13 +84,12 @@
 
     <string name="open_flow">打开流程</string>
     <string name="close">关闭</string>
-    <string name="cd_forget_result">删除这一张</string>
+    <string name="cd_delete_result">删除这一张</string>
     <string name="cd_open_fullscreen">点击全屏查看</string>
 
     <string name="download">下载</string>
     <string name="download_mb">下载 %1$d MB</string>
     <string name="delete">删除</string>
-    <string name="remove">移除</string>
     <string name="use">使用</string>
     <string name="in_use">使用中</string>
     <string name="rename_node">节点名称</string>
@@ -102,9 +105,18 @@
     <string name="shape_is_free">此模型仅渲染单一尺寸并裁剪成比例，无需重新加载。</string>
     <string name="unsupported">不支持</string>
     <string name="installed_mb">已安装 · %1$d MB</string>
-    <string name="not_installed_mb">未安装  需下载 %1$d MB</string>
+    <string name="in_use_mb">使用中 · %1$d MB</string>
+    <string name="incomplete_missing">不完整 · 缺少 %1$s</string>
+    <string name="not_installed_mb">未安装 · 需下载 %1$d MB</string>
     <string name="cannot_run_it">本机无法运行</string>
     <string name="upscalers">放大模型</string>
+    <string name="video">视频</string>
+    <string name="video_models">Neodragon（视频）</string>
+    <string name="video_models_note">一次下载 %1$s GB，分为 21 个分片。支持断点续传，连接中断只需重下当时那个文件。</string>
+    <string name="video_about">在 NPU 上进行文生视频与图生视频。无需后端，无需 checkpoint。</string>
+    <string name="mb_of_total">%1$d / %2$d MB</string>
+    <string name="video_delete_title">删除视频模型？</string>
+    <string name="video_delete_body">释放 %1$d MB。重新获取需要下载 %2$d MB。在重新安装之前，所有视频流程都会拒绝运行。</string>
     <string name="upscalers_note">每个 8-24 MB。在流程中添加放大节点即可使用。</string>
 
     <string name="cd_paint">绘制</string>
@@ -165,6 +177,9 @@
     <string name="palette_cat_image">图像</string>
     <string name="palette_cat_conditioning">条件编码</string>
     <string name="palette_cat_misc">插件</string>
+    <string name="palette_tab_common">常用</string>
+    <string name="palette_tab_generate">生成</string>
+    <string name="palette_tab_inpaint">重绘</string>
     <string name="palette_ports">%1$d 入 · %2$d 出</string>
 
     <string name="node_sd_sample">采样</string>
@@ -251,6 +266,8 @@
     <string name="models_pick_zip">选择 zip 包</string>
 
     <!-- 结果界面。 -->
+    <string name="cd_star_selected">收藏所选</string>
+    <string name="cd_unstar_selected">取消收藏所选</string>
     <string name="cd_save_selected">将选中图片保存到相册</string>
     <string name="cd_forget_selected">删除选中的图片</string>
     <string name="results_forget_batch_title">删除这一批？</string>
@@ -284,6 +301,8 @@
     <!-- HarnessViewModel toast（非 Composable：经 application 解析）。 -->
     <string name="vm_picture_gone">那张图片已不在内存中——请重新运行</string>
     <string name="vm_saved_gallery">已保存到相册</string>
+    <string name="vm_clip_saved_gallery">片段已保存到相册</string>
+    <string name="vm_saved_what">已将 %1$s 保存到相册</string>
     <string name="vm_save_failed">保存失败：%1$s</string>
     <string name="vm_picture_missing">那张图片不存在</string>
     <string name="vm_share_failed">分享失败：%1$s</string>
@@ -309,6 +328,7 @@
 
     <!-- ===== 二轮：模型页 ===== -->
     <string name="r2_models_hint_sd15">每个约 1 GB，请使用 Wi-Fi 下载。</string>
+    <string name="r2_models_hint_anima">每个约 4.3 GB，解压期间需要约 9 GB 可用空间。速度较慢：每张图约 80 秒。渲染时请关闭其他应用。请使用 Wi-Fi 下载。</string>
     <string name="r2_models_hint_sdxl">每个约 3.5 GB；解压期间需要约 7.5 GB 可用空间。请使用 Wi-Fi 下载。</string>
     <string name="r2_models_delete_frees">将释放 %1$d MB 空间。</string>
     <string name="r2_models_upscaler_restore">恢复需要重新下载 %1$d MB。在重新安装之前，使用该放大器的 Upscale 节点会运行失败。</string>
@@ -319,6 +339,7 @@
     <string name="r2_models_import_desc">在电脑上转换好的 QNN 模型文件 zip 包。SD 1.5 或 SDXL 均可——会自动识别。</string>
     <string name="r2_models_name_reserved">这是内置模型的名称，请换一个。</string>
     <string name="r2_models_name_invalid">不能包含斜杠、冒号或前导点号。</string>
+    <string name="r2_models_name_note_empty">留空则使用 zip 的文件名。该名称将成为文件夹名，并作为 id 写入所有使用它的工作流。</string>
     <string name="r2_models_name_note">该名称将作为文件夹名，并作为 id 写入所有使用它的工作流。</string>
     <string name="r2_models_status_in_use">使用中  %1$d MB</string>
     <string name="r2_models_incomplete">不完整——缺少 %1$s</string>
@@ -348,6 +369,10 @@
     <string name="r2_main_models">模型</string>
     <string name="r2_main_unsaved_flow">未保存的流程</string>
     <string name="r2_main_holding">已加载 %1$s</string>
+    <string name="r2_main_idle_suffix">（空闲）</string>
+    <string name="r2_main_loading">（加载中…）</string>
+    <string name="r2_main_graphs">个图</string>
+    <string name="r2_main_no_checkpoint">无需 checkpoint</string>
     <string name="r2_main_idle">%1$s（空闲）</string>
     <string name="r2_main_sampling">采样  %1$d / %2$d</string>
     <string name="r2_main_open_flow_body">画布上的流程有未保存的修改。打开新流程会替换它，修改将丢失。</string>
@@ -370,6 +395,7 @@
     <!-- ===== 二轮：节点检查器 ===== -->
     <string name="r2_ins_small_picture">当前图片为 %1$s，小于要求的 %2$s——黑边是补白而不是裁剪，直接放大只会让画面变糊。</string>
     <string name="r2_ins_crop_hint_out">拖动移动 · 双指缩放 · 输出 %1$s</string>
+    <string name="r2_ins_crop_locked">已锁定 · 解锁后可移动或缩放 · 输出 %1$s</string>
     <string name="r2_ins_crop_hint_own">拖动移动 · 双指缩放 · 取景框即输出，按原始尺寸</string>
     <string name="r2_ins_mask_no_source">还没有可绘制的图片——把图片接进这个节点，解析出来后就会显示在这里。</string>
     <string name="r2_ins_crop_no_pick">还没有图片——请在相连的“载入图片”节点上选择一张。</string>
@@ -422,6 +448,7 @@
     <string name="rename">重命名</string>
     <string name="results_n_pictures">%1$d 张图片</string>
     <string name="results_one_picture">1 张图片</string>
+    <string name="results_one_clip">1 个片段</string>
     <string name="results_no_prompt">无提示词</string>
     <string name="batch_nth_run">第 %1$d 次</string>
     <string name="models_imported_tag">已导入</string>
@@ -432,4 +459,10 @@
     <plurals name="kept_in_results">
         <item quantity="other">已将 %1$d 张图片保存到结果</item>
     </plurals>
+    <string name="cd_tap_object">选择物体</string>
+    <string name="mask_tap_working">正在查找物体…</string>
+    <string name="mask_tap_hint">点按物体即可选中。再点一次选中更多，再点一次取消选择。</string>
+    <string name="tools">工具</string>
+    <string name="tools_note">在手机 CPU 上运行的小助手。接入流程即可使用。</string>
+    <string name="segmenter_about">在 Inpaint 蒙版中点按物体即可选中。将 Segment model 节点接入 Inpaint。</string>
 </resources>

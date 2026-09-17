@@ -247,9 +247,22 @@ fun deriveSizes(graph: Graph, types: Map<String, NodeType>): Graph {
             // ⚠ A conflict resolves to 0 -- "promise nothing" -- rather than to
             // one of the two answers. Picking would render a plausible picture
             // for one branch and a wrong one for the other, silently.
+            //
+            // ⚠⚠⚠ **[SizeDemand.None] is NOT a conflict, and must not zero a
+            // size the user set.** Nothing downstream ASKING for a size is the
+            // ordinary state of a crop in front of `image.upscale`, which takes
+            // whatever it is given -- and this used to overwrite an explicit
+            // `out_w`/`out_h` with 0 on every canvas edit, so such a crop could
+            // not hold a size at all. Measured 2026-09-13: a crop set to
+            // 1024x1024 emitted its 4096² input unchanged.
+            //
+            // ⇒ No demand means leave it alone. A stale size after the consumer
+            // is deleted is visible and editable; a silently discarded one is
+            // neither.
             val (w, h) = when (demand) {
                 is SizeDemand.Exactly -> demand.width to demand.height
-                else -> 0 to 0
+                is SizeDemand.Conflict -> 0 to 0
+                else -> continue
             }
             val node = next.byId[n.id] ?: continue
             if (node.params["out_w"] == w.toString() && node.params["out_h"] == h.toString()) {
@@ -282,6 +295,36 @@ fun deriveSizes(graph: Graph, types: Map<String, NodeType>): Graph {
  * wants to render something odd should be allowed to. What must not happen is
  * rendering it and saying nothing.
  */
+/**
+ * ⭐⭐⭐ Nodes that made a picture with nowhere to send it.
+ *
+ * ⚠⚠ Since 2026-09-15 a renderer does not draw its own result
+ * ([NodeType.showsResult]), so a graph whose sampler reaches no `core.output`
+ * would run for 24 seconds and show the user nothing at all. ⇒ Refused BEFORE
+ * the run, by name, with the fix in the sentence.
+ *
+ * ⚠ It walks forward rather than checking "is there an output node anywhere":
+ * a graph with two branches and one output node must still be refused for the
+ * branch that has none.
+ */
+fun rendersNowhere(graph: Graph, types: Map<String, NodeType>): List<String> {
+    val consumers = graph.nodes.flatMap { n -> n.inputs.values.map { it.node to n.id } }
+        .groupBy({ it.first }, { it.second })
+
+    fun reachesAnOutput(id: String, seen: MutableSet<String>): Boolean {
+        if (!seen.add(id)) return false
+        val t = types[graph.byId[id]?.type]
+        // A sink that takes a picture IS the destination.
+        if (t != null && t.outputs.isEmpty() && t.inputs.any { it.type == "IMAGE" || it.type == "MEDIA" }) return true
+        return consumers[id].orEmpty().any { reachesAnOutput(it, seen) }
+    }
+
+    return graph.nodes
+        .filter { types[it.type]?.showsResult == false }
+        .filterNot { reachesAnOutput(it.id, mutableSetOf()) }
+        .map { it.id }
+}
+
 fun sizeMismatches(graph: Graph, types: Map<String, NodeType>): List<String> {
     val out = mutableListOf<String>()
     for (n in graph.nodes) {

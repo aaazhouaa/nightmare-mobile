@@ -89,15 +89,25 @@ class MainActivity : ComponentActivity() {
         // dropdown read this cache, and an empty one makes a new node default to
         // an upscaler that may not be installed.
         UpscalerCatalog.refresh(this)
+        com.abrah.nightmare.segment.Segmenter.refresh(this)
+        // ⭐ The video gate's remembered answer, before anything composes, so a
+        // phone that cannot run video never draws a Video card for one frame.
+        com.abrah.nightmare.npu.VideoGate.load(this, BuildConfig.VERSION_CODE)
         // ⚠ Before setContent: the theme decides the FIRST frame, and loading it
         // afterwards means a flash of the wrong palette on every cold start.
         Prefs.load(this)
+        // ⚠ Off the main thread: the first load parses a ~3.6 MB tokenizer.json.
+        // Nothing waits on it — the counts appear when it lands.
+        val appCtx = applicationContext
+        Thread { PromptTokens.ensureLoaded(appCtx) }.start()
         takeOp(intent)
         setContent {
             // ⚠⚠ Read from the view model, not from `Prefs` directly: the object
             // is a plain singleton with no Compose state, so a write to it would
             // change the value and recompose nothing.
             val vm: HarnessViewModel = viewModel()
+            // ⭐ Ask the chip once, at first launch (the user's call, 2026-09-17).
+            androidx.compose.runtime.LaunchedEffect(Unit) { vm.probeVideoSupport() }
             NightmareTheme(
                 darkTheme = when (vm.theme) {
                     Prefs.Theme.DARK -> true
@@ -244,18 +254,24 @@ fun HarnessScreen(
                     androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
                 ) { uri ->
                     // ⚠ Null is a CANCEL, not a failure. Saying nothing is right.
-                    if (uri != null && importName.isNotEmpty()) {
-                        vm.importModel(uri, importName)
+                    if (uri != null) {
+                        vm.importModel(uri, importName.ifEmpty { vm.importNameFor(uri) })
                     }
                 }
                 ModelsScreen(
                     rows = vm.modelRows,
-                    busy = vm.busy,
+                    // ⚠ The OR: this screen's buttons mean "the app is doing
+                    // something long", which is what [working] is for.
+                    busy = vm.working,
                     error = vm.modelError,
                     onInstall = vm::installModel,
                     onCancel = vm::cancelModelInstall,
                     onDelete = vm::deleteModel,
-                    onSelect = vm::selectModel,
+                    onSelect = vm::askUse,
+                    pendingUse = vm.pendingUse,
+                    recipes = com.abrah.nightmare.canvas.RECIPES,
+                    onConfirmUse = vm::confirmUse,
+                    onCancelUse = vm::cancelUse,
                     importing = vm.importing,
                     importProgress = vm.importProgress,
                     onImport = { name ->
@@ -270,12 +286,22 @@ fun HarnessScreen(
                     upscalers = vm.upscalerRows,
                     onInstallUpscaler = vm::installUpscaler,
                     onDeleteUpscaler = vm::deleteUpscaler,
+                    segmenter = vm.segmenterRow,
+                    onInstallSegmenter = vm::installSegmenter,
+                    onDeleteSegmenter = vm::deleteSegmenter,
+                    video = vm.videoRow.takeIf { !com.abrah.nightmare.npu.VideoGate.hidden },
+                    onInstallVideo = vm::installVideoModels,
+                    onDeleteVideo = vm::deleteVideoModels,
+                    onProbeVideo = vm::probeVideoSupport,
                 )
             },
             results = {
                 com.abrah.nightmare.ui.ResultsScreen(
                     groups = vm.keptGroups,
                     results = vm.kept,
+                    favouritesOnly = vm.favouritesOnly,
+                    onFavouritesOnly = vm::showFavouritesOnly,
+                    onToggleFavourite = vm::toggleResultFavourite,
                     thumbnailFor = vm::thumbnailFor,
                     onOpenFlow = { vm.openResultFlow(it.id) },
                     onView = { vm.viewResult(it) },
@@ -291,6 +317,15 @@ fun HarnessScreen(
                     onSave = { vm.saveResultsToGallery(listOf(it.id)) },
                     onSaveGroup = { g -> vm.saveResultsToGallery(g.items.map { it.id }) },
                     onShareFlow = { vm.shareResultFlow(it.id) },
+                    imageFor = vm::resultImage,
+                    detailsFor = vm::detailsOf,
+                    onUpscale = { r, u -> vm.upscaleResult(r.id, u) },
+                    upscalers = vm.upscalerRows,
+                    onInstallUpscaler = vm::installUpscaler,
+                    upscaling = vm.upscalingResult,
+                    onShareResults = { ids, asFlow -> vm.shareResults(ids, asFlow) },
+                    onToast = vm::toast,
+                    onStarSelected = vm::starSelectedResults,
                 )
             },
             flows = {
@@ -302,10 +337,13 @@ fun HarnessScreen(
                     androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
                 ) { uri -> if (uri != null) vm.importWorkflow(uri) }
                 WorkflowsScreen(
-                    recipes = com.abrah.nightmare.canvas.RECIPES,
+                    recipes = com.abrah.nightmare.canvas.RECIPES.filter {
+                        !com.abrah.nightmare.npu.VideoGate.hidden ||
+                            it.id !in com.abrah.nightmare.npu.VideoGate.VIDEO_RECIPES
+                    },
                     saved = vm.savedWorkflows,
                     error = vm.workflowError,
-                    onOpenRecipe = { vm.openWorkflow(it.build()) },
+                    onOpenRecipe = vm::openRecipe,
                     onOpenSaved = vm::openSaved,
                     onDeleteSaved = vm::deleteSaved,
                     onRenameSaved = vm::renameWorkflow,
@@ -334,6 +372,7 @@ fun HarnessScreen(
             if (vm.viewingSet.isNotEmpty()) {
                 BackHandler { vm.closeResult() }
                 com.abrah.nightmare.ui.ResultViewer(
+                    onToggleFavourite = vm::toggleResultFavourite,
                     items = vm.viewingSet,
                     startIndex = vm.viewingIndex,
                     // ⚠ The FULL picture, not the list thumbnail: this is the
@@ -360,6 +399,7 @@ fun HarnessScreen(
             Prefs.Theme.LIGHT -> false
             Prefs.Theme.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
         }
+        vm.missingModel?.let { m -> MissingModelDialog(m, vm) }
         // ⭐⭐ Every picture the graph can make without the NPU, kept current
         // as the user works -- the chosen photo on `load_image`, the framed one
         // on `crop`. ⚠ The trigger lives in `HarnessViewModel.updateCanvas`
@@ -370,6 +410,10 @@ fun HarnessScreen(
         CanvasScreen(
             state = vm.canvas,
             types = vm.nodeTypes,
+            // ⭐ Video hidden from Add node where the chip refused it (VideoGate).
+            paletteTypes = if (com.abrah.nightmare.npu.VideoGate.hidden) {
+                vm.nodeTypes.filterKeys { it != com.abrah.nightmare.npu.VideoGate.VIDEO_TYPE }
+            } else vm.nodeTypes,
             status = vm.canvasStatus,
             busy = vm.busy,
             image = vm.image,
@@ -408,8 +452,58 @@ fun HarnessScreen(
                 // null when no process is up, and then the selected name is
                 // still the honest thing to show — marked idle so it is not
                 // read as "loaded".
-                val name = l.resident ?: vm.modelLabel
-                val holding = if (l.resident != null) stringResource(R.string.r2_main_holding, name) else stringResource(R.string.r2_main_idle, name)
+                // ⭐⭐⭐ The IN-PROCESS NPU wins the line while it is holding
+                // something, because it is the thing actually running.
+                //
+                // ⚠⚠ Without this the bar described a video render as
+                // "AbsoluteReality (idle)" — naming an SD checkpoint that was
+                // not involved, and calling the machine idle while 13 context
+                // binaries were mapped on the NPU. Reported from the phone,
+                // 2026-09-13: *"why is the video model not shown in the top bar,
+                // it just shows sd1.5 model as idle"*. The two routes to the NPU
+                // are independent (`docs/NEODRAGON.md` §3), so the readout has
+                // to ask both rather than assume the server is the only one.
+                val holding = when {
+                    // Something is mapped on the NPU right now.
+                    l.npuGraphs > 0 ->
+                        stringResource(R.string.r2_main_holding, com.abrah.nightmare.npu.NpuFiles.LABEL) +
+                            "  ·  ${l.npuGraphs} " + stringResource(R.string.r2_main_graphs)
+                    // A backend process is up with a checkpoint in it.
+                    l.resident != null -> stringResource(R.string.r2_main_holding, l.resident)
+                    // ⭐⭐ Nothing is loaded — so name what the OPEN FLOW would
+                    // use, not what the picker happens to be set to. A video
+                    // flow does not touch a checkpoint, and saying
+                    // "QteaMix (idle)" over a t2v graph described a model that
+                    // will never be loaded by anything on the canvas.
+                    !l.graphNeedsCheckpoint ->
+                        if (l.graphIsVideo) {
+                            // ⚠ Not "(idle)" while a clip is rendering: the
+                            // contexts are mapped a few seconds in, and the
+                            // window before that was described as idle.
+                            com.abrah.nightmare.npu.NpuFiles.LABEL +
+                                if (l.running) stringResource(R.string.r2_main_loading) else stringResource(R.string.r2_main_idle_suffix)
+                        } else stringResource(R.string.r2_main_no_checkpoint)
+                    // ⭐⭐⭐ Nothing resident — so name what THIS GRAPH will load.
+                    //
+                    // ⚠⚠ It said `vm.modelLabel`, the global picker. Since a node
+                    // can carry its own checkpoint (2026-09-15) that is simply a
+                    // different question, and changing a sampler's model left the
+                    // bar naming the old one. `graphModels` is the graph's own
+                    // answer; the rule is the one the branch above already
+                    // follows.
+                    else -> {
+                        val names = l.graphModels
+                        val head = names.firstOrNull() ?: vm.modelLabel
+                        // ⚠ A graph may name TWO checkpoints now, and the bar has
+                        // one line. Say the first and how many more, rather than
+                        // picking one and implying it is the only one.
+                        val more = if (names.size > 1) " +${names.size - 1}" else ""
+                        // ⚠ "loading…" rather than "(idle)" while a run is in
+                        // flight — a backend launch is 2.3-5 s and the poll is
+                        // every 2 s, so the launch window read as idle.
+                        head + more + if (l.running) stringResource(R.string.r2_main_loading) else stringResource(R.string.r2_main_idle_suffix)
+                    }
+                }
                 "$holding  ·  $free/$total GB free"
             },
             onModels = { vm.setModelsVisible(true) },
@@ -426,6 +520,7 @@ fun HarnessScreen(
             // dragged crop rect, both on sheet dismissal.
             onEdit = vm::editCanvas,
             onEditMask = vm::editMask,
+            onTapMask = vm::tapMask,
             onCancelRun = vm::cancelRun,
             onSetResolution = vm::selectResolution,
             onSetAspect = vm::selectAspect,
@@ -434,10 +529,43 @@ fun HarnessScreen(
             onSaveImage = vm::saveImage,
             onShareImage = vm::shareNodeImage,
             onKeepImage = vm::toggleKeepResult,
+            // ⭐ Same action, one flag different — [PictureActions] has the table.
+            onStarImage = { id -> vm.toggleKeepResult(id, favourite = true) },
+            isFavourite = { id -> vm.isFavourite(id) },
+            keepDisabledReason = vm.keepDisabledReason,
+            onDisabledKeep = { why -> vm.say(why) },
             isKept = vm::isKept,
             onClearOutput = vm::clearOutput,
             onSave = vm::saveWorkflowAs,
             savedAs = vm.currentWorkflowName,
+            suggestedName = vm.suggestedFlowName(),
+            // ⚠⚠⚠ **INSTALLED only** — downloaded or imported, nothing else.
+            //
+            // ⚠⚠ This is a REVERSAL, and both halves were the user's call on the
+            // same day. It first listed every catalogue entry with the absent
+            // ones labelled `· not installed`, so that someone looking for SDXL
+            // could tell a missing FEATURE from a missing MODEL. With fifteen
+            // checkpoints and two installed, that made a picker where thirteen
+            // of fifteen entries were refusals — asked for as *"only show
+            // downloaded/imported models thank you very much"*, 2026-09-15.
+            //
+            // ⚠ What that reasoning was protecting is now carried by the Models
+            // tab, which lists the whole catalogue and is one tap away; a node's
+            // picker is for choosing between what the phone can actually run.
+            installedModels = vm.modelRows
+                .filter { it.installed }
+                .map {
+                    com.abrah.nightmare.canvas.CheckpointChoice(
+                        it.spec.id, it.spec.label, it.spec.family,
+                    )
+                },
+            onSetModel = vm::setNodeModel,
+            plannedLoads = vm.plannedLoads,
+            pendingSwap = vm.pendingSwap,
+            onConfirmSwap = { swap, takeRecipe, takePrompt ->
+                vm.applyNodeModel(swap.nodeId, swap.spec, swap.newType, takeRecipe, takePrompt)
+            },
+            onCancelSwap = vm::cancelSwap,
         )
         // ⭐ The sweep builder. ⚠ A dialog over the canvas: it is answering a
         // question about the graph you are looking at. The device sheet used
@@ -486,11 +614,86 @@ fun HarnessScreen(
  * ⚠ Split out so `SettingsScreen` can take it as a slot and stay free of the
  * view model -- the same shape `LibraryScreen` uses for its tabs.
  */
+/**
+ * ⭐⭐ A Run stopped because a flow names a checkpoint that is not here — asked
+ * ON the canvas, with the download in the popup (the user's call, 2026-09-17).
+ *
+ * ⚠ Stays open through the download and becomes a Run button when the model
+ * lands; Hide lets the download continue with the popup closed.
+ */
+@Composable
+private fun MissingModelDialog(m: HarnessViewModel.MissingModel, vm: HarnessViewModel) {
+    val bytes = vm.missingBytes(m)
+    val size = if (bytes >= 1L shl 30) String.format(java.util.Locale.ROOT, "%.1f GB", bytes / (1024.0 * 1024 * 1024))
+    else "${bytes shr 20} MB"
+    val progress = vm.missingProgress
+    val done = vm.missingInstalled
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = { vm.dismissMissingModel() },
+        title = {
+            Text(if (done) "${m.label} is ready" else "This flow needs a model")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    when {
+                        done -> "Downloaded. Run the flow now?"
+                        m is HarnessViewModel.MissingModel.Checkpoint && m.substitute && m.wanted.isNotBlank() ->
+                            "\"${m.wanted}\" is not on this phone and has no download — it was " +
+                                "imported somewhere else. Download ${m.label} ($size) and use it " +
+                                "for this flow instead?"
+                        m is HarnessViewModel.MissingModel.Segment ->
+                            "${m.label} is not installed — this flow's Segment model node needs it. " +
+                                "Download it ($size)?"
+                        else -> "${m.label} is not installed. Download it ($size)?"
+                    }
+                )
+                if (progress != null) {
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { progress.fraction },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Text(
+                        "${progress.done shr 20} of ${progress.total shr 20} MB · ${progress.phase}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                } else if (!done) {
+                    Text("Use Wi-Fi.", style = MaterialTheme.typography.bodySmall)
+                }
+                vm.modelError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            }
+        },
+        confirmButton = {
+            when {
+                done -> androidx.compose.material3.Button(onClick = {
+                    vm.dismissMissingModel()
+                    vm.runCanvasOrBatch()
+                }) { Text("Run") }
+                progress != null -> androidx.compose.material3.TextButton(onClick = { vm.dismissMissingModel() }) {
+                    Text("Hide")
+                }
+                else -> androidx.compose.material3.Button(onClick = { vm.downloadMissingModel() }) {
+                    Text("Download")
+                }
+            }
+        },
+        dismissButton = {
+            if (progress != null) {
+                androidx.compose.material3.TextButton(onClick = { vm.cancelModelInstall(); vm.dismissMissingModel() }) {
+                    Text("Cancel download")
+                }
+            } else if (!done) {
+                androidx.compose.material3.TextButton(onClick = { vm.dismissMissingModel() }) { Text("Not now") }
+            }
+        },
+    )
+}
+
 @Composable
 private fun HarnessPane(vm: HarnessViewModel) {
     HarnessContent(
         state = vm.backend,
-        busy = vm.busy,
+        busy = vm.working,
         log = vm.log,
         image = vm.image,
         onStart = vm::startBackend,
@@ -811,7 +1014,7 @@ private fun PreviewUp() = NightmareTheme {
         state = BackendState.UP, busy = false,
         log = listOf(
             LogLine("12:04:11", "/health 200 in 71 ms"),
-            LogLine("12:04:09", "encode_text -- not wired yet (step 2.1)", bad = true),
+            LogLine("12:04:09", "encode_text — not wired yet (step 2.1)", bad = true),
         ),
         image = null,
         onStart = {}, onStop = {},
@@ -832,7 +1035,7 @@ private fun PreviewDown() = NightmareTheme {
             LogLine("12:04:11", "  no backend on :8085. Stage and launch one first.", bad = true),
             LogLine(
                 "12:04:11",
-                "/health unreachable after 6001 ms -- ConnectException: failed to " +
+                "/health unreachable after 6001 ms — ConnectException: failed to " +
                     "connect to /127.0.0.1 (port 8085) after 6000ms",
                 bad = true,
             ),
@@ -868,7 +1071,7 @@ private fun PreviewSampling() = NightmareTheme {
     HarnessContent(
         state = BackendState.UP, busy = true,
         log = listOf(
-            LogLine("12:04:12", "sample: 20 steps, seed 42 -- streaming"),
+            LogLine("12:04:12", "sample: 20 steps, seed 42 — streaming"),
         ),
         image = null,
         onStart = {}, onStop = {},

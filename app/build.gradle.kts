@@ -1,4 +1,4 @@
-﻿import java.util.Properties
+import java.util.Properties
 
 plugins {
     id("com.android.application")
@@ -15,11 +15,12 @@ plugins {
  * committing a private key; a file that is not in the tree at all cannot be
  * committed by accident.
  *
- * ⚠⚠ A MISSING keystore is not an error. The release build still runs and
- * produces an unsigned APK, so a fresh clone on another machine can build
- * and test the release variant without holding the key. Failing here would
- * make the project unbuildable for everyone except one laptop, which is a
- * strange thing for a public repository to do.
+ * ⚠⚠ A MISSING keystore is not an error, and it does NOT produce an unsigned
+ * APK — it falls back to the DEBUG key (`buildTypes.release`), because an
+ * unsigned release APK cannot be installed at all and a "release build passed"
+ * that nobody can run is not a verification. A fresh clone can therefore build
+ * and install the release variant without holding the formal key. A build with
+ * the formal key present still wins it, so what ships is signed properly.
  *
  * ⚠ Android identifies an app by its signature: lose this key and no future
  * build can update an installed copy. `facefusion-mobile` lost one already.
@@ -53,19 +54,25 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 129
-        versionName = "1.4.14"
+        versionCode = 212
+        versionName = "1.4.97"
         // ⭐ aarch64 沙箱适配：taixu 自带的 NDK r29 是原生 aarch64 工具链
         // （官方 NDK 只有 x86_64 host，无法在本机执行）。
         ndkVersion = "29.0.14206865"
         ndk { abiFilters += "arm64-v8a" }
 
-        // The plugin runtime, built from source. ⚠ arm64 only, like everything
-        // else here: the NPU path has no other target, and building quickjs.c
-        // (2.1 MB of C) four times for ABIs that can never run a model is pure
-        // build time.
+        // The plugin runtime and the NPU runner, both built from source.
+        // ⚠ arm64 only, like everything else here: the NPU path has no other
+        // target, and building quickjs.c (2.1 MB of C) four times for ABIs that
+        // can never run a model is pure build time.
+        //
+        // ⚠⚠ `c++_static`, not `none`. It was `none` while the only native code
+        // was `nmjs.c` (C, no STL); `nmqnn.cpp` uses std::string/vector/mutex
+        // and does not compile without one. ⭐ STATIC rather than shared so the
+        // STL is linked into libnmqnn.so and no `libc++_shared.so` has to be
+        // packaged -- libnmjs.so is C and links none of it either way.
         externalNativeBuild {
-            cmake { arguments += "-DANDROID_STL=none" }
+            cmake { arguments += "-DANDROID_STL=c++_static" }
         }
     }
 
@@ -126,9 +133,22 @@ android {
             isMinifyEnabled = false
         }
         release {
-            // ⚠ Null when there is no keystore, which leaves the APK unsigned
-            // rather than failing the build.
+            // ⚠ The FORMAL keystore when it is present, the DEBUG one otherwise.
+            //
+            // ⚠⚠ `findByName("release")` alone returns null on a machine without
+            // `../.secrets/nightmare-keystore/` (this container), and a null
+            // signingConfig means AGP emits `app-release-unsigned.apk` -- an APK
+            // that cannot be installed at all. Every local build silently
+            // produced one, so "the release build passed" said nothing about
+            // whether anyone could run it.
+            // ⚠ The fallback is the DEBUG key deliberately: it installs, and it
+            // keeps the id (`com.abrah.nightmare`) the same, so a test build
+            // replaces a test build. Android identifies an app by signature, so
+            // a copy installed from the debug key CANNOT later be updated by one
+            // signed with the release key -- uninstall first. That is why the
+            // formal key still wins wherever it exists.
             signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -187,6 +207,11 @@ dependencies {
     // generated vector classes and costs ~55 MB of dex on its own (measured
     // above) whether or not a single icon is referenced. Add individual icons,
     // or the base `material-icons-core`, if one is actually needed.
+
+    // ⭐ Tap to select (`docs/SEGMENTER.md`): SAM 2.1 on ORT's CPU build, as
+    // DreamUI. NOT onnxruntime-android-qnn — QNN cannot create an HTP device on
+    // this SoC through ORT, and the split graph costs 28 ms a tap on the CPU.
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.29.0")
 
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")

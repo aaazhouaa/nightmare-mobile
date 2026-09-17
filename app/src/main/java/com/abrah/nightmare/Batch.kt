@@ -68,6 +68,48 @@ data class BatchSpec(val axes: List<BatchAxis> = emptyList()) {
         return out
     }
 
+    /**
+     * ⭐⭐ **A seed sweep is N RANDOM seeds, not seeds 1..N.**
+     *
+     * ⚠⚠ Reported by a user, 2026-09-13: *"seed sweep shouldn't be from 1-10
+     * as he did the same sweep twice and got same result"*. Ten seeds that are
+     * literally 1..10 are the same ten pictures every time, so the second sweep
+     * tells you nothing the first did not.
+     *
+     * ⚠⚠⚠ **This does not undo the 2026-09-10 change, and it must not.**
+     * The seed was once swept "by count", and the values were N placeholder
+     * ZEROS that `runRolled` turned into fresh seeds inside each iteration.
+     * That was unreproducible in the way that matters: every card was labelled
+     * `seed 0`, so a picture you liked named no seed you could pin. ⇒ The
+     * seeds are rolled HERE, once, and written into the axis — so a sweep is
+     * fresh every time AND every card carries the real seed that made it.
+     *
+     * ⚠ The COUNT is preserved, so [runCount] is the same before and after and
+     * the number shown to the user before they spend the renders is honest.
+     *
+     * ⚠ Distinct seeds: drawing the same one twice would spend a render to
+     * produce a duplicate of another card.
+     */
+    fun rollSeeds(rng: java.util.Random = java.util.Random()): BatchSpec {
+        if (axes.none { it.param == "seed" }) return this
+        return copy(
+            axes = axes.map { a ->
+                if (a.param != "seed") {
+                    a
+                } else {
+                    val seen = LinkedHashSet<String>()
+                    // ⚠ Positive and inside Int range: a seed is written back as
+                    // a param string and read with `toLongOrNull`, and a
+                    // negative one reads as a flag to anyone scanning the card.
+                    while (seen.size < a.values.size) {
+                        seen += (rng.nextInt(Int.MAX_VALUE - 1) + 1).toString()
+                    }
+                    a.copy(values = seen.toList())
+                }
+            }
+        )
+    }
+
     /** How each run differs, for a log line and a Results label. */
     fun labelFor(overrides: Map<String, Map<String, String>>): String =
         axes.mapNotNull { a -> overrides[a.nodeId]?.get(a.param)?.let { "${a.param} $it" } }
@@ -159,11 +201,29 @@ object BatchValues {
  * more than one. A graph with two unconsumed image nodes has no single answer,
  * and choosing silently is how a sweep collects the wrong picture for twenty
  * minutes — the exact failure shape `Framing.SizeDemand.Conflict` exists for.
+ *
+ * ⚠⚠⚠ **A SINK counts, and forgetting that broke every recipe at once.** When
+ * `core.output` came back on 2026-09-15 (docs/ARCHITECTURE.md §5.7) every
+ * shipped recipe ended in a node that declares NO outputs and whose producer is
+ * therefore consumed — so "the last IMAGE output nothing consumes" matched
+ * nothing at all, and a sweep of the default workflow would have refused with
+ * "no terminal image node". ⇒ A node that TAKES a picture and returns nowhere
+ * is the end of the chain by definition, which is the same rule stated from the
+ * other side.
  */
 fun terminalImageNodes(graph: Graph, types: Map<String, NodeType>): List<String> {
     val consumed = graph.nodes.flatMap { n -> n.inputs.values.map { it.node } }.toSet()
+    fun makesAPicture(t: NodeType?) = t?.outputs?.any { it.type == "IMAGE" } == true
+    fun isASink(t: NodeType?) =
+        t != null && t.outputs.isEmpty() &&
+            t.inputs.any { it.type == "IMAGE" || it.type == "MEDIA" }
+    val sinks = graph.nodes.filter { isASink(types[it.type]) }
+    // ⚠ Sinks WIN when there are any: a graph with an output node has said which
+    // picture it is for, and collecting some other unconsumed branch beside it
+    // would be answering a question the user already answered.
+    if (sinks.isNotEmpty()) return sinks.map { it.id }
     return graph.nodes
-        .filter { n -> types[n.type]?.outputs?.any { it.type == "IMAGE" } == true }
+        .filter { makesAPicture(types[it.type]) }
         .filter { it.id !in consumed }
         .map { it.id }
 }

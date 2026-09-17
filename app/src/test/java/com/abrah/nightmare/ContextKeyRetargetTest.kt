@@ -31,7 +31,7 @@ class ContextKeyRetargetTest {
         listOf(
             Node("text", "sd.clip_encode", mapOf("prompt" to "a cat", "negative" to "")),
             Node(
-                "sample", "sd.sample",
+                "sample", "sd15.sample",
                 mapOf("model" to model, "width" to "512", "height" to "512"),
                 sources("cond" to "text"),
             ),
@@ -122,7 +122,7 @@ class ContextKeyRetargetTest {
      */
     @Test
     fun aGraphWithMissingParamsStillAnswers() {
-        val broken = Graph(listOf(Node("sample", "sd.sample", emptyMap())))
+        val broken = Graph(listOf(Node("sample", "sd15.sample", emptyMap())))
         assertEquals(emptyList<String>(), contextKeyModels(broken, types))
     }
 
@@ -151,7 +151,7 @@ class ContextKeyRetargetTest {
         val g = Graph(
             listOf(
                 Node("text", "sd.clip_encode", mapOf("prompt" to "x", "negative" to "")),
-                Node("s", "sd.sample", mapOf("model" to "absolutereality"),
+                Node("s", "sd15.sample", mapOf("model" to "absolutereality"),
                     inputs = sources("cond" to "text")),
             )
         )
@@ -171,7 +171,7 @@ class ContextKeyRetargetTest {
         val g = Graph(
             listOf(
                 Node("text", "sd.clip_encode", mapOf("prompt" to "x", "negative" to "")),
-                Node("s", "sd.sample", mapOf("seed" to "12345"),
+                Node("s", "sd15.sample", mapOf("seed" to "12345"),
                     inputs = sources("cond" to "text")),
             )
         )
@@ -194,7 +194,7 @@ class ContextKeyRetargetTest {
             listOf(
                 Node("text", "sd.clip_encode", mapOf("prompt" to "x", "negative" to "")),
                 Node(
-                    "s", "sd.sample",
+                    "s", "sd15.sample",
                     mapOf(
                         "steps" to spec.steps.toString(),
                         "cfg" to spec.cfg.toString(),
@@ -205,5 +205,124 @@ class ContextKeyRetargetTest {
             )
         )
         assertTrue(modelRecipeRetarget(g, NODE_TYPES, spec).isEmpty())
+    }
+
+    // ---- the starter prompt ------------------------------------------------
+
+    private fun textGraph(prompt: String, negative: String) = Graph(
+        listOf(Node("text", "sd.clip_encode", mapOf("prompt" to prompt, "negative" to negative)))
+    )
+
+    /** ⭐ A blank box is ours to fill — with the checkpoint's own text. */
+    @Test
+    fun aBlankPromptGetsTheModelsOwn() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val changes = modelPromptRetarget(textGraph("", ""), NODE_TYPES, spec)
+        assertEquals(spec.prompt, changes["text"]!!["prompt"])
+        assertEquals(spec.negative, changes["text"]!!["negative"])
+    }
+
+    /**
+     * ⭐⭐ **The one that matters.** A sentence the user typed survives a model
+     * switch — nothing else in the app can reconstruct it.
+     */
+    @Test
+    fun aPromptSomeoneTypedIsNeverOverwritten() {
+        val spec = ModelCatalog.sdxlModels.first()
+        val g = textGraph("a lighthouse in a storm", "boats")
+        assertTrue(modelPromptRetarget(g, NODE_TYPES, spec).isEmpty())
+    }
+
+    /**
+     * ⚠ …but the PREVIOUS model's prompt is ours, not theirs. A -> B -> C must
+     * still recognise A's text, which is why the rule is "any catalogue model's"
+     * rather than "the one we came from".
+     */
+    @Test
+    fun anotherModelsPromptIsReplaced() {
+        val from = ModelCatalog.sd15Models.first { it.id != V1_MODEL }
+        val to = ModelCatalog.byId(V1_MODEL)!!
+        val changes = modelPromptRetarget(textGraph(from.prompt, from.negative), NODE_TYPES, to)
+        assertEquals(to.prompt, changes["text"]!!["prompt"])
+        assertEquals(to.negative, changes["text"]!!["negative"])
+    }
+
+    /** ⚠ One field typed, one still ours: only the second moves. */
+    @Test
+    fun onlyTheUntouchedFieldMoves() {
+        val from = ModelCatalog.sd15Models.first { it.id != V1_MODEL }
+        val to = ModelCatalog.byId(V1_MODEL)!!
+        val changes = modelPromptRetarget(
+            textGraph("a lighthouse in a storm", from.negative), NODE_TYPES, to,
+        )
+        assertEquals(setOf("negative"), changes["text"]!!.keys)
+    }
+
+    /** ⚠ By WIDGET, and it takes BOTH: a sampler has neither. */
+    @Test
+    fun aNodeWithoutBothPromptWidgetsIsUntouched() {
+        val g = Graph(listOf(Node("s", "sd15.sample", mapOf("seed" to "1"))))
+        assertTrue(modelPromptRetarget(g, NODE_TYPES, ModelCatalog.byId(V1_MODEL)!!).isEmpty())
+    }
+
+    /** ⚠ Nothing to do when the graph already carries this model's text. */
+    @Test
+    fun theModelsOwnPromptProducesNoChange() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        assertTrue(
+            modelPromptRetarget(textGraph(spec.prompt, spec.negative), NODE_TYPES, spec).isEmpty()
+        )
+    }
+
+    /**
+     * ⭐⭐ The canvas everybody already has: built from a recipe that hardcoded
+     * its text before any of this existed. That text is the app's, not theirs.
+     */
+    @Test
+    fun theOldRecipeLiteralsCountAsOurs() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val g = textGraph("a cat on grass", "blurry, lowres")
+        val changes = modelPromptRetarget(g, NODE_TYPES, spec)
+        assertEquals(spec.prompt, changes["text"]!!["prompt"])
+        assertEquals(spec.negative, changes["text"]!!["negative"])
+    }
+
+    /**
+     * ⭐⭐ An IMPORTED model carries no prompt unless its own `config.json`
+     * says one — and it gets its FAMILY's general-purpose pair, never a
+     * built-in's.
+     *
+     * ⚠⚠ This test asserted `isEmpty()` until 2026-09-15, on the 2026-09-12
+     * rule that a blank prompt must stay blank rather than be filled from a
+     * model we know nothing about. Half of that rule stands and half was the
+     * user's to change: filling it from ABSOLUTEREALITY would bias an import
+     * toward a photographic SD 1.5 checkpoint, but
+     * [com.abrah.nightmare.Family.prompt] is quality tags with no subject and
+     * no style claim, so it biases nothing — and a blank prompt box was simply
+     * the import looking broken. The user's ask, 2026-09-15.
+     */
+    @Test
+    fun anImportedModelWithNoConfigTakesItsFamilysGeneralPrompt() {
+        val imported = ModelCatalog.byId(V1_MODEL)!!
+            .copy(id = "mine", prompt = "", negative = "", isCustom = true)
+        val changes = modelPromptRetarget(textGraph("", ""), NODE_TYPES, imported)
+        assertEquals(Family.SD15.prompt, changes["text"]!!["prompt"])
+        assertEquals(Family.SD15.negative, changes["text"]!!["negative"])
+        // ⚠⚠ And NOT the built-in it was copied from — the half of the old rule
+        // that still holds, kept as an assertion rather than as a memory.
+        assertTrue(ModelCatalog.byId(V1_MODEL)!!.prompt != changes["text"]!!["prompt"])
+    }
+
+    /**
+     * ⚠⚠ A family default is text the APP wrote, so a later switch may replace
+     * it. Leaving it out of `ours` would have frozen every imported model's
+     * prompt the moment it was first written.
+     */
+    @Test
+    fun aFamilyDefaultIsOursToOverwrite() {
+        val spec = ModelCatalog.byId(V1_MODEL)!!
+        val g = textGraph(Family.SD15.prompt, Family.SD15.negative)
+        val changes = modelPromptRetarget(g, NODE_TYPES, spec)
+        assertEquals(spec.prompt, changes["text"]!!["prompt"])
     }
 }

@@ -65,6 +65,52 @@ class MaskTest {
         assertEquals(0.4f, s.points[1].second, 0.0005f)
     }
 
+    // ---- tapped regions (docs/SEGMENTER.md) -------------------------------
+
+    /** ⭐ A tap is stored as its POINT and candidate, beside strokes, in order. */
+    @Test
+    fun aTapSurvivesEncodingAndDecoding() {
+        val original = MaskState(listOf(dab(), MaskOp.Tap(0.25f, 0.75f, 2), MaskOp.Invert))
+        val back = MaskState.decode(original.encode())
+        assertEquals(3, back.ops.size)
+        assertEquals(MaskOp.Tap(0.25f, 0.75f, 2), back.ops[1])
+        assertTrue(back.ops[2] is MaskOp.Invert)
+    }
+
+    /** ⚠ A resolved region is memory only — it must never reach the saved string. */
+    @Test
+    fun aPlacedRegionIsNeverStored() {
+        val alpha = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ALPHA_8)
+        val text = MaskState(listOf(MaskOp.Placed(alpha), dab())).encode()
+        assertEquals(1, MaskState.decode(text).ops.size)
+        assertFalse(text.startsWith(";"))
+    }
+
+    /** ⚠⚠ Unresolved, a tap draws NOTHING — the sampler must resolve or refuse. */
+    @Test
+    fun anUnresolvedTapRastersToNothing() {
+        assertEquals(0, luminanceAt(MaskState(listOf(MaskOp.Tap(0.5f, 0.5f, 0))), 0.5f, 0.5f))
+    }
+
+    /** ⭐ Resolved, the region paints white where it covers, and moves with the frame. */
+    @Test
+    fun aResolvedTapPaintsItsRegionAndFollowsTheFrame() {
+        // A region covering the LEFT half of the photo.
+        val alpha = android.graphics.Bitmap.createBitmap(8, 8, android.graphics.Bitmap.Config.ARGB_8888)
+        for (y in 0 until 8) for (x in 0 until 4) alpha.setPixel(x, y, android.graphics.Color.WHITE)
+        val resolved = MaskTaps.resolve(MaskState(listOf(MaskOp.Tap(0.2f, 0.5f, 5)))) { _, _ -> listOf(alpha) }
+        assertTrue(resolved.ops.single() is MaskOp.Placed)
+        assertEquals(255, luminanceAt(resolved, 0.2f, 0.5f))
+        assertEquals(0, luminanceAt(resolved, 0.8f, 0.5f))
+        assertTrue(MaskTaps.covers(alpha, 0.2f, 0.5f))
+        assertFalse(MaskTaps.covers(alpha, 0.8f, 0.5f))
+        // Framed on the photo's middle half: the region's edge (0.5) lands at 0.5
+        // of the frame too, and 0.3 of the frame is 0.4 of the photo — covered.
+        val framed = MaskFraming.toFrame(resolved, 0.25f, 0.25f, 0.5f, 0.5f)
+        assertEquals(255, luminanceAt(framed, 0.3f, 0.5f))
+        assertEquals(0, luminanceAt(framed, 0.7f, 0.5f))
+    }
+
     @Test
     fun anEmptyMaskRoundTrips() {
         assertTrue(MaskState.decode(MaskState().encode()).isEmpty)
@@ -189,18 +235,114 @@ class MaskTest {
         assertFalse(st.isEmpty)
     }
 
-    /** ⚠ The recipe must wire `base`/`repaint`/`mask` the right way round. */
+    // ---- painted on the frame, stored on the photo ------------------------
+
+    /**
+     * ⭐⭐⭐ **The bug of 2026-09-16: the crop was applied to the mask TWICE.**
+     *
+     * The editor shows the framed picture, so a stroke leaves it normalised to
+     * the FRAME; [SdSampler] rasterises the stored mask at the PHOTO's size and
+     * then puts it through the same crop. Without [MaskFraming] in between, a
+     * dab on the eyes was stored as if it had been painted on the whole photo
+     * and then slid down by the frame's own offset — it came out on the lips,
+     * and nothing failed.
+     *
+     * ⚠ This is the end-to-end statement of it: paint at the frame's centre,
+     * store, re-frame, and the dab must be back at the frame's centre.
+     */
     @Test
-    fun theInpaintRecipeWiresBlendCorrectly() {
-        val g = com.abrah.nightmare.canvas.inpaintWorkflow().graph
-        val blend = g.byId["blend"]!!
-        assertEquals("encode", blend.inputs["base"]?.node)
-        assertEquals("sample", blend.inputs["repaint"]?.node)
-        assertEquals("mask", blend.inputs["mask"]?.node)
-        // ⚠⚠ base is the ORIGINAL. Wiring the sampled latent here replaces
-        // everything except what was painted — a plausible picture, silently
-        // wrong.
-        assertEquals("frame", g.byId["encode"]!!.inputs["image"]?.node)
-        assertEquals("frame", g.byId["mask"]!!.inputs["image"]?.node)
+    fun aStrokePaintedOnTheFrameLandsThereAfterTheCropIsApplied() {
+        // A frame well off centre, as a crop on a face would be.
+        val fx = 0.2f; val fy = 0.1f; val fw = 0.5f; val fh = 0.5f
+        val painted = MaskStrokeData(listOf(0.5f to 0.5f), 0.2f)
+
+        val stored = MaskState(listOf(MaskOp.Stroke(MaskFraming.toSource(painted, fx, fy, fw, fh))))
+        // What the sampler does: rasterise on the photo, then crop.
+        val onPhoto = MaskRaster.rasterise(stored, 256, 256)
+        val inFrame = android.graphics.Bitmap.createBitmap(
+            onPhoto,
+            (fx * 256).toInt(), (fy * 256).toInt(), (fw * 256).toInt(), (fh * 256).toInt(),
+        )
+        fun lum(x: Float, y: Float) = inFrame.getPixel(
+            (x * inFrame.width).toInt().coerceIn(0, inFrame.width - 1),
+            (y * inFrame.height).toInt().coerceIn(0, inFrame.height - 1),
+        ) and 0xFF
+
+        assertTrue("the dab should be at the frame's centre, was ${lum(0.5f, 0.5f)}", lum(0.5f, 0.5f) > 200)
+        // ⚠ The control: where the un-converted stroke used to land. (0.5,0.5)
+        // stored raw lands at ((0.5-0.2)/0.5, (0.5-0.1)/0.5) = (0.6, 0.8).
+        assertTrue("and nowhere near where the bug put it, was ${lum(0.6f, 0.8f)}", lum(0.6f, 0.8f) < 40)
     }
+
+    /** ⚠ The brush is a fraction of the WIDTH, so it shrinks with the frame. */
+    @Test
+    fun theBrushIsConvertedWithThePoints() {
+        val s = MaskFraming.toSource(MaskStrokeData(listOf(0.5f to 0.5f), 0.2f), 0.2f, 0.1f, 0.5f, 0.5f)
+        assertEquals(0.1f, s.radiusFrac, 1e-4f)
+        assertEquals(0.45f, s.points[0].first, 1e-4f)
+        assertEquals(0.35f, s.points[0].second, 1e-4f)
+    }
+
+    /** ⚠ Both directions, or the editor draws the stored mask in the wrong place. */
+    @Test
+    fun theFrameConversionRoundTrips() {
+        val state = MaskState(
+            listOf(
+                MaskOp.Stroke(stroke(0.1f to 0.2f, 0.9f to 0.8f, r = 0.12f)),
+                MaskOp.Invert,
+                MaskOp.Erase(stroke(0.5f to 0.5f, r = 0.05f)),
+            ),
+            growFrac = 0.01f,
+            featherFrac = 0.04f,
+        )
+        val shown = MaskFraming.toFrame(state, 0.25f, 0.3f, 0.4f, 0.6f)
+        val back = shown.ops.map { op ->
+            when (op) {
+                is MaskOp.Invert -> op
+                is MaskOp.Stroke -> MaskOp.Stroke(MaskFraming.toSource(op.stroke, 0.25f, 0.3f, 0.4f, 0.6f))
+                is MaskOp.Erase -> MaskOp.Erase(MaskFraming.toSource(op.stroke, 0.25f, 0.3f, 0.4f, 0.6f))
+                else -> op
+            }
+        }
+        state.ops.forEachIndexed { i, op ->
+            when (op) {
+                is MaskOp.Invert -> assertTrue("invert survives", back[i] is MaskOp.Invert)
+                is MaskOp.Stroke -> {
+                    val r = (back[i] as MaskOp.Stroke).stroke
+                    assertEquals(op.stroke.radiusFrac, r.radiusFrac, 1e-4f)
+                    op.stroke.points.forEachIndexed { j, (x, y) ->
+                        assertEquals(x, r.points[j].first, 1e-4f)
+                        assertEquals(y, r.points[j].second, 1e-4f)
+                    }
+                }
+                is MaskOp.Erase -> {
+                    val r = (back[i] as MaskOp.Erase).stroke
+                    assertEquals(op.stroke.points[0].first, r.points[0].first, 1e-4f)
+                }
+                else -> Unit
+            }
+        }
+        // ⚠ Grow and feather are width fractions too: a preview that left them
+        // alone would show a softer edge than the render by the crop's factor.
+        assertEquals(0.025f, shown.growFrac, 1e-4f)
+        assertEquals(0.1f, shown.featherFrac, 1e-4f)
+    }
+
+    /** ⚠ The whole picture is the identity — an `image.mask` converts nothing. */
+    @Test
+    fun theWholePictureIsTheIdentity() {
+        val s = stroke(0.3f to 0.7f, r = 0.09f)
+        val there = MaskFraming.toSource(s, 0f, 0f, 1f, 1f)
+        assertEquals(0.3f, there.points[0].first, 1e-6f)
+        assertEquals(0.7f, there.points[0].second, 1e-6f)
+        assertEquals(0.09f, there.radiusFrac, 1e-6f)
+    }
+
+    /**
+     * ⚠⚠ **Moved 2026-09-15**, not deleted: the thing it protects — base is the
+     * SOURCE and repaint is the RENDER, and swapping them replaces the region
+     * you meant to keep — is now an argument order inside one node rather than a
+     * wire on the canvas. ⇒
+     * [com.abrah.nightmare.FusedSamplerTest.theBlendTakesTheSourceAsBaseAndTheRenderAsRepaint].
+     */
 }

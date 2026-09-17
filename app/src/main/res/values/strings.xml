@@ -566,4 +566,36 @@
     <string name="log_ignored_running">%1$s ignored — already running</string>
     <string name="downloading_video_models">the video models</string>
     <string name="a_model">a model</string>
+
+    <!-- ==== v1.5.0: Send to, and the strings upstream added with it. ==== -->
+    <string name="send_to">Send to</string>
+    <string name="send_section_this_flow">This flow</string>
+    <string name="send_section_flows">Flows</string>
+    <string name="send_section_saved">Saved</string>
+    <string name="send_replace_picture">replace its picture</string>
+    <string name="send_open_with">open it with this picture</string>
+    <string name="send_none">No flow takes a picture.</string>
+    <string name="cd_send_to_flow">send this picture to a flow</string>
+    <string name="toast_send_video">Only a picture can be sent into a flow</string>
+    <string name="toast_picture_unreadable">That picture could not be read</string>
+    <string name="inspector_crop">Crop</string>
+    <string name="inspector_mask">Mask</string>
+
+    <!-- ==== v1.5.0: chained flows / Send to / outpainting — run log and errors. ==== -->
+    <string name="log_sent_picture">sent the picture to %1$s</string>
+    <string name="log_resolution_set">%1$s: resolution set to %2$s</string>
+    <string name="log_seed_locked_painted">%1$s: seed locked at %2$s — %3$s is painted on its picture</string>
+    <string name="log_fitted_to_picture">%1$s: fitted to the picture %2$s will make (%3$s)</string>
+    <string name="log_fitted_to_new">%1$s: fitted to the new picture — %2$s</string>
+    <string name="log_batch_stopped_waiting">batch: stopped — %1$s is waiting for you</string>
+    <string name="log_batch_stopped_after">batch: stopped after %1$d of %2$d</string>
+    <string name="err_flow_gone">"%1$s" is gone</string>
+    <string name="log_repaint_prompt">frame and paint the area to redo on the new picture, then Run again</string>
+    <string name="log_painted_on_changed">the picture you painted on has changed — repaint it, or undo the change upstream</string>
+    <string name="log_filling_padding">filling the padding</string>
+    <string name="log_repainting_marked">repainting the area you marked</string>
+    <string name="err_node_needs_you">%1$s: needs you</string>
+
+    <!-- v1.5.0: the BLOCKED fallback when a node gives no reason of its own. -->
+    <string name="fail_needs_you">needs you</string>
 </resources>

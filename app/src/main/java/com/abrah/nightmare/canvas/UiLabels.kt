@@ -123,6 +123,9 @@ fun nodeDisplayName(qualifiedName: String): String = when (qualifiedName.nodeLab
     "latent_blend" -> stringResource(R.string.node_sd_latent_blend)
     "load" -> stringResource(R.string.node_image_load)
     "output" -> stringResource(R.string.node_image_output)
+    // ⚠⚠ v1.5.0 删除了 `image.crop` 节点类型（`WorkflowIo.migrateCropNodes` 会
+    // 重建仍引用它的存档）。这一条留着是为了**未迁移的旧存档**：若某个 flow 里
+    // 还残留该类型的节点，它仍会画出一个可读的名字，而不是裸的 "crop"。
     "crop" -> stringResource(R.string.node_image_crop)
     "mask" -> stringResource(R.string.node_image_mask)
     "upscale" -> stringResource(R.string.node_image_upscale)

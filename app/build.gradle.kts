@@ -54,8 +54,8 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 212
-        versionName = "1.4.97"
+        versionCode = 223
+        versionName = "1.5.0"
         // ⭐ aarch64 沙箱适配：taixu 自带的 NDK r29 是原生 aarch64 工具链
         // （官方 NDK 只有 x86_64 host，无法在本机执行）。
         ndkVersion = "29.0.14206865"

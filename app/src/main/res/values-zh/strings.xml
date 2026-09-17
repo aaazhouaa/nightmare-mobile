@@ -534,4 +534,36 @@
     <string name="log_ignored_running">已忽略 %1$s——已在运行中</string>
     <string name="downloading_video_models">视频模型</string>
     <string name="a_model">某个模型</string>
+
+    <!-- ==== v1.5.0：发送到，以及上游随之新增的文案。==== -->
+    <string name="send_to">发送到</string>
+    <string name="send_section_this_flow">当前工作流</string>
+    <string name="send_section_flows">工作流</string>
+    <string name="send_section_saved">已保存</string>
+    <string name="send_replace_picture">替换它的图片</string>
+    <string name="send_open_with">用这张图片打开</string>
+    <string name="send_none">没有接受图片的工作流。</string>
+    <string name="cd_send_to_flow">把这张图片发送到工作流</string>
+    <string name="toast_send_video">只有图片才能发送到工作流</string>
+    <string name="toast_picture_unreadable">无法读取这张图片</string>
+    <string name="inspector_crop">裁剪</string>
+    <string name="inspector_mask">蒙版</string>
+
+    <!-- ==== v1.5.0：链式工作流 / 发送到 / 扩图 —— 运行日志与错误。==== -->
+    <string name="log_sent_picture">已把图片发送到 %1$s</string>
+    <string name="log_resolution_set">%1$s：分辨率已设为 %2$s</string>
+    <string name="log_seed_locked_painted">%1$s：种子锁定在 %2$s —— %3$s 是在它的图片上绘制的</string>
+    <string name="log_fitted_to_picture">%1$s：已按 %2$s 将要生成的图片适配（%3$s）</string>
+    <string name="log_fitted_to_new">%1$s：已适配新图片 —— %2$s</string>
+    <string name="log_batch_stopped_waiting">批量：已停止 —— %1$s 正在等你</string>
+    <string name="log_batch_stopped_after">批量：已完成 %2$d 个中的 %1$d 个后停止</string>
+    <string name="err_flow_gone">"%1$s" 已不存在</string>
+    <string name="log_repaint_prompt">在新图片上框选并涂抹要重做的区域，然后再次运行</string>
+    <string name="log_painted_on_changed">你涂抹时用的图片已经变了 —— 请重新涂抹，或撤销上游的改动</string>
+    <string name="log_filling_padding">正在填充扩图区域</string>
+    <string name="log_repainting_marked">正在重绘你标记的区域</string>
+    <string name="err_node_needs_you">%1$s：需要你操作</string>
+
+    <!-- v1.5.0：节点自带说明缺失时，BLOCKED 状态的兜底文案。-->
+    <string name="fail_needs_you">需要你操作</string>
 </resources>

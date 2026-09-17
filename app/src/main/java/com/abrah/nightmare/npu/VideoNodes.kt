@@ -6,6 +6,7 @@ import com.abrah.nightmare.ContextKey
 import com.abrah.nightmare.Node
 import com.abrah.nightmare.NodeCtx
 import com.abrah.nightmare.NodeType
+import com.abrah.nightmare.R
 import com.abrah.nightmare.Port
 import com.abrah.nightmare.str
 import com.abrah.nightmare.Value
@@ -86,10 +87,11 @@ object VideoSampleNode : NodeType {
 
     /** ⭐ Named by what it is doing — the same rule as the SD nodes' [titleFor]. */
     override fun titleFor(node: com.abrah.nightmare.Node): String =
-        if (node.inputs["image"] != null) "Image to video" else "Text to video"
+        // ⚠⚠ 硬编码中文，同 [Fused.RenderNode.titleFor]：调用点不在 @Composable 里。
+        if (node.inputs["image"] != null) "图生视频" else "文生视频"
 
     override val defaultId = "video"
-    override val about = "a prompt, or a prompt and a photo, into a 2 second clip"
+    override val about = "把一段提示词，或提示词加一张照片，变成一段 2 秒的短片"
 
     /** ⚠⚠ The clip belongs to `core.output`, like every other result (§5.7). */
     override val showsResult = false
@@ -271,7 +273,15 @@ object VideoSampleNode : NodeType {
             // node directly (a plain `Executor.run`, a test), where a
             // reproducible-by-accident clip would be worse than a random one.
             val used = if (seed == 0L) System.currentTimeMillis() else seed
-            ctx.say("seed $used" + if (bitmap != null) ", animating your picture" else "")
+            // ⚠⚠ 硬编码中文的兜底：`ctx.android` 在测试里为 null，与其它
+            // `ctx.say` 一致，取不到资源时退回英文原文。
+            ctx.say(
+                if (bitmap != null) {
+                    android?.getString(R.string.log_video_animating, used) ?: "seed $used, animating your picture"
+                } else {
+                    android?.getString(R.string.log_video_seed, used) ?: "seed $used"
+                }
+            )
             Log.i(TAG, "video: seed $used, upscale=$upscale, i2v=${bitmap != null}")
 
             // ⭐⭐ **Progress across the WHOLE render, not per phase.**
@@ -310,7 +320,10 @@ object VideoSampleNode : NodeType {
                 Log.i(TAG, "  $stage $i/$n")
             }
             frames = r.frames
-            ctx.say("${frames.size} frames in ${"%.1f".format(r.seconds)} s — encoding")
+            ctx.say(
+                android?.getString(R.string.log_video_frames, frames.size, "%.1f".format(r.seconds))
+                    ?: "${frames.size} frames in ${"%.1f".format(r.seconds)} s — encoding"
+            )
             Log.i(TAG, "video: ${frames.size} frames in ${"%.1f".format(r.seconds)} s")
         } finally {
             // ⚠⚠ ALWAYS. Three MMDiT contexts are ~4.6 GB of mappings; leaving

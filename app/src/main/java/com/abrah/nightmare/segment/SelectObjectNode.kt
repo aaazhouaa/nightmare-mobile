@@ -33,7 +33,7 @@ object SelectObjectNode : NodeType {
     override val category = "inpaint"
     override val paletteName = "Segment model"
     override val defaultId = "segment_model"
-    override val about = "wire into Inpaint, then tap objects in its mask editor to select them"
+    override val about = "连到「重绘」上，然后在它的蒙版编辑器里点选对象"
 
     const val MODEL = "model"
 

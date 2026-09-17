@@ -598,4 +598,88 @@
 
     <!-- v1.5.0: the BLOCKED fallback when a node gives no reason of its own. -->
     <string name="fail_needs_you">needs you</string>
+
+    <!-- v1.5.0: the render node narrates itself while it runs (canvas run log). -->
+    <string name="log_reading_prompt">reading the prompt</string>
+    <string name="log_rendering">rendering</string>
+    <string name="log_finding_tapped">finding the objects you tapped</string>
+    <string name="log_reimagining">re-imagining the picture</string>
+
+    <!-- v1.5.0: the video node narrates itself while it runs (canvas run log). -->
+    <string name="log_video_seed">seed %1$s</string>
+    <string name="log_video_animating">seed %1$s, animating your picture</string>
+    <string name="log_video_frames">%1$d frames in %2$s s — encoding</string>
+
+    <!-- v1.5.0/before: the canvas run log and the workflow errors, which the user reads in-app. -->
+    <string name="log_renamed">renamed "%1$s" to "%2$s"</string>
+    <string name="log_saved_flow">saved "%1$s"</string>
+    <string name="err_still_rendering">Still rendering. Wait for it to finish, or close the run.</string>
+    <string name="log_not_opened_rendering">"%1$s" not opened — this flow is still rendering</string>
+    <string name="log_flow_wants">"%1$s" wants %2$s</string>
+    <string name="log_opened_flow">opened "%1$s"</string>
+    <string name="err_open_failed">could not open "%1$s" — %2$s</string>
+    <string name="log_imported">imported "%1$s"</string>
+    <string name="log_pack_installed_in">installed the pack in %1$s</string>
+    <string name="log_restart_for_nodes">  ⚠ restart the app for its nodes to appear</string>
+    <string name="err_import_pack_failed">could not import that pack — %1$s</string>
+    <string name="log_saved_workflow_unreadable">saved workflow unreadable — %1$s</string>
+    <string name="log_loaded_nodes">loaded %1$d nodes</string>
+    <string name="log_workflow_needs">workflow needs %1$s</string>
+    <string name="err_plugin_check_failed">could not check this workflow\'s plugins — %1$s</string>
+    <string name="err_save_workflow_failed">could not save the workflow — %1$s</string>
+    <string name="log_installed">installed %1$s</string>
+    <string name="log_download_cancelled">download cancelled</string>
+    <string name="log_download_cancelled_kept">download cancelled — what arrived is kept</string>
+    <string name="log_install_failed">install failed — %1$s</string>
+    <string name="log_video_install_failed">video install — %1$s</string>
+    <string name="log_installed_video_models">installed the video models</string>
+    <string name="log_deleted_video_graphs">deleted %1$d video graph(s)</string>
+    <string name="log_deleted">deleted %1$s</string>
+    <string name="err_delete_failed">could not delete — %1$s</string>
+    <string name="log_model_set">model set to %1$s</string>
+    <string name="log_stopping_backend_model">  stopping the backend — it was launched for the previous model</string>
+    <string name="log_stopping_backend_context">  stopping the backend — it was launched for the previous context</string>
+    <string name="log_cannot_render_res">%1$s cannot render %2$s — it serves %3$s</string>
+    <string name="log_cleared_picture">cleared the picture on %1$s</string>
+    <string name="log_favourited">favourited</string>
+    <string name="log_unfavourited">un-favourited</string>
+    <string name="log_favourited_with_flow">favourited, with the flow that made it</string>
+    <string name="log_removed_from_results">removed from Results</string>
+    <string name="log_forgot_batch">forgot a batch of %1$d</string>
+    <string name="log_forgot_pictures">forgot %1$d pictures</string>
+    <string name="log_forgot_one_picture">forgot that one</string>
+    <string name="log_saved_to_gallery">saved %1$s to the gallery</string>
+    <string name="err_save_failed_plain">could not save -- %1$s</string>
+    <string name="err_picture_gone_memory">that picture is no longer in memory</string>
+    <string name="err_picture_file_gone">that picture\'s file is gone</string>
+    <string name="err_result_flow_unreadable">that result\'s flow could not be read</string>
+    <string name="err_keep_failed">could not keep it — %1$s</string>
+    <string name="log_opened_name">opened "%1$s"</string>
+    <string name="log_batch_runs">batch: %1$d runs</string>
+    <string name="log_batch_run_n">  run %1$d/%2$d  %3$s</string>
+    <string name="log_batch_stopped_error">batch: stopped — %1$s</string>
+    <string name="log_batch_done_all">batch: %1$d of %2$d done — all %1$d are in Results</string>
+    <string name="log_cancelling">cancelling…</string>
+    <string name="log_cancelled">%1$s cancelled</string>
+    <string name="log_threw">%1$s threw %2$s: %3$s</string>
+    <string name="log_canvas_failed">canvas: %1$s</string>
+    <string name="log_preview_failed">preview failed — %1$s: %2$s</string>
+    <string name="log_segment_failed">segment failed — %1$s</string>
+    <string name="err_orphans">%1$s has nowhere to send its picture — </string>
+    <string name="log_crop_sizes_failed">could not work out the crop sizes — %1$s: %2$s</string>
+    <string name="log_prompt_written">  %1$s\'s prompt written to %2$s</string>
+    <string name="log_recipe_set">  %1$s: %2$s steps, cfg %3$s, %4$s — set on %5$d node(s)</string>
+    <string name="log_starter_prompt_written">  its starter prompt written to %1$d node(s) — anything you typed is left alone</string>
+    <string name="toast_model_not_installed">%1$s is not installed</string>
+    <string name="toast_model_incomplete">%1$s is incomplete — missing %2$s</string>
+    <string name="log_node_model">%1$s: %2$s</string>
+    <string name="log_node_model_family">%1$s: %2$s (%3$s)</string>
+    <string name="log_aspect_set">aspect %1$s — %2$s on %3$d node(s)</string>
+    <string name="log_workflow_uses">this workflow uses %1$s — selected it</string>
+    <string name="log_workflow_renders_at">this workflow renders at %1$s — selected it</string>
+    <string name="log_retargeted">  retargeted %1$d node(s) on the canvas</string>
+    <string name="log_size_problem">  ⚠ size: %1$s</string>
+    <string name="log_derived_sizes">  sizes: %1$s</string>
+
+    <!-- v1.5.0: the video split nodes narrate themselves (canvas run log). -->
 </resources>

@@ -873,7 +873,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
      */
     suspend fun sample() {
         val steps = 20
-        say("sample: $steps steps, seed $sampleSeed — streaming")
+        say("sample：$steps 步，种子 $sampleSeed —— 流式输出")
         val s = when (val r = Ops.sample(
             prompt = "a cat on grass",
             negative = "blurry, lowres",
@@ -888,7 +888,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         )) {
             is Ops.Result.Err -> {
                 sink.progress(null)
-                say("sample FAILED http ${r.code}", bad = true)
+                say("sample 失败 HTTP ${r.code}", bad = true)
                 say("  ${r.body.take(180)}", bad = true)
                 return
             }
@@ -896,17 +896,17 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         }
         sink.progress(null)
         sink.backend(BackendState.UP)
-        say("sample ${s.serverMs} ms (wire ${s.wireMs} ms) — ${s.handle}")
-        say("  latent_sha ${s.latentSha}  ${s.progressEvents} progress frames")
-        say("  first frame +${s.firstProgressMs} ms, last +${s.lastProgressMs} ms")
+        say("sample ${s.serverMs} 毫秒（传输 ${s.wireMs} 毫秒）—— ${s.handle}")
+        say("  latent_sha ${s.latentSha}  ${s.progressEvents} 个进度帧")
+        say("  首帧 +${s.firstProgressMs} 毫秒，末帧 +${s.lastProgressMs} 毫秒")
         if (s.firstProgressMs in 0 until s.serverMs / 2) {
-            say("  STREAMED: progress led the result by ${s.serverMs - s.firstProgressMs} ms")
+            say("  流式：进度比结果早 ${s.serverMs - s.firstProgressMs} 毫秒")
         } else {
             // Not thrown, because the render itself succeeded. A buffered
             // stream is a transport finding, and calling it a sample failure
             // would send the next session to look in the wrong place.
-            say("  BUFFERED? first frame at +${s.firstProgressMs} ms of a " +
-                "${s.serverMs} ms render — the client is not streaming", bad = true)
+            say("  缓冲？${s.serverMs} 毫秒的渲染中，首帧出现在 +${s.firstProgressMs} 毫秒 " +
+                "—— 客户端没有在流式接收", bad = true)
         }
 
         // The other half of the graph. A handle that cannot be decoded is a
@@ -915,21 +915,21 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             is Ops.Result.Ok -> {
                 val bmp = BitmapFactory.decodeByteArray(d.value.png, 0, d.value.png.size)
                 if (bmp == null) {
-                    say("decode returned ${d.value.png.size} B that BitmapFactory " +
-                        "refused", bad = true)
+                    say("解码返回了 ${d.value.png.size} 字节，但 BitmapFactory " +
+                        "拒绝读取", bad = true)
                 } else {
                     sink.image(bmp)
-                    say("vae_decode ${d.value.serverMs} ms — ${bmp.width}x${bmp.height} " +
+                    say("vae_decode ${d.value.serverMs} 毫秒 —— ${bmp.width}x${bmp.height} " +
                         "sha ${d.value.rgbSha}")
                     // ⭐ And LOOK at it. graph_smoke.sh exists because a random
                     // latent decodes just as deterministically as a sampled one
                     // (backend-patches/README.md); only the picture tells them
                     // apart, and this puts it on the screen.
-                    say("  ^ that image is the check — a cat, not beige blobs")
+                    say("  ^ 这张图就是判据 —— 应该是一只猫，不是一片米色糊块")
                 }
             }
             is Ops.Result.Err -> {
-                say("vae_decode(handle) FAILED http ${d.code}", bad = true)
+                say("vae_decode(handle) 失败 HTTP ${d.code}", bad = true)
                 say("  ${d.body.take(180)}", bad = true)
             }
         }
@@ -3017,16 +3017,15 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         executor.cache.clear()
         val a = pass("A cold", demoGraph(42, 7), expectRan = 5, expectCached = 0)
         if (a.error != null || a.failed > 0) {
-            say("graph: pass A did not complete — the later passes would be " +
-                "measuring nothing. Stopping.", bad = true)
+            say("graph：第 A 轮没有跑完 —— 后面几轮将失去意义。中止。", bad = true)
             return
         }
         pass("B identical", demoGraph(42, 7), expectRan = 0, expectCached = 5)
         pass("C reseed B", demoGraph(42, 8), expectRan = 2, expectCached = 3)
 
-        say("pass D: restarting the backend under the cache…")
+        say("第 D 轮：在保留缓存的情况下重启后端…")
         if (!restartBackend()) {
-            say("graph: no backend after the restart — D not run", bad = true)
+            say("graph：重启后没有后端 —— 第 D 轮未执行", bad = true)
             return
         }
         val d = pass("D after restart", demoGraph(42, 8), expectRan = 3, expectCached = 2)
@@ -3034,11 +3033,10 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // happened to re-run the right two nodes for the wrong reason reads as
         // a pass.
         if (d.prunedHandles > 0) {
-            say("  dropped ${d.prunedHandles} handle(s) the restarted backend no " +
-                "longer held — residency WAS consulted")
+            say("  已丢弃 ${d.prunedHandles} 个重启后后端不再持有的句柄 " +
+                "—— 确实查询了驻留情况")
         } else {
-            say("  pruned 0 handles after a restart — residency was NOT consulted, " +
-                "so D proves nothing", bad = true)
+            say("  重启后没有丢弃任何句柄 —— 没有查询驻留情况，因此第 D 轮不能证明什么", bad = true)
         }
 
         // The last decode, on screen where there is one. A verdict table nobody
@@ -3046,7 +3044,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         (d.outputs["decode_b"] as? Value.Image)?.let { img ->
             images.get(img.id)?.let { bmp ->
                 sink.image(bmp)
-                say("  ^ decode_b, from the cache — a cat, not beige blobs")
+                say("  ^ decode_b，来自缓存 —— 应该是一只猫，不是一片米色糊块")
             }
         }
     }
@@ -3058,29 +3056,29 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         expectRan: Int,
         expectCached: Int,
     ): GraphRun {
-        say("pass $label:")
+        say("第 $label 轮：")
         val r = executor.run(
             graph,
             onProgress = { _, step, total -> sink.progress(step to total) },
         )
         sink.progress(null)
         if (r.error != null) {
-            say("  refused: ${r.error}", bad = true)
+            say("  被拒绝：${r.error}", bad = true)
             return r
         }
         r.runs.forEach { n ->
             val mark = when (n.outcome) {
-                Outcome.RAN -> "ran    ${n.ms} ms"
-                Outcome.CACHED -> "cached"
-                Outcome.FAILED -> "FAILED"
-                Outcome.BLOCKED -> "blocked"
+                Outcome.RAN -> "运行   ${n.ms} 毫秒"
+                Outcome.CACHED -> "缓存"
+                Outcome.FAILED -> "失败"
+                Outcome.BLOCKED -> "阻塞"
             }
             say("  ${n.id.padEnd(9)} $mark  ${n.detail}", bad = n.outcome == Outcome.FAILED)
         }
         val ok = r.ran == expectRan && r.cached == expectCached
         say(
-            "  ${if (ok) "PASS" else "FAIL"} $label: ran ${r.ran}, cached ${r.cached} " +
-                "(expected $expectRan / $expectCached) in ${r.totalMs} ms",
+            "  ${if (ok) "通过" else "失败"} $label：运行 ${r.ran}，缓存 ${r.cached} " +
+                "（预期 $expectRan / $expectCached），耗时 ${r.totalMs} 毫秒",
             bad = !ok,
         )
         return r
@@ -3110,7 +3108,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             }
         }
         if (!down) {
-            say("  backend still answering /health after stop() — not restarted", bad = true)
+            say("  stop() 之后后端仍在响应 /health —— 没有重启", bad = true)
             return false
         }
         sink.backend(BackendState.DOWN)
@@ -3136,11 +3134,11 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
     private suspend fun ensureUpscaleServer(): Boolean {
         if (Backend.probe("/health").code == 200) {
             if (!BackendProcess.upscalerServer) {
-                say("this graph needs no checkpoint; the backend already up is holding one")
+                say("这个图不需要 checkpoint；已经在运行的后端正持有一个")
             }
             return true
         }
-        say("starting an upscale-only backend — this graph needs no checkpoint…")
+        say("正在启动只做放大的后端 —— 这个图不需要 checkpoint…")
         return launchBackend(upscalerOnly = true)
     }
 
@@ -3149,7 +3147,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         upscalerOnly: Boolean = false,
     ): Boolean {
         val models = BackendProcess.modelsDir(ctx)
-        say("models dir: ${models.absolutePath}")
+        say("模型目录：${models.absolutePath}")
         val modelId = want?.model ?: SelectedModel.id
         val res = want?.let { Res(it.width, it.height) } ?: SelectedModel.res
         when (val r = BackendProcess.start(
@@ -3157,19 +3155,19 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
             upscalerOnly = upscalerOnly,
         )) {
             is BackendProcess.Start.Failed -> {
-                say("start failed — ${r.why}", bad = true)
+                say("启动失败 —— ${r.why}", bad = true)
                 drainBackendLog()
                 return false
             }
             BackendProcess.Start.Ok -> {
-                say("launched, waiting for /health…")
+                say("已启动，正在等待 /health…")
                 var up = false
                 repeat(45) {
                     if (!up) {
                         if (Backend.probe("/health").code == 200) {
                             up = true
                             sink.backend(BackendState.UP)
-                            say("serving after ~${it + 1}s")
+                            say("约 ${it + 1} 秒后开始服务")
                         } else {
                             kotlinx.coroutines.delay(1000)
                         }
@@ -3177,7 +3175,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
                 }
                 if (!up) {
                     sink.backend(BackendState.DOWN)
-                    say("no /health after 45s — backend output follows", bad = true)
+                    say("45 秒内没有 /health —— 以下是后端输出", bad = true)
                     drainBackendLog()
                 }
                 return up
@@ -3190,7 +3188,7 @@ class HarnessOps(private val ctx: Context, private val sink: Sink) {
         // this is reached from the main thread.
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { BackendProcess.stop() }
         sink.backend(BackendState.DOWN)
-        say("backend stopped")
+        say("后端已停止")
     }
 
     /**

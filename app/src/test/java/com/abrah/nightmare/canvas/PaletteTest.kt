@@ -63,13 +63,20 @@ class PaletteTest {
             assertFalse(t.name, t.paletteName.contains("sample", ignoreCase = true))
         }
         val n = Node("s", SdSampler.SDXL.name)
-        assertEquals("SDXL Text to image", SdSampler.SDXL.titleFor(n))
+        // ⚠⚠ 这几个标题是用户直接读到的文字，而 UI 已汉化（见 `Fused.titleFor`）。
+        // 断言的是「节点告诉用户它在做什么」，不是英文措辞本身——所以跟着
+        // 语言走，而不是把英文字符串钉死在这里。同样要守的是下面那条：
+        // 用户读到的任何地方都不应出现内部的 "sample" 一词。
+        assertEquals("SDXL 文生图", SdSampler.SDXL.titleFor(n))
         assertEquals(
-            "SDXL Image to image",
+            "SDXL 图生图",
             SdSampler.SDXL.titleFor(n.copy(inputs = sources("image" to "photo"))),
         )
-        assertEquals("Anima Inpaint", SdSampler.ANIMA_INPAINT.titleFor(n))
+        assertEquals("Anima 局部重绘", SdSampler.ANIMA_INPAINT.titleFor(n))
         assertEquals("sdxl_inpaint", SdSampler.SDXL_INPAINT.defaultId)
         assertTrue(inpaintWorkflow().graph.nodes.none { it.id.contains("sample") })
+        for (t in sections.values.flatten().flatten()) {
+            assertFalse(t.name, t.titleFor(n).orEmpty().contains("sample", ignoreCase = true))
+        }
     }
 }

@@ -169,17 +169,20 @@ class SdSampler(
 
     /** ⭐ `SDXL Inpaint`, or `SD 1.5 Text to image` until a photo is wired in. */
     override fun titleFor(node: Node): String = family.label + " " + when {
-        inpaint -> "Inpaint"
-        node.inputs["image"] != null -> "Image to image"
-        else -> "Text to image"
+        // ⚠⚠ 硬编码中文，理由同 `about`／`hint`：调用点是
+        // `GraphCanvas.drawNode`（DrawScope，非 @Composable）与 `HarnessViewModel`，
+        // 都调不了 `stringResource`。
+        inpaint -> "局部重绘"
+        node.inputs["image"] != null -> "图生图"
+        else -> "文生图"
     }
 
     override val defaultId = family.slug + if (inpaint) "_inpaint" else "_generate"
 
     override val about = if (inpaint) {
-        "paint an area of a photo and re-imagine only that"
+        "在照片上涂抹一块区域，只重新想象那一块"
     } else {
-        "a prompt, or a prompt and a photo, into a picture"
+        "把一段提示词，或提示词加一张照片，变成图片"
     }
 
     /** ⚠ Its picture is its OUTPUT, so a tap on it opens the viewer (§5.7). */
@@ -396,7 +399,7 @@ class SdSampler(
         val prompt = inputs["prompt"] as? Value.Prompt
             ?: throw IllegalArgumentException(
                 "node \"${node.id}\": nothing is wired into \"prompt\" — " +
-                    "drag a Prompt node out of the palette and connect it"
+                    "把提示词节点从面板拖出来连上它"
             )
         val w = int("width")
         val h = int("height")
@@ -405,7 +408,7 @@ class SdSampler(
 
         // ⚠ First, because it is the cheapest thing that can fail: a backend
         // that is not up says so here rather than after a 200 ms VAE encode.
-        ctx.say("reading the prompt")
+        ctx.say(ctx.android?.getString(R.string.log_reading_prompt) ?: "reading the prompt")
         val cond = when (val r = ctx.host.encodeText(prompt.positive, prompt.negative)) {
             is Ops.Result.Ok -> r.value.handle
             is Ops.Result.Err -> throw OpFailure("encode_text", r.code, r.body)
@@ -418,7 +421,7 @@ class SdSampler(
         val photo = inputs["image"] as? Value.Image
 
         if (photo == null) {
-            ctx.say("rendering")
+            ctx.say(ctx.android?.getString(R.string.log_rendering) ?: "rendering")
             val latent = sample(ctx, p, cond, null, w, h, aspect)
             return VaeDecodeNode.decode(ctx, latent, w, h, aspect)
         }
@@ -472,7 +475,7 @@ class SdSampler(
                         "${com.abrah.nightmare.segment.Segmenter.LABEL} in Models, Tools"
                 )
             }
-            ctx.say("finding the objects you tapped")
+            ctx.say(ctx.android?.getString(R.string.log_finding_tapped) ?: "finding the objects you tapped")
             MaskTaps.resolve(stored) { x, y ->
                 com.abrah.nightmare.segment.Segmenter.segment(android, src, x, y)?.candidates
             }
@@ -502,7 +505,7 @@ class SdSampler(
         )
 
         if (!masking) {
-            ctx.say("re-imagining the picture")
+            ctx.say(ctx.android?.getString(R.string.log_reimagining) ?: "re-imagining the picture")
             val base = encode(ctx, padToCanvas(frame, w, h), ENCODE_SEED, w, h)
             val latent = sample(ctx, p, cond, base, w, h, aspect)
             return VaeDecodeNode.decode(ctx, latent, w, h, aspect)
@@ -557,7 +560,7 @@ class SdSampler(
         }
         val patch = VaeDecodeNode.decode(ctx, blended, w, h, aspect)
         val patchBmp = ctx.images.get(patch.id)
-            ?: throw IllegalStateException("node \"${node.id}\": the render vanished from the store")
+            ?: throw IllegalStateException("node \"${node.id}\": 渲染结果已从存储中消失")
 
         // ⭐⭐ The patch goes back where it was cut from, blended along the mask
         // rather than pasted as a rectangle — the seam is the whole reason the
@@ -740,8 +743,8 @@ object MediaOutputNode : NodeType {
             )
         if (media !is Value.Image && media !is Value.Video) {
             throw IllegalArgumentException(
-                "node \"${node.id}\": \"media\" carries ${media.describe()}, " +
-                    "which is not a picture or a clip"
+                "node \"${node.id}\": \"media\" 传入的是 ${media.describe()}，" +
+                    "既不是图片也不是视频片段"
             )
         }
         // ⚠⚠ **It writes nothing.** Autosave KEEPS into Results, and Results is

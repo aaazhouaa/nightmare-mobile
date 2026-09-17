@@ -566,4 +566,88 @@
 
     <!-- v1.5.0：节点自带说明缺失时，BLOCKED 状态的兜底文案。-->
     <string name="fail_needs_you">需要你操作</string>
+
+    <!-- v1.5.0：渲染节点运行时的自述（画布运行日志）。-->
+    <string name="log_reading_prompt">正在读取提示词</string>
+    <string name="log_rendering">正在渲染</string>
+    <string name="log_finding_tapped">正在识别你点选的对象</string>
+    <string name="log_reimagining">正在重新想象这张图片</string>
+
+    <!-- v1.5.0：视频节点运行时的自述（画布运行日志）。-->
+    <string name="log_video_seed">种子 %1$s</string>
+    <string name="log_video_animating">种子 %1$s，正在把你的图片做成动画</string>
+    <string name="log_video_frames">%1$d 帧，用时 %2$s 秒 —— 正在编码</string>
+
+    <!-- 画布运行日志与工作流错误（用户可在应用内读到）。-->
+    <string name="log_renamed">已把“%1$s”重命名为“%2$s”</string>
+    <string name="log_saved_flow">已保存“%1$s”</string>
+    <string name="err_still_rendering">仍在渲染。请等待完成，或关闭本次运行。</string>
+    <string name="log_not_opened_rendering">未打开“%1$s”——这个工作流仍在渲染</string>
+    <string name="log_flow_wants">“%1$s”需要 %2$s</string>
+    <string name="log_opened_flow">已打开“%1$s”</string>
+    <string name="err_open_failed">无法打开“%1$s”——%2$s</string>
+    <string name="log_imported">已导入“%1$s”</string>
+    <string name="log_pack_installed_in">已把插件包安装到 %1$s</string>
+    <string name="log_restart_for_nodes">  ⚠ 重启应用后它的节点才会出现</string>
+    <string name="err_import_pack_failed">无法导入该插件包——%1$s</string>
+    <string name="log_saved_workflow_unreadable">已保存的工作流无法读取——%1$s</string>
+    <string name="log_loaded_nodes">已载入 %1$d 个节点</string>
+    <string name="log_workflow_needs">工作流需要 %1$s</string>
+    <string name="err_plugin_check_failed">无法检查该工作流的插件——%1$s</string>
+    <string name="err_save_workflow_failed">无法保存工作流——%1$s</string>
+    <string name="log_installed">已安装 %1$s</string>
+    <string name="log_download_cancelled">下载已取消</string>
+    <string name="log_download_cancelled_kept">下载已取消——已下载的部分会保留</string>
+    <string name="log_install_failed">安装失败——%1$s</string>
+    <string name="log_video_install_failed">视频模型安装——%1$s</string>
+    <string name="log_installed_video_models">已安装视频模型</string>
+    <string name="log_deleted_video_graphs">已删除 %1$d 个视频图</string>
+    <string name="log_deleted">已删除 %1$s</string>
+    <string name="err_delete_failed">无法删除——%1$s</string>
+    <string name="log_model_set">模型已设为 %1$s</string>
+    <string name="log_stopping_backend_model">  正在停止后端——它是为上一个模型启动的</string>
+    <string name="log_stopping_backend_context">  正在停止后端——它是为上一个上下文启动的</string>
+    <string name="log_cannot_render_res">%1$s 无法渲染 %2$s——它支持的是 %3$s</string>
+    <string name="log_cleared_picture">已清除 %1$s 上的图片</string>
+    <string name="log_favourited">已收藏</string>
+    <string name="log_unfavourited">已取消收藏</string>
+    <string name="log_favourited_with_flow">已收藏，连同生成它的工作流</string>
+    <string name="log_removed_from_results">已从结果中移除</string>
+    <string name="log_forgot_batch">已忘记一个含 %1$d 张的批次</string>
+    <string name="log_forgot_pictures">已忘记 %1$d 张图片</string>
+    <string name="log_forgot_one_picture">已忘记那一张</string>
+    <string name="log_saved_to_gallery">已把%1$s保存到相册</string>
+    <string name="err_save_failed_plain">无法保存——%1$s</string>
+    <string name="err_picture_gone_memory">那张图片已不在内存中</string>
+    <string name="err_picture_file_gone">那张图片的文件已不存在</string>
+    <string name="err_result_flow_unreadable">无法读取该结果对应的工作流</string>
+    <string name="err_keep_failed">无法保留——%1$s</string>
+    <string name="log_opened_name">已打开“%1$s”</string>
+    <string name="log_batch_runs">批量：共 %1$d 次运行</string>
+    <string name="log_batch_run_n">  第 %1$d/%2$d 次  %3$s</string>
+    <string name="log_batch_stopped_error">批量：已停止——%1$s</string>
+    <string name="log_batch_done_all">批量：已完成 %1$d/%2$d —— %1$d 张都在结果里</string>
+    <string name="log_cancelling">正在取消…</string>
+    <string name="log_cancelled">%1$s 已取消</string>
+    <string name="log_threw">%1$s 抛出 %2$s：%3$s</string>
+    <string name="log_canvas_failed">画布：%1$s</string>
+    <string name="log_preview_failed">预览失败——%1$s：%2$s</string>
+    <string name="log_segment_failed">识别失败——%1$s</string>
+    <string name="err_orphans">%1$s 没有可以接收图片的下游节点——</string>
+    <string name="log_crop_sizes_failed">无法推算裁剪尺寸——%1$s：%2$s</string>
+    <string name="log_prompt_written">  已把 %1$s 的提示词写入 %2$s</string>
+    <string name="log_recipe_set">  %1$s：%2$s 步，cfg %3$s，%4$s —— 已设置到 %5$d 个节点</string>
+    <string name="log_starter_prompt_written">  已把起始提示词写入 %1$d 个节点——你自己输入的都不会被改动</string>
+    <string name="toast_model_not_installed">%1$s 尚未安装</string>
+    <string name="toast_model_incomplete">%1$s 不完整——缺少 %2$s</string>
+    <string name="log_node_model">%1$s：%2$s</string>
+    <string name="log_node_model_family">%1$s：%2$s（%3$s）</string>
+    <string name="log_aspect_set">比例 %1$s —— %2$s，影响 %3$d 个节点</string>
+    <string name="log_workflow_uses">这个工作流使用 %1$s——已选中它</string>
+    <string name="log_workflow_renders_at">这个工作流按 %1$s 渲染——已选中它</string>
+    <string name="log_retargeted">  已在画布上重定向 %1$d 个节点</string>
+    <string name="log_size_problem">  ⚠ 尺寸：%1$s</string>
+    <string name="log_derived_sizes">  尺寸：%1$s</string>
+
+    <!-- v1.5.0：视频拆分节点运行时的自述（画布运行日志）。-->
 </resources>

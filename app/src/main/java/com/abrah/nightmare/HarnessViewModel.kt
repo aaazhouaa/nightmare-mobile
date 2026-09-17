@@ -238,7 +238,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (why != null) { workflowError = why; return }
         if (currentWorkflowName == from) currentWorkflowName = to.trim()
         workflowError = null
-        say("renamed \"$from\" to \"${to.trim()}\"")
+        say(str(R.string.log_renamed, from, to.trim()))
         refreshWorkflows()
     }
 
@@ -262,7 +262,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             currentWorkflowName = name.trim()
             // ⚠ Saving is the other thing that makes the canvas clean.
             savedBaseline = canvas.workflow
-            say("saved \"${name.trim()}\"")
+            say(str(R.string.log_saved_flow, name.trim()))
             workflowError = null
             refreshWorkflows()
         } catch (e: Exception) {
@@ -328,8 +328,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun guardedOpen(label: String, open: () -> Unit) {
         if (runLog.running) {
-            say("\"$label\" not opened — this flow is still rendering", bad = true)
-            workflowError = "Still rendering. Wait for it to finish, or close the run."
+            say(str(R.string.log_not_opened_rendering, label), bad = true)
+            workflowError = str(R.string.err_still_rendering)
             return
         }
         if (activeFlow.dirty) {
@@ -667,16 +667,16 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             // name, which is what tells the user which pack to fetch.
             val missing = loaded.requires.filter { nodeTypes.none { t -> t.key.startsWith(it.pluginId) } }
             if (missing.isNotEmpty()) {
-                say("\"$name\" wants ${missing.joinToString { it.pluginId }}", bad = true)
+                say(str(R.string.log_flow_wants, name, missing.joinToString { it.pluginId }), bad = true)
             }
             guardedOpen(name) {
                 openWorkflow(loaded.workflow, loaded.view)
                 currentWorkflowName = name
-                say("opened \"$name\"")
+                say(str(R.string.log_opened_flow, name))
                 sayNotes(loaded)
             }
         } catch (e: Exception) {
-            workflowError = "could not open \"$name\" — ${e.message}"
+            workflowError = str(R.string.err_open_failed, name, e.message ?: "")
         }
     }
 
@@ -726,12 +726,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                             openWorkflow(loaded.workflow, loaded.view)
                             currentWorkflowName = name
                             closeLibrary()
-                            say("imported \"$name\"")
+                            say(str(R.string.log_imported, name))
                             sayNotes(loaded)
                         }
                     },
                     onFailure = {
-                        workflowError = "could not import that file — ${it.message}"
+                        workflowError = str(R.string.err_import_failed, it.message ?: "")
                     },
                 )
             }
@@ -769,13 +769,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 result.fold(
                     onSuccess = { dir ->
-                        say("installed the pack in ${dir.name}")
+                        say(str(R.string.log_pack_installed_in, dir.name))
                         // ⚠⚠ The node types are cached in a `by lazy`, so a pack
                         // installed now is invisible until the process restarts.
                         // Said out loud rather than left as "my node is missing".
-                        say("  ⚠ restart the app for its nodes to appear", bad = true)
+                        say(str(R.string.log_restart_for_nodes), bad = true)
                     },
-                    onFailure = { workflowError = "could not import that pack — ${it.message}" },
+                    onFailure = { workflowError = str(R.string.err_import_pack_failed, it.message ?: "") },
                 )
             }
         }
@@ -1073,7 +1073,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     isCancelled = { cancelInstall },
                 )
                 viewModelScope.launch {
-                    say("installed ${spec.label}")
+                    say(str(R.string.log_installed, spec.label))
                     // ⭐ First model in becomes the one in use. Otherwise a user
                     // downloads a model, presses Run, and renders against a
                     // model they do not have.
@@ -1086,14 +1086,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // there saying "failed" about something the user stopped.
                 viewModelScope.launch {
                     DownloadNotice.clear(ctx)
-                    say("download cancelled", bad = true)
+                    say(str(R.string.log_download_cancelled), bad = true)
                 }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
                     DownloadNotice.done(ctx, spec.label, ok = false, detail = modelError)
                     toast(getApplication<Application>().getString(R.string.toast_failed, spec.label, modelError))
-                    say("install failed — $modelError", bad = true)
+                    say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
                 viewModelScope.launch {
@@ -1228,15 +1228,15 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     onProgress = { p -> viewModelScope.launch { tickProgress(p) } },
                     isCancelled = { cancelInstall },
                 )
-                viewModelScope.launch { say("installed the video models") }
+                viewModelScope.launch { say(str(R.string.log_installed_video_models)) }
             } catch (e: ModelInstaller.Cancelled) {
                 // ⚠ Not an error: every completed file is kept and the next
                 // attempt resumes from it.
-                viewModelScope.launch { say("download cancelled — what arrived is kept", bad = true) }
+                viewModelScope.launch { say(str(R.string.log_download_cancelled_kept), bad = true) }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
-                    say("video install — $modelError", bad = true)
+                    say(str(R.string.log_video_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
                 viewModelScope.launch {
@@ -1256,7 +1256,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteVideoModels() {
         val dir = com.abrah.nightmare.npu.NpuFiles.ctxDir(getApplication())
         val n = dir.listFiles()?.count { it.isFile && it.delete() } ?: 0
-        say("deleted $n video graph(s)")
+        say(str(R.string.log_deleted_video_graphs, n))
         refreshVideoModels()
     }
 
@@ -1287,13 +1287,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     },
                     isCancelled = { cancelInstall },
                 )
-                viewModelScope.launch { say("installed ${spec.label}") }
+                viewModelScope.launch { say(str(R.string.log_installed, spec.label)) }
             } catch (e: ModelInstaller.Cancelled) {
-                viewModelScope.launch { say("download cancelled", bad = true) }
+                viewModelScope.launch { say(str(R.string.log_download_cancelled), bad = true) }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
-                    say("install failed — $modelError", bad = true)
+                    say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
                 viewModelScope.launch {
@@ -1324,7 +1324,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val spec = UpscalerCatalog.byId(upscalerId) ?: return
         val file = results.imageFile(id)
         if (!file.isFile) {
-            say("that picture's file is gone", bad = true)
+            say(str(R.string.err_picture_file_gone), bad = true)
             return
         }
         val g = com.abrah.nightmare.Graph(
@@ -1536,11 +1536,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 viewModelScope.launch { say("installed ${com.abrah.nightmare.segment.Segmenter.LABEL}") }
             } catch (e: ModelInstaller.Cancelled) {
-                viewModelScope.launch { say("download cancelled", bad = true) }
+                viewModelScope.launch { say(str(R.string.log_download_cancelled), bad = true) }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
-                    say("install failed — $modelError", bad = true)
+                    say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
                 viewModelScope.launch {
@@ -1554,7 +1554,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteSegmenter() {
         com.abrah.nightmare.segment.Segmenter.delete(getApplication())
-        say("deleted ${com.abrah.nightmare.segment.Segmenter.LABEL}")
+        say(str(R.string.log_deleted, com.abrah.nightmare.segment.Segmenter.LABEL))
         refreshSegmenter()
     }
 
@@ -1567,7 +1567,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun deleteUpscaler(spec: UpscalerSpec) {
         UpscalerCatalog.delete(getApplication(), spec)
-        say("deleted ${spec.label}")
+        say(str(R.string.log_deleted, spec.label))
         refreshUpscalers()
     }
 
@@ -1575,7 +1575,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val ctx = getApplication<Application>()
         try {
             ModelInstaller.delete(ctx, spec)
-            say("deleted ${spec.label}")
+            say(str(R.string.log_deleted, spec.label))
             // ⚠⚠ The SELECTION has to move with it. `SelectedModel` names a
             // catalogue entry, which still resolves after the files are gone --
             // so deleting the selected model left it selected, every new node
@@ -1590,7 +1590,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }
         } catch (e: Exception) {
             modelError = e.message
-            say("could not delete — ${e.message}", bad = true)
+            say(str(R.string.err_delete_failed, e.message ?: ""), bad = true)
         }
         refreshModels()
     }
@@ -1661,7 +1661,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val ctx = getApplication<Application>()
         if (spec.id == SelectedModel.id) return
         SelectedModel.set(ctx, spec.id)
-        say("model set to ${spec.label}")
+        say(str(R.string.log_model_set, spec.label))
         // ⚠ The last run was against the OLD checkpoint, so its timings and its
         // "done" no longer describe this canvas.
         clearRunLog()
@@ -1675,7 +1675,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         previewSigs.clear()
         retargetCanvas(spec, SelectedModel.res)
         if (backend == BackendState.UP) {
-            say("  stopping the backend — it was launched for the previous model")
+            say(str(R.string.log_stopping_backend_model))
             stopBackend()
         }
         refreshModels()
@@ -1711,10 +1711,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (node.params["width"] == w && node.params["height"] == h) return
         val ok = SelectedModel.resolutionsOf(ctx, spec)
         if (res !in ok) {
-            say(
-                "${spec.label} cannot render $res — it serves ${ok.joinToString(", ")}",
-                bad = true,
-            )
+            say(str(R.string.log_cannot_render_res, spec.label, res, ok.joinToString(", ")), bad = true)
             return
         }
         editCanvas { s -> s.setParams(nodeId, mapOf("width" to w, "height" to h)) }
@@ -1751,7 +1748,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             ModelCatalog.byId(graph.byId[id]?.params?.get("model").orEmpty())
         } ?: SelectedModel.spec
         val target = ModelCatalog.aspectTarget(aspect, spec.native)
-        say("aspect $aspect — ${target ?: spec.native} on ${changes.size} node" +
+        say(str(R.string.log_aspect_set, aspect, target ?: spec.native, changes.size) +
             (if (changes.size == 1) "" else "s"))
         // ⚠ Same reason as [selectResolution]: the chip's selected state is
         // read back off `modelRows`, which reads it off the graph.
@@ -1814,19 +1811,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
         if (modelMoved) {
             SelectedModel.set(ctx, id!!)
-            say("this workflow uses ${spec!!.label} — selected it")
+            say(str(R.string.log_workflow_uses, spec!!.label))
         }
         // ⚠ AFTER the model, because [SelectedModel.set] re-resolves the
         // resolution per model and would otherwise overwrite this.
         if (resMoved) {
             SelectedModel.setRes(ctx, res!!)
-            say("this workflow renders at $res — selected it")
+            say(str(R.string.log_workflow_renders_at, res))
         }
         clearRunLog()
         // ⚠ Derived pictures are the previous size, exactly as in [selectModel].
         previewSigs.clear()
         if (backend == BackendState.UP) {
-            say("  stopping the backend — it was launched for the previous context")
+            say(str(R.string.log_stopping_backend_context))
             stopBackend()
         }
         refreshModels()
@@ -1858,7 +1855,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val changes = contextKeyRetarget(graph, types, spec, res)
         if (changes.isNotEmpty()) {
             editCanvas { s -> changes.entries.fold(s) { acc, (id, p) -> acc.setParams(id, p) } }
-            say("  retargeted ${changes.size} node${if (changes.size == 1) "" else "s"} on the canvas")
+            say(str(R.string.log_retargeted, changes.size))
         }
         // ⭐⭐ …and the checkpoint's own sampling recipe, WRITTEN DOWN.
         //
@@ -1874,10 +1871,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             // ⚠ Announced rather than silent: it can overwrite a value the user
             // set by hand, and a number changing under someone with no
             // explanation is what makes an app feel unreliable.
-            say(
-                "  ${spec.label}: ${spec.steps} steps, cfg ${spec.cfg}, ${spec.scheduler}" +
-                    " — set on ${recipe.size} node" + (if (recipe.size == 1) "" else "s")
-            )
+            say(str(R.string.log_recipe_set, spec.label, spec.steps, spec.cfg, spec.scheduler, recipe.size))
         }
         // ⭐⭐ …and its starter PROMPT, on any text node still holding ours.
         //
@@ -1890,11 +1884,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             editCanvas { s -> prompts.entries.fold(s) { acc, (id, p) -> acc.setParams(id, p) } }
             // ⚠ Named, like the numbers above: the text on a node changing with
             // no explanation is exactly what makes an app feel unreliable.
-            say(
-                "  its starter prompt written to ${prompts.size} node" +
-                    (if (prompts.size == 1) "" else "s") +
-                    " — anything you typed is left alone"
-            )
+            say(str(R.string.log_starter_prompt_written, prompts.size))
         }
         // ⚠⚠ Report the DERIVED sizes, because this is where they go wrong and
         // the failure is otherwise silent until a render comes out smeared.
@@ -1910,16 +1900,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (derived.isNotEmpty()) {
             say(
-                "  sizes: " + derived.joinToString("  ") {
-                    "${it.id}=${it.params["out_w"] ?: "?"}x${it.params["out_h"] ?: "?"}"
-                }
+                str(
+                    R.string.log_derived_sizes,
+                    derived.joinToString("  ") {
+                        "${it.id}=${it.params["out_w"] ?: "?"}x${it.params["out_h"] ?: "?"}"
+                    },
+                )
             )
         }
         // ⚠ And whatever is still inconsistent, by name. [sizeMismatches] is the
         // same check Run makes; saying it HERE puts it next to the action that
         // caused it rather than one render later.
         for (why in sizeMismatches(canvas.workflow.graph, typesFor(canvas.workflow.graph))) {
-            say("  ⚠ size: $why", bad = true)
+            say(str(R.string.log_size_problem, why), bad = true)
         }
     }
 
@@ -2322,7 +2315,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             val (hit, found) = outcome.getOrElse {
-                say("segment failed — ${it.message}", bad = true)
+                say(str(R.string.log_segment_failed, it.message ?: ""), bad = true)
                 return@launch done("could not segment: ${it.message ?: it.javaClass.simpleName}")
             }
             if (found == null) return@launch done("nothing to select there — try the middle of the object")
@@ -2405,7 +2398,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // is made anyway; with the seed LOCKED, getting the same picture back
         // is what locking a seed means. Clearing the cache would break the
         // second case to no benefit in the first.
-        say("cleared the picture on $nodeId")
+        say(str(R.string.log_cleared_picture, nodeId))
     }
 
     /**
@@ -2553,7 +2546,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // have nothing to do with sizes -- a missing native library, a plugin
         // whose manifest will not parse -- and losing the user's graph to that
         // would be far worse than a `crop` whose numbers are a moment stale.
-        say("could not work out the crop sizes — ${e.javaClass.simpleName}: ${e.message}", bad = true)
+        say(str(R.string.log_crop_sizes_failed, e.javaClass.simpleName, e.message ?: ""), bad = true)
         state
     }
 
@@ -2721,7 +2714,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 existing.forEach { runCatching { results.setFavourite(it.id, on) } }
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    say(if (on) "favourited" else "un-favourited")
+                    say(str(if (on) R.string.log_favourited else R.string.log_unfavourited))
                     refreshResults()
                 }
             }
@@ -2730,7 +2723,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             existing.forEach { runCatching { results.delete(it.id) } }
             withContext(kotlinx.coroutines.Dispatchers.Main) {
-                say("removed from Results")
+                say(str(R.string.log_removed_from_results))
                 refreshResults()
             }
         }
@@ -2852,8 +2845,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (!spec.installed(ctx)) {
             val missing = spec.missing(ctx)
             toast(
-                if (missing.isEmpty()) "${spec.label} is not installed"
-                else "${spec.label} is incomplete — missing ${missing.joinToString()}"
+                if (missing.isEmpty()) str(R.string.toast_model_not_installed, spec.label)
+                else str(R.string.toast_model_incomplete, spec.label, missing.joinToString())
             )
             return
         }
@@ -2985,11 +2978,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // seconds is read as not having taken it.
         refreshLoad()
         say(
-            if (newType == node.type) "${node.id}: ${spec.label}"
-            else "${node.id}: ${spec.label} (${spec.family.label})",
+            if (newType == node.type) str(R.string.log_node_model, node.id, spec.label)
+            else str(R.string.log_node_model_family, node.id, spec.label, spec.family.label),
         )
         // ⚠ Named, never silent: it replaced a sentence somebody wrote.
-        promptId?.let { say("  ${spec.label}'s prompt written to $it") }
+        promptId?.let { say(str(R.string.log_prompt_written, spec.label, it)) }
         saveWorkflow()
     }
 
@@ -3102,7 +3095,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val bmp = ops.images.get(imageId)
         if (bmp == null) {
-            say("that picture is no longer in memory", bad = true)
+            say(str(R.string.err_picture_gone_memory), bad = true)
             return
         }
         val kept = flow ?: canvas.workflow
@@ -3156,10 +3149,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 r.fold(
                     onSuccess = {
-                        say(if (favourite) "favourited, with the flow that made it"
+                        say(if (favourite) str(R.string.log_favourited_with_flow)
                             else "kept it, with the flow that made it")
                     },
-                    onFailure = { say("could not keep it — ${it.message}", bad = true) },
+                    onFailure = { say(str(R.string.err_keep_failed, it.message ?: ""), bad = true) },
                 )
                 refreshResults()
             }
@@ -3170,7 +3163,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     fun openResultFlow(id: String) {
         val loaded0 = results.flow(id)
         if (loaded0 == null) {
-            say("that result's flow could not be read", bad = true)
+            say(str(R.string.err_result_flow_unreadable), bad = true)
             return
         }
         // ⭐⭐ A NAME, not "that picture's flow".
@@ -3201,7 +3194,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             )
             closeLibrary()
             openedResultName = name
-            say("opened \"" + name + "\"")
+            say(str(R.string.log_opened_name, name))
             sayNotes(loaded)
         }
     }
@@ -3269,7 +3262,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // ⚠ The selection may have held the group's cover; drop it or the bar
         // would keep counting a picture that no longer exists.
         selectedResults = selectedResults - g.items.map { it.id }.toSet()
-        say("forgot a batch of " + g.size)
+        say(str(R.string.log_forgot_batch, g.size))
         refreshResults()
     }
 
@@ -3292,7 +3285,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val ids = expandSelection(selectedResults)
         ids.forEach { results.delete(it) }
         selectedResults = emptySet()
-        say("forgot " + ids.size + " picture" + (if (ids.size == 1) "" else "s"))
+        say(str(if (ids.size == 1) R.string.log_forgot_one_picture else R.string.log_forgot_pictures, ids.size))
         refreshResults()
     }
 
@@ -3426,13 +3419,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                         else -> "${ok - clips} 张 + $clips 个片段"
                     }
                     toast(getApplication<Application>().getString(R.string.vm_saved_what, what))
-                    say("saved " + what + " to the gallery")
+                    say(str(R.string.log_saved_to_gallery, what))
                 } else {
                     toast(getApplication<Application>().getString(
                         R.string.vm_save_failed,
                         lastError ?: getApplication<Application>().getString(R.string.vm_nothing_to_save),
                     ))
-                    say("could not save -- " + lastError, bad = true)
+                    say(str(R.string.err_save_failed_plain, lastError ?: ""), bad = true)
                 }
             }
         }
@@ -3601,7 +3594,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         results.delete(id)
         thumbs.remove(id)
         refreshResults()
-        say("forgot that one")
+        say(str(R.string.log_forgot_one_picture))
     }
 
     /**
@@ -3665,7 +3658,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // (`say`'s log trim, the autosave race), both reached through
                 // the cropper. ⚠ Throwable, not Exception: UnsatisfiedLinkError
                 // from a missing native library is an Error.
-                say("preview failed — ${e.javaClass.simpleName}: ${e.message}", bad = true)
+                say(str(R.string.log_preview_failed, e.javaClass.simpleName, e.message ?: ""), bad = true)
             }
         }
     }
@@ -3894,7 +3887,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Throwable) {
-            say("could not save the workflow — ${e.message}", bad = true)
+            say(str(R.string.err_save_workflow_failed, e.message ?: ""), bad = true)
         }
     }
 
@@ -3953,7 +3946,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             val loaded = try {
                 withContext(kotlinx.coroutines.Dispatchers.IO) { store.load(CURRENT) }
             } catch (e: Exception) {
-                say("saved workflow unreadable — ${e.message}", bad = true)
+                say(str(R.string.log_saved_workflow_unreadable, e.message ?: ""), bad = true)
                 return@launch
             } ?: return@launch
 
@@ -3973,7 +3966,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             previewSigs.clear()
             adoptGraphModel(loaded.workflow)
             refreshPreviews()
-            say("loaded ${loaded.workflow.graph.nodes.size} nodes" +
+            say(str(R.string.log_loaded_nodes, loaded.workflow.graph.nodes.size) +
                 if (loaded.requires.isEmpty()) "" else ", needs ${loaded.requires.size} plugin(s)")
 
             // ⚠ Only when the graph actually names a pack -- a built-ins-only
@@ -3985,9 +3978,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     // there to look at and the plugin can be installed; the
                     // executor refuses by name if it is run first.
                     missingRequirements(loaded.requires, nodeTypes)
-                        .forEach { say("workflow needs $it", bad = true) }
+                        .forEach { say(str(R.string.log_workflow_needs, it), bad = true) }
                 } catch (e: Throwable) {
-                    say("could not check this workflow's plugins — " +
+                    say(str(R.string.err_plugin_check_failed, "") +
                         "${e.javaClass.simpleName}: ${e.message}", bad = true)
                 }
             }
@@ -4140,7 +4133,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     terminals.joinToString(", "),
                 )
             }
-            say("batch: $runError", bad = true)
+            say(str(R.string.log_batch_stopped_error, runError ?: ""), bad = true)
             return@run
         }
         val terminal = terminals.single()
@@ -4150,7 +4143,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val batchId = "b" + System.currentTimeMillis()
         canvasStatus.clear()
         runError = null
-        say("batch: ${combos.size} runs")
+        say(str(R.string.log_batch_runs, combos.size))
         val started = android.os.SystemClock.elapsedRealtime()
         var done = 0
         for ((i, overrides) in combos.withIndex()) {
@@ -4168,7 +4161,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 g.withParams(id, params)
             }
             val label = rolled.labelFor(overrides)
-            say("  run ${i + 1}/${combos.size}  $label")
+            say(str(R.string.log_batch_run_n, i + 1, combos.size, label))
             val r = ops.runWorkflow(
                 canvas.workflow.copy(graph = graph),
                 onStart = { id, _ -> runLog = runLog.copy(now = id, step = null) },
@@ -4237,7 +4230,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // ⚠ Stops the sweep. Eight runs that all fail the same way is
                 // eight times the wait for one message.
                 runError = r.error
-                say("batch: stopped — ${r.error}", bad = true)
+                say(str(R.string.log_batch_stopped_error, r.error), bad = true)
                 break
             }
             done++
@@ -4250,7 +4243,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             // so say where the other seven went and offer to open it.
             keptCount = done,
         )
-        say("batch: $done of ${combos.size} done — all $done are in Results")
+        say(str(R.string.log_batch_done_all, done, combos.size))
         refreshResults()
     }
 
@@ -4343,7 +4336,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             rendersNowhere(canvas.workflow.graph, typesFor(canvas.workflow.graph))
         }.getOrDefault(emptyList())
         if (orphans.isNotEmpty()) {
-            runError = orphans.joinToString(", ") + " has nowhere to send its picture — " +
+            runError = str(R.string.err_orphans, orphans.joinToString(", ")) +
                 "connect an Output node"
             runLog = runLog.copy(
                 lines = runLog.lines + com.abrah.nightmare.canvas.RunLine(
@@ -4478,7 +4471,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
         r.error?.let {
             runError = it
-            say("canvas: $it", bad = true)
+            say(str(R.string.log_canvas_failed, it), bad = true)
         }
         // ⭐⭐ A node WAITING on a person ([NeedsInput]): say why, FIT it to the
         // picture that was just made, and open its CROP tab on that picture
@@ -4524,6 +4517,14 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * at once. `SnapshotStateList` is safe for single mutations; a compound
      * read-then-mutate is not, whatever the list is.
      */
+    /**
+     * ⭐ 取资源串的缩写。行为与每一处既有的
+     * `getApplication<Application>().getString(...)` 完全一致，只是短一点——
+     * 运行日志的调用点很多，写全的话每行都要折成三段。
+     */
+    private fun str(id: Int, vararg args: Any): String =
+        getApplication<Application>().getString(id, *args)
+
     @Synchronized
     fun say(text: String, bad: Boolean = false) {
         // ⚠ Mirrored to logcat, not just the on-screen list. When a scripted op
@@ -4617,7 +4618,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun cancelRun() {
         if (!busy) return
-        say("cancelling…")
+        say(str(R.string.log_cancelling))
         Backend.abortInFlight()
         runJob?.cancel()
     }
@@ -4648,7 +4649,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // crash -- and a coroutine that eats its own CancellationException
                 // leaves the scope believing the job is still alive.
                 runError = getApplication<Application>().getString(R.string.err_cancelled)
-                say("$label cancelled")
+                say(str(R.string.log_cancelled, label))
                 throw e
             } catch (e: Throwable) {
                 // ⚠⚠ Throwable, not Exception. `UnsatisfiedLinkError` from a
@@ -4657,7 +4658,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // all -- indistinguishable from one that never started. This
                 // project has already lost a session to an op that failed in
                 // silence (`notes/HANDOFF.md` §5).
-                say("$label threw ${e.javaClass.simpleName}: ${e.message}", bad = true)
+                say(str(R.string.log_threw, label, e.javaClass.simpleName, e.message ?: ""), bad = true)
             } finally {
                 settleRunLog()
                 busy = false

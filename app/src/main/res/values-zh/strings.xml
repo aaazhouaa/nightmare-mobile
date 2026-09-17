@@ -21,6 +21,12 @@
     <string name="batch">批量</string>
     <string name="add_node">+ 节点</string>
 
+    <!--
+      ⚠⚠ 死键，有意保留（2026-09-17）。这三个从未被任何 Kotlin 引用（本地与上游
+      都没有），`RunLog.kt` 读的是 `r2_run_seed_*`。保留而不删除，是因为
+      `values-ru/` 里也有它们：只从本文件删会让三种语言对不齐，而要连 ru 一起删
+      就等于为一个纯清理去改上游文件。R8 会把它们从 APK 中剔除，运行时零开销。
+    -->
     <string name="log_done">完成</string>
     <string name="log_seed_locked">种子已锁定：%1$s</string>
     <string name="log_seed_random">种子：随机</string>

@@ -29,7 +29,13 @@
     <string name="batch">Batch</string>
     <string name="add_node">+ Node</string>
 
-    <!-- The run log. -->
+    <!-- The run log. ⚠⚠ The three `log_*` keys below are DEAD, and kept on purpose
+      (2026-09-17). They have never been referenced by any Kotlin — not here, not
+      upstream — and `RunLog.kt` reads the `r2_run_seed_*` keys instead. Left in
+      place rather than deleted because `values-ru/` carries them too: removing
+      them here would put the three languages out of step, and deleting them
+      there means editing an upstream file for no functional gain. R8 strips them
+      from the APK, so they cost nothing at runtime. -->
     <string name="log_done">done</string>
     <string name="log_seed_locked">seed locked: %1$s</string>
     <string name="log_seed_random">seed: random</string>

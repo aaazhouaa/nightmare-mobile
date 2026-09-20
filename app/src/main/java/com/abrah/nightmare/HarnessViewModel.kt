@@ -98,13 +98,6 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setCanvasVisible(on: Boolean) { showCanvas = on }
 
-    /** ⚠ Which Settings tab, hoisted exactly as [libraryTab] is — the two
-     *  screens are siblings and must behave the same way. */
-    var settingsTab by mutableStateOf(com.abrah.nightmare.ui.SettingsTab.COMMUNITY)
-        private set
-
-    fun switchSettingsTab(t: com.abrah.nightmare.ui.SettingsTab) { settingsTab = t }
-
     // ---- app settings ----------------------------------------------------
 
     /**
@@ -738,49 +731,6 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /**
-     * ⭐⭐ Import a PLUGIN PACK — the `.zip` `PluginInstaller` already accepts.
-     *
-     * ⚠⚠⚠ **There is no validation gate yet** (`docs/ARCHITECTURE.md` §8c).
-     * `PluginInstaller` bounds the ARCHIVE — entry count and total bytes, so a
-     * zip bomb cannot finish — and the QuickJS sandbox plus default-deny
-     * permissions stop a pack reaching the network or the disk. What nothing
-     * checks is BEHAVIOUR: a pack can loop forever or allocate until the app
-     * dies, and that reads to the user as "the app hung". ⇒ This is safe to
-     * offer for a pack you wrote; it is not yet safe as a way to run a
-     * stranger's code, and the Community tab says so.
-     */
-    fun importPlugin(uri: android.net.Uri) {
-        val ctx = getApplication<Application>()
-        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            val result = runCatching {
-                // ⚠ Copied to a real File first: PluginInstaller works on the
-                // filesystem, and a content:// stream has no path.
-                val tmp = java.io.File(ctx.cacheDir, "import-${System.currentTimeMillis()}.zip")
-                ctx.contentResolver.openInputStream(uri)?.use { input ->
-                    tmp.outputStream().use { input.copyTo(it) }
-                } ?: throw java.io.IOException("could not read that file")
-                try {
-                    PluginInstaller.install(tmp, ops.pluginsDir(), ctx.cacheDir)
-                } finally {
-                    tmp.delete()
-                }
-            }
-            withContext(kotlinx.coroutines.Dispatchers.Main) {
-                result.fold(
-                    onSuccess = { dir ->
-                        say(str(R.string.log_pack_installed_in, dir.name))
-                        // ⚠⚠ The node types are cached in a `by lazy`, so a pack
-                        // installed now is invisible until the process restarts.
-                        // Said out loud rather than left as "my node is missing".
-                        say(str(R.string.log_restart_for_nodes), bad = true)
-                    },
-                    onFailure = { workflowError = str(R.string.err_import_pack_failed, it.message ?: "") },
-                )
-            }
-        }
-    }
-
     /** ⚠ The provider's display name, or null. Used only to suggest a name. */
     private fun uriDisplayName(uri: android.net.Uri): String? =
         runCatching {
@@ -817,6 +767,30 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (on) {
             libraryTab = com.abrah.nightmare.ui.LibraryTab.MODELS
             refreshModels()
+            // ⭐⭐⭐ An UNKNOWN chip is measured here, not left as a guess.
+            //
+            // ⚠⚠ This screen is where the guess does its damage: every SDXL,
+            // Anima and FLUX row reads "this device cannot run it", which is a
+            // statement about the user's hardware that we do not actually
+            // know. Reported by a Snapdragon 8 Gen 5 owner on 2026-09-20,
+            // whose chip is not in `SOC_TO_ARCH` and so took the v68 / 2 MB
+            // floor.
+            //
+            // ⚠ The measurement used to happen ONLY when the Device sheet was
+            // opened — the one action nobody would think to take when the
+            // models say they are unsupported. The cost note on
+            // [setDeviceInfoVisible] still holds (it unpacks the QNN
+            // libraries), which is why this is not at app start and not for a
+            // chip the tables already know.
+            if (DeviceProbe.needsMeasuring()) {
+                viewModelScope.launch {
+                    DeviceProbe.measure(getApplication())
+                    // ⚠ The rows are computed from the caps, so a measurement
+                    // that arrived without this would leave the picker showing
+                    // the guess it was taken to replace.
+                    refreshModels()
+                }
+            }
         }
     }
 
@@ -912,7 +886,47 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             upscalerRows.any { it.spec.id == id } ->
                 upscalerRows = upscalerRows.map { if (it.spec.id == id) it.copy(progress = p) else it }
         }
+        // ⭐⭐ …and the shade. Asked for 2026-09-15 and never wired: only the
+        // FAILURE ever reached a notification (PROGRESS.md). ⚠ Its own ~1 s
+        // throttle: each update is a Binder call to system_server, and this
+        // tick fires every 150 ms.
+        val now = android.os.SystemClock.uptimeMillis()
+        if (now - lastNoticeAt >= NOTICE_TICK_MS) {
+            lastNoticeAt = now
+            DownloadNotice.progress(
+                getApplication(), downloadLabel(id), p.phase,
+                p.fraction.takeIf { p.total > 0 },
+            )
+        }
     }
+
+    private var lastNoticeAt = 0L
+
+    /** ⚠ What the shade and the toast call the thing downloading — one lookup for all four installers. */
+    private fun downloadLabel(id: String): String = when (id) {
+        VIDEO_INSTALL_ID -> "Video models"
+        SEGMENTER_INSTALL_ID -> com.abrah.nightmare.segment.Segmenter.LABEL
+        else -> ModelCatalog.byId(id)?.label ?: UpscalerCatalog.byId(id)?.label ?: id
+    }
+
+    /**
+     * ⭐⭐ The three ways a download ends, said the SAME way by all four
+     * installers (checkpoint, video, upscaler, segmenter). ⚠ Before this only
+     * the checkpoint path reported anything, and only a failure — the rule was
+     * honoured in one place of four, and in half of that one.
+     */
+    private fun downloadSucceeded(label: String) {
+        DownloadNotice.done(getApplication(), label, ok = true)
+        toast("$label downloaded")
+    }
+
+    private fun downloadFailed(label: String, why: String) {
+        DownloadNotice.done(getApplication(), label, ok = false, detail = why)
+        toast("$label failed — $why")
+    }
+
+    /** ⚠ Stopped by the user: no outcome to report, so the row simply goes. */
+    private fun downloadCancelled() = DownloadNotice.clear(getApplication())
 
     /**
      * ⚠ Reads the disk on every call. The alternative is a cache that has to be
@@ -924,7 +938,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // ⚠ The upscalers ride along: this is the app's "re-read the disk"
         // entry point and a second one would be a second thing to forget.
         refreshUpscalers()
+        // ⚠ …and the recipes' view of what is installed, for the same reason.
+        ModelCatalog.refreshInstalled(ctx)
         refreshSegmenter()
+        refreshEmbeddings()
         // ⚠ …and the video models, for the same reason. ⚠⚠ `probeVideoSupport`
         // is NOT called here: it starts the QNN backend, which is seconds, and
         // this runs every time the library opens. The tab asks for it itself.
@@ -1074,6 +1091,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 viewModelScope.launch {
                     say(str(R.string.log_installed, spec.label))
+                    downloadSucceeded(spec.label)
                     // ⭐ First model in becomes the one in use. Otherwise a user
                     // downloads a model, presses Run, and renders against a
                     // model they do not have.
@@ -1085,14 +1103,13 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // ⚠ No outcome to report, so the row goes rather than sitting
                 // there saying "failed" about something the user stopped.
                 viewModelScope.launch {
-                    DownloadNotice.clear(ctx)
+                    downloadCancelled()
                     say(str(R.string.log_download_cancelled), bad = true)
                 }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
-                    DownloadNotice.done(ctx, spec.label, ok = false, detail = modelError)
-                    toast(getApplication<Application>().getString(R.string.toast_failed, spec.label, modelError))
+                    downloadFailed(spec.label, modelError!!)
                     say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
@@ -1135,7 +1152,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // where the disk is being read anyway, or a just-downloaded upscaler
         // stays invisible to every upscale node until the app restarts.
         UpscalerCatalog.refresh(ctx)
-        upscalerRows = UpscalerCatalog.ALL.map { spec ->
+        // ⚠ + the imported ones (`UpscalerCatalog.scanned`), so a custom
+        // upscaler gets a row exactly like a catalogue one.
+        upscalerRows = UpscalerCatalog.allSpecs().map { spec ->
             val here = spec.installed(ctx)
             com.abrah.nightmare.ui.UpscalerRow(
                 spec = spec,
@@ -1228,14 +1247,21 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     onProgress = { p -> viewModelScope.launch { tickProgress(p) } },
                     isCancelled = { cancelInstall },
                 )
-                viewModelScope.launch { say(str(R.string.log_installed_video_models)) }
+                viewModelScope.launch {
+                    say(str(R.string.log_installed_video_models))
+                    downloadSucceeded(downloadLabel(VIDEO_INSTALL_ID))
+                }
             } catch (e: ModelInstaller.Cancelled) {
                 // ⚠ Not an error: every completed file is kept and the next
                 // attempt resumes from it.
-                viewModelScope.launch { say(str(R.string.log_download_cancelled_kept), bad = true) }
+                viewModelScope.launch {
+                    downloadCancelled()
+                    say(str(R.string.log_download_cancelled_kept), bad = true)
+                }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
+                    downloadFailed(downloadLabel(VIDEO_INSTALL_ID), modelError!!)
                     say(str(R.string.log_video_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
@@ -1287,12 +1313,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     },
                     isCancelled = { cancelInstall },
                 )
-                viewModelScope.launch { say(str(R.string.log_installed, spec.label)) }
+                viewModelScope.launch {
+                    say(str(R.string.log_installed, spec.label))
+                    downloadSucceeded(spec.label)
+                }
             } catch (e: ModelInstaller.Cancelled) {
-                viewModelScope.launch { say(str(R.string.log_download_cancelled), bad = true) }
+                viewModelScope.launch {
+                    downloadCancelled()
+                    say(str(R.string.log_download_cancelled), bad = true)
+                }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
+                    downloadFailed(spec.label, modelError!!)
                     say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
@@ -1406,6 +1439,20 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             override val label get() = spec.label
             override val installId get() = spec.id
         }
+
+        /**
+         * ⭐⭐ The FLUX.2 / Z-Image engine, missing while its WEIGHTS are here.
+         *
+         * ⚠ Only reachable for someone who installed a DiT model before
+         * 1.5.502, when the engine shipped inside the APK: an app update
+         * replaces the native library dir, so their 6.7 GB of weights outlived
+         * the 22 MB that runs them. A fresh install never sees this — the
+         * engine comes down with the model (`ModelInstaller.installOnce`).
+         */
+        data object Engine : MissingModel {
+            override val label get() = com.abrah.nightmare.DitEngine.LABEL
+            override val installId get() = "\u0000ditengine"
+        }
     }
 
     var missingModel by mutableStateOf<MissingModel?>(null)
@@ -1416,6 +1463,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         is MissingModel.Checkpoint -> m.offer.buildFor(DeviceProbe.caps())?.bytes ?: m.offer.best?.bytes ?: 0L
         MissingModel.Segment -> com.abrah.nightmare.segment.Segmenter.BYTES
         is MissingModel.Upscale -> m.spec.buildFor(DeviceProbe.caps())?.bytes ?: 0L
+        MissingModel.Engine -> com.abrah.nightmare.DitEngine.BYTES
     }
 
     /** ⭐ The download's progress, for the popup. Null when not fetching it. */
@@ -1429,6 +1477,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             is MissingModel.Checkpoint -> modelRows.any { it.spec.id == m.offer.id && it.installed }
             MissingModel.Segment -> segmenterRow?.installed == true
             is MissingModel.Upscale -> upscalerRows.any { it.spec.id == m.spec.id && it.installed }
+            MissingModel.Engine -> com.abrah.nightmare.DitEngine.installed
         }
 
     /**
@@ -1447,7 +1496,16 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             val t = types[n.type] as? SdSampler ?: continue
             val id = com.abrah.nightmare.applyDefaults(t.widgets, n)["model"].orEmpty()
             val spec = ModelCatalog.byId(id)
-            if (spec != null && spec.installed(ctx)) continue
+            if (spec != null && spec.installed(ctx)) {
+                // ⭐⭐ Weights present is not "ready" for a DiT family: the
+                // engine that runs them is a download too, and an app update
+                // takes it away (`MissingModel.Engine`).
+                if (spec.isDit && !com.abrah.nightmare.DitEngine.isInstalled(ctx)) {
+                    missingModel = MissingModel.Engine
+                    return false
+                }
+                continue
+            }
             val offer = spec?.takeIf { !it.isCustom && it.buildFor(caps) != null }
                 ?: ModelCatalog.all.firstOrNull { it.family == t.family && !it.isCustom && it.buildFor(caps) != null }
                 ?: continue
@@ -1457,7 +1515,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // ⭐ The segmenter: a Segment model node on the canvas, or a mask that was tapped.
         val needsSegmenter = graph.nodes.any { n ->
             n.type == SelectObjectNode.name ||
-                (n.type in com.abrah.nightmare.SD_INPAINT_TYPES &&
+                (n.type in com.abrah.nightmare.INPAINT_TYPES &&
                     com.abrah.nightmare.MaskTaps.hasTaps(com.abrah.nightmare.MaskNode.stateOf(n)))
         }
         if (needsSegmenter && !com.abrah.nightmare.segment.Segmenter.isInstalled(ctx)) {
@@ -1491,6 +1549,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }
             MissingModel.Segment -> installSegmenter()
             is MissingModel.Upscale -> installUpscaler(m.spec)
+            MissingModel.Engine -> installDitEngine()
         }
     }
 
@@ -1534,12 +1593,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     onProgress = { p -> viewModelScope.launch { tickProgress(p) } },
                     isCancelled = { cancelInstall },
                 )
-                viewModelScope.launch { say("installed ${com.abrah.nightmare.segment.Segmenter.LABEL}") }
+                viewModelScope.launch {
+                    say("installed ${com.abrah.nightmare.segment.Segmenter.LABEL}")
+                    downloadSucceeded(com.abrah.nightmare.segment.Segmenter.LABEL)
+                }
             } catch (e: ModelInstaller.Cancelled) {
-                viewModelScope.launch { say(str(R.string.log_download_cancelled), bad = true) }
+                viewModelScope.launch {
+                    downloadCancelled()
+                    say(str(R.string.log_download_cancelled), bad = true)
+                }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
+                    downloadFailed(com.abrah.nightmare.segment.Segmenter.LABEL, modelError!!)
                     say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
@@ -1552,10 +1618,132 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---- the DiT engine (notes/HANDOFF.md §7) ------------------------------
+
+    /**
+     * ⭐ Fetch `libdit_engine.so` on its own, for someone whose DiT weights
+     * predate 1.5.502. ⚠ No Tools-tab row goes with it, deliberately: it is a
+     * DEPENDENCY of a model rather than a thing to choose, it installs with the
+     * weights, and a Delete button beside it would invite stranding 6.7 GB.
+     */
+    fun installDitEngine() {
+        if (installing != null) return
+        val ctx = getApplication<Application>()
+        installing = MissingModel.Engine.installId
+        cancelInstall = false
+        modelError = null
+        installProgress = ModelInstaller.Progress("starting", 0, com.abrah.nightmare.DitEngine.BYTES)
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                com.abrah.nightmare.DitEngine.install(
+                    ctx,
+                    onProgress = { p -> viewModelScope.launch { tickProgress(p) } },
+                    isCancelled = { cancelInstall },
+                )
+                viewModelScope.launch {
+                    say("installed ${com.abrah.nightmare.DitEngine.LABEL}")
+                    downloadSucceeded(com.abrah.nightmare.DitEngine.LABEL)
+                }
+            } catch (e: ModelInstaller.Cancelled) {
+                viewModelScope.launch {
+                    downloadCancelled()
+                    say("download cancelled", bad = true)
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch {
+                    modelError = e.message ?: e.javaClass.simpleName
+                    downloadFailed(com.abrah.nightmare.DitEngine.LABEL, modelError!!)
+                    say("install failed — $modelError", bad = true)
+                }
+            } finally {
+                viewModelScope.launch {
+                    installing = null
+                    installProgress = null
+                }
+            }
+        }
+    }
+
     fun deleteSegmenter() {
         com.abrah.nightmare.segment.Segmenter.delete(getApplication())
         say(str(R.string.log_deleted, com.abrah.nightmare.segment.Segmenter.LABEL))
         refreshSegmenter()
+    }
+
+    // ---- embeddings (textual inversion) -------------------------------------
+    //
+    // ⭐ App-side growback of upstream's Embedding Manager — the BACKEND never
+    // lost this (`docs/ARCHITECTURE.md`): `loadTextualInversions()` reads
+    // every `.safetensors` in [BackendProcess.embeddingsDir] at launch and
+    // matches a prompt token against a file's name, unmodified since the fork.
+
+    /** ⭐ The Tools tab's installed-embeddings list. */
+    var embeddingRows by mutableStateOf<List<com.abrah.nightmare.ui.EmbeddingRow>>(emptyList())
+        private set
+
+    fun refreshEmbeddings() {
+        val dir = BackendProcess.embeddingsDir(getApplication())
+        embeddingRows = dir.listFiles { f ->
+            f.isFile && f.extension.equals("safetensors", ignoreCase = true)
+        }.orEmpty()
+            .map { com.abrah.nightmare.ui.EmbeddingRow(it.name, it.length()) }
+            .sortedBy { it.name.lowercase() }
+    }
+
+    fun importEmbedding(uri: android.net.Uri) {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val result = runCatching {
+                // ⚠⚠ **Validated by extension, matching upstream exactly** —
+                // `local-dream`'s own `importEmbedding` refuses a picked file
+                // whose name does not end `.safetensors` rather than silently
+                // renaming it. Asked for 2026-09-19: *"i hope u atleast used
+                // the same validation of their files as local dream does"* —
+                // it did not; this used to APPEND the extension onto whatever
+                // was picked, which would have happily copied in a `.jpg` and
+                // called it a `.safetensors`. ⚠ By the ORIGINAL display name,
+                // before it is sanitised to a bare filename below — sanitising
+                // first would let a name like "photo.jpg.safetensors" (an
+                // unlikely but possible provider quirk) pass a check it
+                // should not.
+                val displayName = uriDisplayName(uri).orEmpty()
+                require(displayName.endsWith(".safetensors", ignoreCase = true)) {
+                    "only .safetensors files are supported"
+                }
+                val dir = BackendProcess.embeddingsDir(ctx).apply { mkdirs() }
+                // ⚠⚠ `.name`, never the raw display name: a content provider's
+                // DISPLAY_NAME is untrusted text, and the same zip-slip shape
+                // `PluginInstaller` guards against (a name carrying `../`)
+                // would write outside [dir] if used as-is.
+                val safeName = java.io.File(displayName).name
+                    .ifBlank { "embedding_${System.currentTimeMillis()}.safetensors" }
+                val target = java.io.File(dir, safeName)
+                ctx.contentResolver.openInputStream(uri)?.use { input ->
+                    target.outputStream().use { input.copyTo(it) }
+                } ?: throw java.io.IOException("could not read that file")
+                safeName
+            }
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                result.fold(
+                    onSuccess = { name ->
+                        say("imported embedding $name")
+                        refreshEmbeddings()
+                    },
+                    onFailure = {
+                        modelError = "could not import that embedding — ${it.message}"
+                    },
+                )
+            }
+        }
+    }
+
+    fun deleteEmbedding(name: String) {
+        // ⚠ Same reason as the import path: never trust a name handed back to
+        // this function into a raw `File(dir, name)` without stripping it to
+        // its last segment first.
+        val f = java.io.File(BackendProcess.embeddingsDir(getApplication()), java.io.File(name).name)
+        if (f.delete()) say("deleted embedding $name")
+        refreshEmbeddings()
     }
 
     /**
@@ -1569,6 +1757,51 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         UpscalerCatalog.delete(getApplication(), spec)
         say(str(R.string.log_deleted, spec.label))
         refreshUpscalers()
+    }
+
+    /**
+     * ⭐ Bring your own upscaler — a bare `.bin`, the same way a checkpoint
+     * is imported as a zip ([importModel]). Reported 2026-09-18.
+     *
+     * ⚠ Named from the provider's own file name, like [importNameFor] does
+     * for a checkpoint — a picked file rarely has a name a user would choose
+     * to type twice.
+     */
+    fun importUpscaler(uri: android.net.Uri) {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val result = runCatching {
+                // ⚠ Validated by extension, same reasoning and the same fix
+                // as [importEmbedding] — there is no upstream reference for a
+                // custom upscaler (local-dream has none), so this applies the
+                // SAME rule for the same reason: a picked file with the wrong
+                // extension should be refused, not silently accepted under a
+                // name that implies it is something it is not.
+                val displayName = uriDisplayName(uri).orEmpty()
+                require(displayName.endsWith(".bin", ignoreCase = true)) {
+                    "only .bin files are supported"
+                }
+                val proposed = displayName.dropLast(4)
+                val name = java.io.File(proposed).name.let {
+                    if (UpscalerCatalog.isValidName(it)) it else "upscaler_${System.currentTimeMillis()}"
+                }
+                UpscalerCatalog.importCustom(ctx, name) {
+                    ctx.contentResolver.openInputStream(uri)
+                        ?: throw java.io.IOException("could not read that file")
+                }
+            }
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                result.fold(
+                    onSuccess = { spec ->
+                        say("imported upscaler ${spec.label}")
+                        refreshUpscalers()
+                    },
+                    onFailure = {
+                        modelError = "could not import that upscaler — ${it.message}"
+                    },
+                )
+            }
+        }
     }
 
     fun deleteModel(spec: ModelSpec) {
@@ -1854,8 +2087,42 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val types = typesFor(graph)
         val changes = contextKeyRetarget(graph, types, spec, res)
         if (changes.isNotEmpty()) {
-            editCanvas { s -> changes.entries.fold(s) { acc, (id, p) -> acc.setParams(id, p) } }
-            say(str(R.string.log_retargeted, changes.size))
+            // ⚠⚠⚠ **The FAMILY moves WITH the model, here too.** A sampler's
+            // type is registered per family (`SdSampler.SD15`/`.SDXL`/`.ANIMA`
+            // — `Fused.kt`) and its title follows that fixed type, never the
+            // checkpoint actually named in `params["model"]`. `setNodeModel`'s
+            // per-node swap already migrates the type when the family changes
+            // (`SdSampler.typeFor`); this bulk path — "Use" on the Models tab,
+            // keeping the open canvas — rewrote every node's `model` param the
+            // SAME way but never touched `type`, so a node stayed titled
+            // "SD 1.5" with an SDXL checkpoint underneath it. Reported
+            // 2026-09-18 (screenshot: checkpoint "…_sdxl_lora", node title
+            // "SD 1.5", subtitle "sd15.sample").
+            val retitled = changes.keys.count { id ->
+                (types[graph.byId[id]?.type] as? SdSampler)?.family?.let { it != spec.family } == true
+            }
+            editCanvas { s ->
+                s.copy(
+                    workflow = s.workflow.copy(
+                        graph = Graph(
+                            s.workflow.graph.nodes.map { n ->
+                                val p = changes[n.id] ?: return@map n
+                                val sampler = types[n.type] as? SdSampler
+                                val newType = if (sampler != null && sampler.family != spec.family) {
+                                    SdSampler.typeFor(spec.family, sampler.inpaint)
+                                } else {
+                                    n.type
+                                }
+                                n.copy(type = newType, params = n.params + p)
+                            }
+                        )
+                    )
+                )
+            }
+            say(
+                "  retargeted ${changes.size} node${if (changes.size == 1) "" else "s"} on the canvas" +
+                    if (retitled > 0) " ($retitled retyped to ${spec.family.label})" else ""
+            )
         }
         // ⭐⭐ …and the checkpoint's own sampling recipe, WRITTEN DOWN.
         //
@@ -1966,6 +2233,24 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val before = canvas
         val after = paintedOnGenerated(before, refitFramings(before, change(before)))
         markNewPictures(before, after)
+        // ⚠⚠⚠ **A deleted node's id is free to be reused — [Graph.freeId] hands
+        // the lowest unused one straight back — so every VIEW-MODEL map keyed
+        // by node id has to lose that entry HERE, once, for every deletion
+        // path at once, or a "new" node opens wearing the last thing that id
+        // did. `CanvasState.removeNode`/`addNode` already do this for their
+        // OWN fields (`previews`, `rendered`, `beforePreviews`); these three
+        // live in the view model instead and were still missed, which is
+        // exactly the 2026-09-11 bug again on 2026-09-18 (a freshly dropped
+        // node showing a red FAILED border, or a picture belonging to a mask
+        // that node never painted) — reported furiously, and rightly, after
+        // the first fix shipped and did not cover them.
+        val gone = before.workflow.graph.nodes.map { it.id }.toSet() -
+            after.workflow.graph.nodes.map { it.id }.toSet()
+        for (id in gone) {
+            canvasStatus.remove(id)
+            pendingAutoFrame.remove(id)
+            previewSigs.remove(id)
+        }
         updateCanvas(after)
     }
 
@@ -1986,7 +2271,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         var out = after
         val graph = after.workflow.graph
         for (n in graph.nodes) {
-            if (n.type !in com.abrah.nightmare.SD_INPAINT_TYPES) continue
+            if (n.type !in com.abrah.nightmare.INPAINT_TYPES) continue
             val ops = n.params[com.abrah.nightmare.MaskNode.OPS].orEmpty()
             if (before.workflow.graph.byId[n.id]?.params?.get(com.abrah.nightmare.MaskNode.OPS).orEmpty() == ops) continue
             val up = n.inputs["image"]?.node ?: continue
@@ -2040,7 +2325,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             val uri = n.params["uri"].orEmpty()
             if (uri.isBlank() || before.workflow.graph.byId[n.id]?.params?.get("uri") == uri) continue
             for (s in after.workflow.graph.nodes) {
-                if (s.type in com.abrah.nightmare.SD_SAMPLER_TYPES && s.inputs["image"]?.node == n.id) {
+                if (s.type in com.abrah.nightmare.IMAGE_SAMPLER_TYPES && s.inputs["image"]?.node == n.id) {
                     pendingAutoFrame[s.id] = before.previews[n.id]?.first
                 }
             }
@@ -2113,6 +2398,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val node = canvas.workflow.graph.byId[id]
         val made = canvas.pictureInto(id, nodeTypes)?.let { ops.images.get(it) }
         var next = canvas
+        // ⚠⚠ **No auto-fill.** Tried 2026-09-18 (a full mask written into
+        // [MaskNode.OPS] the moment this opened) and reverted the same day —
+        // *"lets not do the full masking thing for inpaint... if user doesnt
+        // mask just show error"*. `Fused.kt` now refuses ANY inpaint with
+        // nothing painted, always, with no fallback; this only fits the
+        // FRAME to the fresh picture so the editor opens on the right crop.
         if (node != null && made != null && node.params[com.abrah.nightmare.MaskNode.OPS].isNullOrBlank()) {
             next = next.setParams(id, autoFraming(node, made))
         }
@@ -2141,7 +2432,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val graph = canvas.workflow.graph
         var next = canvas
         for (n in graph.nodes) {
-            if (n.type !in com.abrah.nightmare.SD_SAMPLER_TYPES || n.type in com.abrah.nightmare.SD_INPAINT_TYPES) continue
+            if (n.type !in com.abrah.nightmare.IMAGE_SAMPLER_TYPES || n.type in com.abrah.nightmare.INPAINT_TYPES) continue
             val up = n.inputs["image"]?.node ?: continue
             if (nodeTypes[graph.byId[up]?.type]?.showsResult != false) continue
             val aspect = predictedAspect(graph, up) ?: continue
@@ -2164,9 +2455,9 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         val t = nodeTypes[n.type] ?: return null
         fun input() = n.inputs["image"]?.node?.let { predictedAspect(graph, it, depth + 1) }
         return when {
-            n.type in com.abrah.nightmare.SD_INPAINT_TYPES &&
+            n.type in com.abrah.nightmare.INPAINT_TYPES &&
                 n.params[com.abrah.nightmare.PasteNode.STITCH].equals("true", true) -> input()
-            n.type in com.abrah.nightmare.SD_SAMPLER_TYPES ->
+            n.type in com.abrah.nightmare.IMAGE_SAMPLER_TYPES ->
                 t.framesTo(n)?.takeIf { it.first > 0 && it.second > 0 }?.let { it.first.toFloat() / it.second }
             n.type == "image.upscale" -> input()
             n.type == "core.image" ->
@@ -2638,11 +2929,60 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     private val thumbs = mutableStateMapOf<String, ImageBitmap>()
 
+    /**
+     * ⚠⚠ Ids with a decode already in flight, so a LazyVerticalGrid
+     * recomposing the same item several times per scroll frame launches ONE
+     * coroutine per id, not one per composition.
+     */
+    private val thumbLoading = mutableSetOf<String>()
+
+    /**
+     * ⭐⭐ Async, off the main thread. Returns the cached bitmap immediately
+     * when there is one and null otherwise, kicking off a decode that fills
+     * `thumbs` (a `mutableStateMapOf`, so the write itself triggers the
+     * recomposition that shows the picture once it lands).
+     *
+     * ⚠⚠ This used to decode SYNCHRONOUSLY, inline, on whatever thread calls
+     * it — which for every caller is composition. Reported 2026-09-18 as
+     * still-visible lag after the pager's own decode was already fixed: the
+     * GRID was the other half, `BitmapFactory.decodeFile` twice per thumbnail
+     * (a bounds pass, then the real one) on the UI thread, once per new item
+     * scrolled into view. Small per call, but disk I/O on the thread that owns
+     * the frame budget is exactly the "something stupidly inefficient" this
+     * was asked to find.
+     */
     fun thumbnailFor(id: String): ImageBitmap? {
         thumbs[id]?.let { return it }
-        val bmp = results.thumbnail(id)?.asImageBitmap() ?: return null
-        thumbs[id] = bmp
-        return bmp
+        if (thumbLoading.add(id)) {
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val bmp = results.thumbnail(id)?.asImageBitmap()
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    thumbLoading.remove(id)
+                    if (bmp != null) thumbs[id] = bmp else markUnreadable(id, "thumbnail")
+                }
+            }
+        }
+        return null
+    }
+
+    /**
+     * ⭐⭐ Kept results whose PNG will not decode — drawn as a "can't read this
+     * picture" card instead of a blank one.
+     *
+     * ⚠⚠ A failed decode used to write NOTHING, so no recomposition followed
+     * and the card stayed an empty grey square forever, indistinguishable from
+     * one still loading. Reported from a phone 2026-09-19; the cause was two
+     * autosaves interleaving one PNG (`ResultsStore.keep`), and the files that
+     * race already wrote cannot be repaired — this is how their owner finds and
+     * deletes them. ⚠ A state map, so marking one redraws the card.
+     */
+    private val unreadable = mutableStateMapOf<String, Unit>()
+
+    fun resultUnreadable(id: String): Boolean = id in unreadable
+
+    private fun markUnreadable(id: String, what: String) {
+        unreadable[id] = Unit
+        android.util.Log.w("Harness", "result $id: $what decode failed (${results.imageFile(id).length()} bytes)")
     }
 
     fun refreshResults() {
@@ -3092,6 +3432,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         batchLabel: String = "",
         favourite: Boolean = false,
         auto: Boolean = false,
+        /**
+         * ⭐ The node whose picture this is — autosave passes its output node.
+         * Null means "whichever node on the canvas shows [imageId]".
+         */
+        from: String? = null,
     ) {
         val bmp = ops.images.get(imageId)
         if (bmp == null) {
@@ -3100,14 +3445,29 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
         val kept = flow ?: canvas.workflow
         val graph = kept.graph
+        // ⭐⭐ The sampler UPSTREAM OF THIS PICTURE, through [samplerFor] — the
+        // same nearest-first walk the canvas viewer's seed uses, so the two
+        // cannot disagree about which render a picture came from.
+        //
+        // ⚠⚠ It was "the LAST sampler in graph order" for the whole graph, which
+        // is right only while a graph has one branch. A flow with two outputs fed
+        // by two samplers filed BOTH pictures under the second sampler's seed
+        // and the globally selected model (reported with the two-output save
+        // race, 2026-09-19). ⚠ That rule survives as the fallback for a flow
+        // this canvas is not showing (an upscale's own little graph).
+        val origin = from ?: canvas.previews.entries
+            .firstOrNull { it.value.first == imageId && it.key in graph.byId }?.key
         // ⚠ Any sampler -- see [com.abrah.nightmare.SAMPLER_TYPES]. A kept clip
         // filed no seed at all while `sd.sample` was the only type matched here.
-        // ⚠ The LAST sampler in graph order — in a chain, the render is its.
-        val sampler = ((topoSort(graph) as? Order.Ok)?.nodes ?: graph.nodes)
-            .lastOrNull { com.abrah.nightmare.isSampler(it.type) }
+        val sampler = origin?.let { com.abrah.nightmare.canvas.samplerFor(graph, it) }?.let { graph.byId[it] }
+            ?: ((topoSort(graph) as? Order.Ok)?.nodes ?: graph.nodes)
+                .lastOrNull { com.abrah.nightmare.isSampler(it.type) }
         val seed = sampler?.id?.let { id ->
             com.abrah.nightmare.canvas.seedFor(graph, id) { canvasStatus[it]?.detail }
         }
+        // ⚠ The sampler's OWN checkpoint — a model is a per-node choice
+        // (`docs/ARCHITECTURE.md` §5.7), so the selected one names only one branch.
+        val modelLabel = (ModelCatalog.byId(sampler?.params?.get("model").orEmpty()) ?: SelectedModel.spec).label
         // ⚠ The video sampler carries its prompt itself; every picture recipe
         // puts it on a `clip_encode`. Neither graph has both.
         val prompt = graph.nodes.firstOrNull { it.type == "sd.clip_encode" }?.params?.get("prompt")
@@ -3142,7 +3502,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             val r = runCatching {
                 results.keep(
-                    bmp, imageId, workflow, types, seed, SelectedModel.spec.label, prompt,
+                    bmp, imageId, workflow, types, seed, modelLabel, prompt,
                     batchId, batchLabel, video = clip, favourite = favourite, auto = auto,
                 )
             }
@@ -3463,15 +3823,50 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      * app is slow" rather than as a missing cache.
      */
     private val fullImages = mutableStateMapOf<String, ImageBitmap>()
+    /** ⚠ Recency order for [fullImages] — oldest first. See [resultImage]. */
+    private val fullImageOrder = ArrayDeque<String>()
+    /** ⚠ Same purpose as [thumbLoading] — one decode in flight per id. */
+    private val fullImageLoading = mutableSetOf<String>()
 
+    /**
+     * ⚠⚠ Async, off the main thread — same reason and same shape as
+     * [thumbnailFor]. This is called inline from the pager's composition on
+     * every swipe, and a 2048px decode (`ResultsStore.full`) is still real
+     * work; doing it on the thread that owns the frame budget is what made
+     * paging through kept results feel slow even after the cache stopped
+     * thrashing. Reported 2026-09-18.
+     */
     fun resultImage(id: String): ImageBitmap? {
-        fullImages[id]?.let { return it }
-        val bmp = results.full(id)?.asImageBitmap() ?: return null
-        // ⚠ Bounded: a batch of ten 1024² bitmaps is 40 MB, and a user can walk
-        // through several batches without leaving the viewer.
-        if (fullImages.size > FULL_IMAGE_CACHE) fullImages.clear()
-        fullImages[id] = bmp
-        return bmp
+        fullImages[id]?.let {
+            // ⚠ Touch: this id is the most recently used now, not whenever it
+            // first decoded — otherwise swiping back and forth across exactly
+            // [FULL_IMAGE_CACHE] pictures evicts the one still on screen.
+            fullImageOrder.remove(id)
+            fullImageOrder.addLast(id)
+            return it
+        }
+        if (fullImageLoading.add(id)) {
+            viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                val bmp = results.full(id)?.asImageBitmap()
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    fullImageLoading.remove(id)
+                    if (bmp != null) {
+                        // ⚠⚠ Evict the SINGLE oldest entry, not the whole map.
+                        // `clear()` here used to wipe every cached bitmap the
+                        // moment a 13th distinct result was viewed, so paging
+                        // through more than a dozen kept pictures (or a batch)
+                        // re-decoded on almost every swipe.
+                        fullImageOrder.addLast(id)
+                        while (fullImages.size >= FULL_IMAGE_CACHE) {
+                            val oldest = fullImageOrder.removeFirstOrNull() ?: break
+                            fullImages.remove(oldest)
+                        }
+                        fullImages[id] = bmp
+                    } else markUnreadable(id, "full-size")
+                }
+            }
+        }
+        return null
     }
 
     /** ⚠ Read per picture as it is swiped to, from that result's stored flow. */
@@ -3569,10 +3964,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
 
     fun viewResult(r: com.abrah.nightmare.canvas.Result) {
         viewingResult = r
-        // ⚠ Full size here, not the thumbnail: this is the one place the
-        // picture is meant to be looked AT.
-        viewingResultImage = results.full(r.id)?.asImageBitmap()
-        viewingResultDetails = results.details(r.id)
+        viewingResultImage = null
+        viewingResultDetails = emptyList()
         // ⚠ The batch, in its own order, or every kept picture.
         val set = if (r.batchId != null) {
             keptGroups.firstOrNull { it.batchId == r.batchId }?.items ?: listOf(r)
@@ -3581,6 +3974,22 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewingSet = set
         viewingIndex = set.indexOfFirst { it.id == r.id }.coerceAtLeast(0)
+        // ⚠⚠ Off the main thread: `full()` decodes a PNG and `details()` reads
+        // and parses the stored workflow JSON, both file I/O, both used to run
+        // synchronously on the tap that opens this viewer.
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val bmp = results.full(r.id)?.asImageBitmap()
+            val details = results.details(r.id)
+            withContext(kotlinx.coroutines.Dispatchers.Main) {
+                // ⚠ Only if still looking at the same result — a fast tap
+                // through several pictures must not let a slow earlier decode
+                // land on top of the one the user is now looking at.
+                if (viewingResult?.id == r.id) {
+                    viewingResultImage = bmp
+                    viewingResultDetails = details
+                }
+            }
+        }
     }
 
     fun closeResult() {
@@ -3731,7 +4140,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     // Mask editor shows. ⚠ Translucent: the picture underneath
                     // is what makes the mask legible as a REGION of it.
                     val ops0 = p[com.abrah.nightmare.MaskNode.OPS].orEmpty()
-                    if (n.type in com.abrah.nightmare.SD_INPAINT_TYPES && ops0.isNotBlank()) {
+                    if (n.type in com.abrah.nightmare.INPAINT_TYPES && ops0.isNotBlank()) {
                         // ⚠ Taps from the CACHE only: this runs on the main
                         // thread, and a tap made in this session is already there.
                         val state = com.abrah.nightmare.MaskTaps.resolve(
@@ -3781,6 +4190,35 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             .toSet()
         if (shown.isNotEmpty() || empty.any { it in canvas.previews }) {
             canvas = canvas.copy(previews = canvas.previews.filterKeys { it !in empty } + shown)
+        }
+        applyBeforeAfterPreviews(graph)
+    }
+
+    /**
+     * ⭐⭐ [CanvasState.beforePreviews] — what a before/after node (today only
+     * `image.upscale`) RECEIVED, so the canvas can show it alongside what the
+     * node MADE. Reported 2026-09-18: a generate → upscale chain showed
+     * nothing of the intermediate picture at all, because a renderer never
+     * draws its own result ([NodeType.showsResult]) and nothing else showed
+     * what fed the next node either.
+     *
+     * ⚠ Same shape as the `shown`/`empty` pair just above, and called from the
+     * same places for the same reason: [CanvasState.pictureInto] already
+     * resolves the right picture (`rendered[up]` for an upstream renderer),
+     * this only needs to run whenever [applyFramedPreviews] does.
+     */
+    private fun applyBeforeAfterPreviews(graph: Graph) {
+        val nodes = graph.nodes.filter { it.type == UpscaleNode.name }
+        val shown = nodes.mapNotNull { n ->
+            val id = canvas.pictureInto(n.id, nodeTypes) ?: return@mapNotNull null
+            val bmp = ops.images.get(id) ?: return@mapNotNull null
+            n.id to (id to bmp.width.toFloat() / bmp.height.coerceAtLeast(1))
+        }.toMap()
+        val empty = nodes.filter { canvas.pictureInto(it.id, nodeTypes) == null }.map { it.id }.toSet()
+        if (shown.isNotEmpty() || empty.any { it in canvas.beforePreviews }) {
+            canvas = canvas.copy(
+                beforePreviews = canvas.beforePreviews.filterKeys { it !in empty } + shown,
+            )
         }
     }
 
@@ -4195,6 +4633,10 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             }.toMap()
             if (shown.isNotEmpty()) canvas = canvas.copy(previews = canvas.previews + shown)
             canvas = canvas.copy(rendered = canvas.rendered + renderedBy(r))
+            // ⚠ Same reason as the ordinary Run path: a FRAMING node fed by a
+            // sampler in this sweep needs its canvas-box preview re-drawn now
+            // that `rendered` moved, or it stays stale until an unrelated edit.
+            applyFramedPreviews()
 
             // ⭐⭐ Every run is KEPT, with what made it different in the label.
             // A sweep whose outputs were not collected would be eight renders
@@ -4214,6 +4656,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     batchLabel = label.ifBlank {
                         getApplication<Application>().getString(R.string.batch_nth_run, i + 1)
                     },
+                    from = terminal,
                 )
             }
 
@@ -4443,6 +4886,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         if (shown.isNotEmpty()) canvas = canvas.copy(previews = canvas.previews + shown)
         // ⭐⭐ …and what EVERY node rendered, shown or not ([CanvasState.rendered]).
         canvas = canvas.copy(rendered = canvas.rendered + renderedBy(r))
+        // ⚠⚠ **Re-frame downstream, now that `rendered` just moved.** A
+        // FRAMING node (i2i, inpaint) fed by a sampler upstream reads its
+        // picture through `pictureInto`, which resolves to `rendered[up]` for
+        // a renderer — but its CANVAS BOX preview is a cached bitmap in
+        // `canvas.previews`, written only by [applyFramedPreviews], and this
+        // Run just updated `rendered` through a DIFFERENT assignment than the
+        // one `updateCanvas` watches for that trigger. Without this, a chain
+        // like generate → inpaint left the downstream node's box showing
+        // whatever it had before this Run — stale or blank — until the next
+        // edit happened to call [refreshPreviews] on its own. Reported
+        // 2026-09-18. ⚠ Direct, not the debounced [refreshPreviews]: a Run
+        // already took real time, so there is nothing left to coalesce.
+        applyFramedPreviews()
         // ⭐ …and the clips, so the node that made one can offer to play it.
         // ⚠ Kept beside the previews rather than inside them: a poster is a
         // picture like any other, and the clip is the thing it is a still OF.
@@ -4459,14 +4915,32 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // workflow and the batch label, none of which a `NodeType.run` can
         // reach ([MediaOutputNode]). ⚠ Keyed on the picture the OUTPUT node
         // holds, so a graph with two branches keeps the one it was told to.
+        //
+        // ⭐⭐ A Run with SEVERAL outputs is kept as one group, the way a sweep
+        // is: a shared `batchId` puts its pictures side by side in Results and
+        // the viewer walks them together, each labelled with the output node it
+        // came from. The user's call, 2026-09-19. ⚠ A single output keeps no
+        // batch, so an ordinary Run reads exactly as it always did.
         if (MediaOutputNode.autosaves(canvas.workflow.graph)) {
-            canvas.workflow.graph.nodes
+            val outs = canvas.workflow.graph.nodes
                 .filter { it.type == MediaOutputNode.name }
-                .mapNotNull { (r.outputs[it.id]?.previewImage())?.id }
+                .mapNotNull { n -> r.outputs[n.id]?.previewImage()?.id?.let { n.id to it } }
+                // ⚠ Two outputs wired to ONE picture keep it once. `kept` below
+                // cannot catch that: it is not refreshed until these saves land.
+                .distinctBy { it.second }
                 // ⚠ Not already there: a Run that changed nothing is served from
                 // the cache and would otherwise keep a second copy every press.
-                .filter { id -> kept.none { it.imageId == id } }
-                .forEach { keepResult(it, canvas.workflow, auto = true) }
+                .filter { (_, id) -> kept.none { it.imageId == id } }
+            val batchId = if (outs.size > 1) "b" + System.currentTimeMillis() else null
+            outs.forEach { (node, id) ->
+                keepResult(
+                    id, canvas.workflow,
+                    batchId = batchId,
+                    batchLabel = if (batchId != null) node else "",
+                    auto = true,
+                    from = node,
+                )
+            }
         }
 
         r.error?.let {
@@ -4561,6 +5035,8 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
     )
 
     private companion object {
+        /** ⚠ The shade's own tick — see [tickProgress]. */
+        const val NOTICE_TICK_MS = 1000L
         /** ⭐ The model-swap dialog's last answers ([confirmSwap]). */
         const val SWAP_TAKE_PROMPT = "swap_take_prompt"
 

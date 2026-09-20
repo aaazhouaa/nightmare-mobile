@@ -34,16 +34,16 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "com.abrah.nightmare"
-    compileSdk = 35
-    // ⭐ aarch64 沙箱适配：AGP 默认 buildTools 34.0.0 未安装，对齐本地 35.0.0
-    buildToolsVersion = "35.0.0"
+    compileSdk = 36
+    // ⭐ aarch64 沙箱适配：对齐本地已安装的 ARM64 适配版 buildTools 36.0.0
+    buildToolsVersion = "36.0.0"
 
     defaultConfig {
         applicationId = "com.abrah.nightmare"
         // 31 to match DreamUI. The backend and QNN runtime set the real floor;
         // there is no reason to support anything the NPU path cannot run on.
         minSdk = 31
-        targetSdk = 35
+        targetSdk = 36
         // ⚠ Bump on EVERY push. The harness prints versionName, and two builds
         // sharing a version makes a failure report unattributable -- DreamUI lost
         // five releases to this exact mistake.
@@ -54,8 +54,8 @@ android {
         // a minor bump per push, which is what the rule exists to stop. The
         // minor moves only when a release is called a release. ⚠ versionCode
         // stays a plain incrementing integer; Android requires that.
-        versionCode = 223
-        versionName = "1.5.0"
+        versionCode = 257
+        versionName = "1.5.514"
         // ⭐ aarch64 沙箱适配：taixu 自带的 NDK r29 是原生 aarch64 工具链
         // （官方 NDK 只有 x86_64 host，无法在本机执行）。
         ndkVersion = "29.0.14206865"

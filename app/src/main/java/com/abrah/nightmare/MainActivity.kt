@@ -89,7 +89,14 @@ class MainActivity : ComponentActivity() {
         // dropdown read this cache, and an empty one makes a new node default to
         // an upscaler that may not be installed.
         UpscalerCatalog.refresh(this)
+        // ⭐ Which checkpoints are on the phone, for the RECIPES: they are
+        // built with no `Context` and must still prefer an installed model
+        // over a 1 GB download (`Workflows.ctxKeyParams`).
+        ModelCatalog.refreshInstalled(this)
         com.abrah.nightmare.segment.Segmenter.refresh(this)
+        // ⭐ The DiT engine is a download too, since 1.5.502 — and an app
+        // update wipes the older, APK-shipped copy out of the native dir.
+        DitEngine.refresh(this)
         // ⭐ The video gate's remembered answer, before anything composes, so a
         // phone that cannot run video never draws a Video card for one frame.
         com.abrah.nightmare.npu.VideoGate.load(this, BuildConfig.VERSION_CODE)
@@ -245,6 +252,20 @@ fun HarnessScreen(
         // back stack, so the system's default is "finish". Found on the
         // fullscreen viewer, 2026-09-09; these two had it just as badly.
         BackHandler { vm.closeLibrary() }
+        // ⭐⭐ Asked AT the first Download, not at launch: that is the
+        // moment the answer means something. Android 13+ drops every
+        // notification silently without it, and the shade is where a
+        // 4 GB download is watched once the screen is off.
+        val notifyAsk = rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { }
+        val notifyCtx = androidx.compose.ui.platform.LocalContext.current
+        val askToNotify: () -> Unit = {
+            if (android.os.Build.VERSION.SDK_INT >= 33 &&
+                notifyCtx.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) notifyAsk.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
         LibraryScreen(
             tab = vm.libraryTab,
             onTab = vm::switchLibraryTab,
@@ -271,13 +292,23 @@ fun HarnessScreen(
                         vm.importModel(uri, importName.ifEmpty { vm.importNameFor(uri) })
                     }
                 }
+                // ⚠ `.safetensors` has no registered MIME type, so providers
+                // hand it back as `application/octet-stream` at best — same
+                // reasoning as the zip picker above.
+                val embeddingPicker = rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+                ) { uri -> if (uri != null) vm.importEmbedding(uri) }
+                // ⚠ Same reasoning: `.bin` has no registered MIME type either.
+                val upscalerPicker = rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+                ) { uri -> if (uri != null) vm.importUpscaler(uri) }
                 ModelsScreen(
                     rows = vm.modelRows,
                     // ⚠ The OR: this screen's buttons mean "the app is doing
                     // something long", which is what [working] is for.
                     busy = vm.working,
                     error = vm.modelError,
-                    onInstall = vm::installModel,
+                    onInstall = { askToNotify(); vm.installModel(it) },
                     onCancel = vm::cancelModelInstall,
                     onDelete = vm::deleteModel,
                     onSelect = vm::askUse,
@@ -297,15 +328,21 @@ fun HarnessScreen(
                         picker.launch(arrayOf("application/zip", "application/octet-stream"))
                     },
                     upscalers = vm.upscalerRows,
-                    onInstallUpscaler = vm::installUpscaler,
+                    onInstallUpscaler = { askToNotify(); vm.installUpscaler(it) },
                     onDeleteUpscaler = vm::deleteUpscaler,
+                    onImportUpscaler = {
+                        upscalerPicker.launch(arrayOf("application/octet-stream", "*/*"))
+                    },
                     segmenter = vm.segmenterRow,
-                    onInstallSegmenter = vm::installSegmenter,
+                    onInstallSegmenter = { askToNotify(); vm.installSegmenter() },
                     onDeleteSegmenter = vm::deleteSegmenter,
                     video = vm.videoRow.takeIf { !com.abrah.nightmare.npu.VideoGate.hidden },
-                    onInstallVideo = vm::installVideoModels,
+                    onInstallVideo = { askToNotify(); vm.installVideoModels() },
                     onDeleteVideo = vm::deleteVideoModels,
                     onProbeVideo = vm::probeVideoSupport,
+                    embeddings = vm.embeddingRows,
+                    onImportEmbedding = { embeddingPicker.launch(arrayOf("application/octet-stream", "*/*")) },
+                    onDeleteEmbedding = vm::deleteEmbedding,
                 )
             },
             results = {
@@ -331,10 +368,11 @@ fun HarnessScreen(
                     onSaveGroup = { g -> vm.saveResultsToGallery(g.items.map { it.id }) },
                     onShareFlow = { vm.shareResultFlow(it.id) },
                     imageFor = vm::resultImage,
+                    unreadable = vm::resultUnreadable,
                     detailsFor = vm::detailsOf,
                     onUpscale = { r, u -> vm.upscaleResult(r.id, u) },
                     upscalers = vm.upscalerRows,
-                    onInstallUpscaler = vm::installUpscaler,
+                    onInstallUpscaler = { askToNotify(); vm.installUpscaler(it) },
                     upscaling = vm.upscalingResult,
                     onShareResults = { ids, asFlow -> vm.shareResults(ids, asFlow) },
                     onToast = vm::toast,
@@ -392,6 +430,11 @@ fun HarnessScreen(
                     // ⚠ The FULL picture, not the list thumbnail: this is the
                     // surface where the detail is the point.
                     imageFor = { id -> vm.resultImage(id) },
+                    // ⭐ Shown while the full decode is still in flight —
+                    // both are async now, so this fills the gap rather than
+                    // leaving a blank page for however long that takes.
+                    thumbnailFor = { id -> vm.thumbnailFor(id) },
+                    unreadable = vm::resultUnreadable,
                     detailsFor = vm::detailsOf,
                     onDismiss = { vm.closeResult() },
                     onOpenFlow = { r -> vm.closeResult(); vm.openResultFlow(r.id) },
@@ -595,39 +638,73 @@ fun HarnessScreen(
         return
     }
 
-    // ⚠⚠ **The harness is now a TAB inside Settings**, not a screen of its own.
-    // The canvas's gear opens this; the wrench that used to open the harness
-    // directly is gone. `ui/SettingsScreen.kt` has the reasoning.
+    // ⚠⚠ **Settings is one page now** — Community and Diagnostics (the op
+    // harness) were removed 2026-09-19, at the user's ask: a pack still loads
+    // from `<externalFiles>/plugins/` with no UI, and the harness is a
+    // developer surface (`OpService` over adb) that never needed one either.
+    // `ui/SettingsScreen.kt` has the reasoning.
     //
     // ⚠ Back returns to the canvas rather than quitting -- the same hole the
     // fullscreen viewer had, and the reason every over-canvas screen handles it.
     BackHandler { vm.setCanvasVisible(true) }
-    // ⚠ Declared HERE now, not on the Flows tab: a node pack is code and is
-    // installed from Settings → Community, beside the page that explains what a
-    // pack may and may not do. `ui/WorkflowsScreen.kt` has the reasoning.
-    // ⚠ Two MIME types, as every other picker in this app does: plenty of
-    // providers hand a zip over as `application/octet-stream`, and filtering on
-    // the exact type greys out the file the user came for.
-    val packPicker = rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
-    ) { uri -> if (uri != null) vm.importPlugin(uri) }
+    // ⭐ Settings' own copy of the embeddings import picker — see the Models
+    // tab's `embeddingPicker` for the same launcher and why it is declared
+    // per-screen rather than shared (each screen owns its own launcher, the
+    // existing pattern every picker in this file already follows).
+    val settingsEmbeddingPicker = rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri -> if (uri != null) vm.importEmbedding(uri) }
+    // ⭐ Whether this app is exempt from Doze/App Standby battery
+    // optimisation — the belt-and-suspenders half of the background-kill fix
+    // ([BackendKeepAliveService]'s foreground service is the main one). Not a
+    // ViewModel field: it is OS state this app does not own, so it is read
+    // fresh from PowerManager rather than cached and drifting.
+    // ⚠ Re-read on RESUME, not just once: the only way it changes is the user
+    // granting it from the system dialog this screen launches, and that
+    // dialog closes back into this same Activity.
+    val appCtx = androidx.compose.ui.platform.LocalContext.current
+    var batteryUnrestricted by androidx.compose.runtime.remember {
+        mutableStateOf(
+            (appCtx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager)
+                .isIgnoringBatteryOptimizations(appCtx.packageName)
+        )
+    }
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                batteryUnrestricted =
+                    (appCtx.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager)
+                        .isIgnoringBatteryOptimizations(appCtx.packageName)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     com.abrah.nightmare.ui.SettingsScreen(
-        tab = vm.settingsTab,
-        onTab = vm::switchSettingsTab,
         onClose = { vm.setCanvasVisible(true) },
-        diagnostics = { HarnessPane(vm) },
-        onImportPack = {
-            packPicker.launch(arrayOf("application/zip", "application/octet-stream"))
+        theme = vm.theme,
+        onTheme = vm::chooseTheme,
+        batteryUnrestricted = batteryUnrestricted,
+        onRequestBatteryUnrestricted = {
+            // ⚠⚠ The DIRECT request, not just a link to the settings list —
+            // sideload distribution means the Play policy gating this intent
+            // does not apply (CLAUDE.md), and the whole point is to save the
+            // user from hunting through Battery settings for this app by name.
+            val intent = android.content.Intent(
+                android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                android.net.Uri.parse("package:${appCtx.packageName}"),
+            )
+            appCtx.startActivity(intent)
         },
+        embeddings = vm.embeddingRows,
+        onImportEmbedding = {
+            settingsEmbeddingPicker.launch(arrayOf("application/octet-stream", "*/*"))
+        },
+        onDeleteEmbedding = vm::deleteEmbedding,
     )
 }
 
-/**
- * The op harness, as the Diagnostics tab draws it.
- *
- * ⚠ Split out so `SettingsScreen` can take it as a slot and stay free of the
- * view model -- the same shape `LibraryScreen` uses for its tabs.
- */
 /**
  * ⭐⭐ A Run stopped because a flow names a checkpoint that is not here — asked
  * ON the canvas, with the download in the popup (the user's call, 2026-09-17).
@@ -703,27 +780,6 @@ private fun MissingModelDialog(m: HarnessViewModel.MissingModel, vm: HarnessView
                 androidx.compose.material3.TextButton(onClick = { vm.dismissMissingModel() }) { Text(stringResource(R.string.not_now)) }
             }
         },
-    )
-}
-
-@Composable
-private fun HarnessPane(vm: HarnessViewModel) {
-    HarnessContent(
-        state = vm.backend,
-        busy = vm.working,
-        log = vm.log,
-        image = vm.image,
-        onStart = vm::startBackend,
-        onStop = vm::stopBackend,
-        onHealth = vm::checkBackend,
-        onEncodeText = vm::encodeText,
-        onVaeDecode = vm::vaeDecode,
-        onSample = vm::sample,
-        onGraph = vm::runGraph,
-        onOpenCanvas = { vm.setCanvasVisible(true) },
-        onOpenModels = { vm.setModelsVisible(true) },
-        progress = vm.progress,
-        onNotWired = vm::notWired,
     )
 }
 

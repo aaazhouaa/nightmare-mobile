@@ -579,6 +579,17 @@ object Ops {
          * painted inside it. [VaeDecodeNode] cuts it out after the decode.
          */
         aspect: String? = null,
+        /**
+         * ⭐⭐ The picture and mask an INPAINT node renders from, as PNGs.
+         *
+         * ⚠⚠ Consumed ONLY by a 9-channel inpainting model, which takes them as
+         * conditioning; every other backend drops both fields
+         * (`backend-patches/006`), so sending them to a plain checkpoint
+         * changes nothing and the caller's latent blend still does the work.
+         * The backend decides because it is the one that knows its UNet.
+         */
+        inpaintImage: ByteArray? = null,
+        inpaintMask: ByteArray? = null,
         onProgress: (Progress) -> Unit = {},
     ): Result<Sampled> {
         val body = JSONObject()
@@ -593,6 +604,10 @@ object Ops {
             .apply {
                 if (aspect != null) put("aspect_ratio", aspect)
                 if (condHandle != null) put("cond_handle", condHandle)
+                if (inpaintImage != null && inpaintMask != null) {
+                    put("inpaint_image", android.util.Base64.encodeToString(inpaintImage, android.util.Base64.NO_WRAP))
+                    put("inpaint_mask", android.util.Base64.encodeToString(inpaintMask, android.util.Base64.NO_WRAP))
+                }
                 if (latentHandle != null) {
                     put("latent_handle", latentHandle)
                     put("denoise", denoise)
@@ -671,6 +686,113 @@ object Ops {
                 previewFrames = nPreviews,
             )
         )
+    }
+
+    /**
+     * ⭐⭐ The WHOLE render in one call — prompt (and optionally a picture) in,
+     * a PNG out — through `/generate?stream=1`.
+     *
+     * ⚠⚠ For the DiT families (FLUX.2 Klein, Z-Image) only. Their engine owns
+     * the text encoder, the loop and the VAE as one call (`PipelineDit`), so
+     * `/encode_text`, `/sample` and `/vae_decode` do not exist for them, and
+     * the decomposed path every other sampler takes would throw.
+     *
+     * @param imagePng img2img: the picture, already at [width]x[height].
+     */
+    suspend fun generate(
+        prompt: String,
+        negative: String,
+        steps: Int,
+        cfg: Double,
+        seed: Int,
+        width: Int,
+        height: Int,
+        imagePng: ByteArray? = null,
+        denoise: Double = 0.6,
+        /**
+         * ⭐⭐ The inpaint mask — white is regenerated, black keeps the init
+         * image (`DitEngine.h`'s `mask_image` contract, and the same sense the
+         * SD pipelines use).
+         *
+         * ⚠ The backend refuses a mask with no `image` ("mask requires
+         * image"), so these two travel together or not at all.
+         */
+        maskPng: ByteArray? = null,
+        /**
+         * ⭐⭐ FLUX.2 Klein's native edit references — clean, separately
+         * VAE-encoded latents appended to the DiT token sequence, NOT noised
+         * into the generation latent like [imagePng].
+         *
+         * ⚠⚠ Each keeps its OWN aspect ratio on purpose, so these must be
+         * encoded from the source bitmap and never through `CropNode.render`,
+         * which fits a picture to the output canvas.
+         *
+         * ⚠ Klein only — the backend throws for any other family
+         * (`PipelineDit::generate`), and refuses the field outright unless the
+         * pipeline reports `supportsReferenceEditing`.
+         *
+         * ⚠⚠⚠ NOT reachable from the canvas, deliberately: extra
+         * references crashed LocalDream 3.0.0-alpha.2 on this phone
+         * (reported 2026-09-20), so nothing in the UI can send them. The
+         * `dit_edit` harness op is the only caller, which is how we find out
+         * whether that crash is upstream's or the engine's.
+         */
+        referencePngs: List<ByteArray> = emptyList(),
+        onProgress: (Progress) -> Unit = {},
+    ): Result<Decoded> {
+        val body = JSONObject()
+            .put("prompt", prompt)
+            .put("negative_prompt", negative)
+            .put("steps", steps)
+            .put("cfg", cfg)
+            .put("seed", seed)
+            .put("width", width)
+            .put("height", height)
+            .put("output_format", "png")
+            .apply {
+                if (imagePng != null) {
+                    put("image", android.util.Base64.encodeToString(imagePng, android.util.Base64.NO_WRAP))
+                    put("denoise_strength", denoise)
+                }
+                if (maskPng != null) {
+                    put("mask", android.util.Base64.encodeToString(maskPng, android.util.Base64.NO_WRAP))
+                }
+                if (referencePngs.isNotEmpty()) {
+                    put(
+                        "reference_images",
+                        org.json.JSONArray().apply {
+                            for (r in referencePngs) {
+                                put(android.util.Base64.encodeToString(r, android.util.Base64.NO_WRAP))
+                            }
+                        },
+                    )
+                }
+            }
+            .toString()
+
+        var complete: JSONObject? = null
+        var streamError: String? = null
+        val r = Backend.postSse("/generate?stream=1", body) { ev ->
+            val j = try { JSONObject(ev.data) } catch (e: Exception) { null }
+            when (j?.optString("type")) {
+                "progress" -> onProgress(
+                    Progress(j.optInt("step"), j.optInt("total_steps"), ev.atMs, null, null)
+                )
+                "complete" -> complete = j
+                "error" -> streamError = j.optString("message")
+                else -> streamError = streamError
+                    ?: "unrecognised frame \"${ev.name}\": ${ev.data.take(120)}"
+            }
+        }
+        if (r.code != 200) return Result.Err(r.code, r.body)
+        streamError?.let { return Result.Err(200, it) }
+        val j = complete ?: return Result.Err(200, "stream ended with no complete event")
+        val png = try {
+            android.util.Base64.decode(j.getString("image"), android.util.Base64.DEFAULT)
+        } catch (e: Exception) {
+            return Result.Err(200, "complete event carried no readable image: ${e.message}")
+        }
+        return Result.Ok(Decoded(png, "", j.optLong("generation_time_ms"), r.millis))
     }
 
     /**

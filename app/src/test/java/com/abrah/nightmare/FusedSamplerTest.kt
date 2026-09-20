@@ -2,7 +2,9 @@ package com.abrah.nightmare
 
 import androidx.test.core.app.ApplicationProvider
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -87,7 +89,10 @@ class FusedSamplerTest {
     @Test
     fun aPhotoWiredInIsImageToImage() = runBlocking {
         val host = RecordingHost()
-        val r = exec(host).run(graph(photo = photoFile()))
+        // ⚠ The plain `sample` type, not the default `inpaint` — this is
+        // testing generic photo-wiring, and since 2026-09-19 an inpaint with
+        // no mask refuses rather than falling back to a plain i2i render.
+        val r = exec(host).run(graph(photo = photoFile(), type = SdSampler.SD15.name))
         assertNull(r.error)
         assertEquals(1, host.encodes)
         // ⭐ …and the sampler started from what the encode produced.
@@ -143,13 +148,40 @@ class FusedSamplerTest {
     }
 
     /**
+     * ⭐⭐ **An inpaint sends its picture and mask with `sample`** — the ones a
+     * 9-channel checkpoint conditions on — and they are the SAME bytes the
+     * encode and the blend got. The backend drops them for any other UNet
+     * (`backend-patches/006`), which is why the node never asks which kind of
+     * model is loaded. ⚠ A mask that differed from the blend's would make the
+     * model repaint one region while the blend keeps another.
+     */
+    @Test
+    fun anInpaintSendsItsPictureAndMaskToTheSampler() = runBlocking {
+        val host = RecordingHost()
+        assertNull(exec(host).run(graph(photo = photoFile(), params = painted)).error)
+        assertNotNull("a 9-channel model needs the picture", host.lastInpaintImage)
+        assertArrayEquals("the picture must be the one encoded", host.lastEncodePng, host.lastInpaintImage)
+        assertArrayEquals("the mask must be the one blended", host.lastBlendMask, host.lastInpaintMask)
+    }
+
+    /** ⚠ …and nothing else does: image-to-image has no mask to condition on. */
+    @Test
+    fun imageToImageSendsNoInpaintFields() = runBlocking {
+        val host = RecordingHost()
+        assertNull(exec(host).run(graph(photo = photoFile(), type = SdSampler.SD15.name)).error)
+        assertNull(host.lastInpaintImage)
+        assertNull(host.lastInpaintMask)
+    }
+
+    /**
      * ⭐⭐ It FITS whatever it is given — the rule that retired `sizeRefusal`
      * for the image path. A 96x96 photo into a 64x64 model is not an error.
      */
     @Test
     fun aPhotoOfAnySizeIsFittedRatherThanRefused() = runBlocking {
         val host = RecordingHost()
-        val r = exec(host).run(graph(photo = photoFile(w = 123, h = 41)))
+        // ⚠ Plain `sample`, same reason as `aPhotoWiredInIsImageToImage`.
+        val r = exec(host).run(graph(photo = photoFile(w = 123, h = 41), type = SdSampler.SD15.name))
         assertNull("a photo of any shape must render", r.error)
         assertEquals(64, host.lastEncodeSize?.first)
         assertEquals(64, host.lastEncodeSize?.second)
@@ -330,8 +362,19 @@ class FusedSamplerTest {
 
     /**
      * ⭐⭐ Nothing painted on a GENERATED picture: the render upstream is made,
-     * and the inpaint WAITS — no error, and nothing repainted. The control is a
-     * PHOTO with nothing painted, which still runs as it always has.
+     * and the inpaint WAITS — no error, and nothing repainted.
+     *
+     * ⚠⚠ **The rule went through two wrong shapes in one day, 2026-09-18/19,
+     * before landing here.** First it skipped the wait and rendered a
+     * full-frame repaint unattended (wrong: the person still wants to be
+     * stopped). Then it kept the wait but pre-filled the mask editor with a
+     * full mask on open (also wrong, reverted the next day — *"lets not do
+     * the full masking thing for inpaint. instead if user doesnt mask just
+     * show error saying nothing masked, this should be always true for
+     * inpaint nodes"*). ⇒ Just the refusal, no auto-fill, and — the actual
+     * behaviour change this landed on — it now applies to a PHOTO with
+     * nothing painted too, which used to run as a plain re-render and is the
+     * second case in this test.
      */
     @Test
     fun anInpaintOnAGeneratedPictureWaitsToBePainted() = runBlocking {
@@ -344,7 +387,7 @@ class FusedSamplerTest {
         assertEquals("only the generate sampled", 1, host.samples)
 
         val photo = exec(RecordingHost()).run(graph(photo = photoFile()))
-        assertNull("a photo with nothing painted still runs", photo.waiting)
+        assertEquals("a photo with nothing painted now refuses too", "sample", photo.waiting?.first)
     }
 
     /**
@@ -409,6 +452,8 @@ private class RecordingHost : OpHost {
 
     val distinctConds = mutableSetOf<String>()
     var lastLatentHandle: String? = null
+    var lastInpaintImage: ByteArray? = null
+    var lastInpaintMask: ByteArray? = null
     var lastEncodeHandle: String? = null
     var lastSampleHandle: String? = null
     var lastEncodeSize: Pair<Int, Int>? = null
@@ -446,10 +491,13 @@ private class RecordingHost : OpHost {
         steps: Int, cfg: Double, seed: Int,
         width: Int, height: Int, latentHandle: String?, denoise: Double,
         scheduler: String, condHandle: String, aspect: String?,
+        inpaintImage: ByteArray?, inpaintMask: ByteArray?,
         onProgress: (Ops.Progress) -> Unit,
     ): Ops.Result<Ops.Sampled> {
         samples++
         lastLatentHandle = latentHandle
+        lastInpaintImage = inpaintImage
+        lastInpaintMask = inpaintMask
         lastScheduler = scheduler
         lastSeed = seed
         val id = "lat_" + listOf(condHandle, steps, cfg, seed, width, height, latentHandle.orEmpty())

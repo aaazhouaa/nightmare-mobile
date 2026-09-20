@@ -20,7 +20,7 @@ ANDROID_HOME="${ANDROID_HOME:-/opt/android-sdk}"
 export JAVA_HOME ANDROID_HOME ANDROID_SDK_ROOT="${ANDROID_HOME}"
 export _JAVA_OPTIONS="${_JAVA_OPTIONS:--Djava.security.egd=file:/dev/urandom}"
 
-AAPT2="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/35.0.0/aapt2}"
+AAPT2="${TAIXU_AAPT2_PATH:-$ANDROID_HOME/build-tools/36.0.0/aapt2}"
 
 # Stage the prebuilt backend + QNN libs from the local dir (QNN_LIBS_PATH,
 # default /opt/QNN/qnnlibs) when it exists. Absence only warns: a tree

@@ -129,6 +129,8 @@ fun ResultsScreen(
     modifier: Modifier = Modifier,
     /** ⭐ The picture at size for the big preview. Falls back to the thumbnail. */
     imageFor: (String) -> ImageBitmap? = thumbnailFor,
+    /** ⚠ True once a result's PNG has failed to decode — see [UnreadablePicture]. */
+    unreadable: (String) -> Boolean = { false },
     /** ⭐ Info — what made it, from the stored flow. */
     detailsFor: (Result) -> List<Pair<String, String>> = { emptyList() },
     /** ⭐ Upscale with an installed upscaler; the enlarged picture becomes a new item. */
@@ -290,7 +292,7 @@ fun ResultsScreen(
                                 .clip(RoundedCornerShape(10.dp))
                                 .clickable { if (selecting) onToggleSelect(r) else onView(r) },
                         )
-                    }
+                    } ?: run { if (unreadable(r.id)) UnreadablePicture() }
                 }
             }
         }
@@ -419,6 +421,7 @@ fun ResultsScreen(
                 val r = items[i]
                 HistoryThumb(
                     thumb = thumbnailFor(r.id),
+                    unreadable = unreadable(r.id),
                     inFrame = r.id == shown.id,
                     picked = r.id in selected,
                     favourite = r.favourite,
@@ -564,6 +567,15 @@ fun ResultViewer(
     items: List<Result>,
     startIndex: Int,
     imageFor: (String) -> ImageBitmap?,
+    /**
+     * ⭐ Shown while [imageFor] is still decoding (it loads async and returns
+     * null until it's ready) — same fallback shape as the big pager on
+     * [ResultsScreen]. Without it, swiping to a picture not yet in the cache
+     * showed a BLANK page for as long as the full-size decode took.
+     */
+    thumbnailFor: (String) -> ImageBitmap? = imageFor,
+    /** ⚠ True once a result's PNG has failed to decode — see [UnreadablePicture]. */
+    unreadable: (String) -> Boolean = { false },
     detailsFor: (Result) -> List<Pair<String, String>>,
     onDismiss: () -> Unit,
     onOpenFlow: (Result) -> Unit,
@@ -649,7 +661,7 @@ fun ResultViewer(
                 )
                 return@HorizontalPager
             }
-            imageFor(item.id)?.let { bmp ->
+            (imageFor(item.id) ?: thumbnailFor(item.id))?.let { bmp ->
                 Image(
                     bitmap = bmp,
                     contentDescription = item.batchLabel.ifBlank { stringResource(R.string.r2_results_cd_kept) },
@@ -726,6 +738,13 @@ fun ResultViewer(
                                 onTap = { if (scale <= 1.01f) onDismiss() },
                             )
                         },
+                )
+            } ?: run {
+                if (unreadable(item.id)) UnreadablePicture(
+                    color = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.fillMaxSize().pointerInput(page) {
+                        detectTapGestures(onTap = { onDismiss() })
+                    },
                 )
             }
         }
@@ -1261,6 +1280,7 @@ private const val RESULT_DELETE_BODY =
 @Composable
 private fun HistoryThumb(
     thumb: ImageBitmap?,
+    unreadable: Boolean = false,
     inFrame: Boolean,
     picked: Boolean,
     favourite: Boolean,
@@ -1283,7 +1303,7 @@ private fun HistoryThumb(
     ) {
         thumb?.let {
             Image(it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        }
+        } ?: run { if (unreadable) UnreadablePicture() }
         // ⭐ A clip is a STILL here with a play mark — only the big frame plays.
         if (isClip) {
             Box(
@@ -1313,6 +1333,31 @@ private fun HistoryThumb(
         if (picked) {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)))
         }
+    }
+}
+
+/**
+ * ⭐ A kept result whose PNG will not decode, said in words rather than drawn as
+ * an empty square that looks like it is still loading.
+ *
+ * ⚠ The ONE drawing of it, called by the big frame, the grid and the fullscreen
+ * viewer alike — three surfaces that must agree. It stays selectable and
+ * deletable like any other card, which is the point: nothing else can repair
+ * the file, so the person holding the phone has to be able to find it.
+ */
+@Composable
+private fun UnreadablePicture(
+    modifier: Modifier = Modifier.fillMaxSize(),
+    color: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    Box(modifier, contentAlignment = Alignment.Center) {
+        Text(
+            "can't read this picture",
+            style = LogTextStyle,
+            color = color,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier.padding(6.dp),
+        )
     }
 }
 

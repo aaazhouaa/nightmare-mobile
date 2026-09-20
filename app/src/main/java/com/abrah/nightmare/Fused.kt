@@ -109,11 +109,12 @@ object PromptNode : NodeType {
  * places for the blend argument order to drift, and that mistake is invisible
  * (`FusedSamplerTest`). The differences are exactly two constructor arguments.
  *
- * ⚠ **Latent-blend vs a 9-channel inpaint model is NOT a fifth type.** Same
- * ports, same editor; the difference is which checkpoint is loaded and one
- * branch inside [run]. It becomes a chip on the inpaint types when such a
- * checkpoint exists in the catalogue — today none does, and a chip with one
- * legal value is a knob that cannot matter (§5.7).
+ * ⚠ **Latent-blend vs a 9-channel inpaint model is NOT a fifth type — and not a
+ * chip either.** Same ports, same editor; the MODEL the node names is the whole
+ * choice. An inpaint render always sends its picture and mask with `sample`, and
+ * the backend uses them only when its UNet takes 9 channels
+ * (`backend-patches/006`). The user's call, 2026-09-19, replacing the chip this
+ * note used to promise: a knob that only restates the model is not a knob.
  *
  * ⚠⚠ **It does not draw its own picture.** The user's call, 2026-09-15: a
  * render appears on `core.output` and nowhere else, so a graph says where its
@@ -151,6 +152,23 @@ class SdSampler(
         // here is what shows the Tap tool. ⚠ Added while no flow depends on the
         // port list — a port cannot be added after one does (§7).
         if (inpaint) Port("segmenter", SelectObjectNode.PORT_TYPE) else null,
+        // ⭐⭐ FLUX.2 Klein's edit REFERENCE — a second picture the model reads
+        // but does not redraw. Unlike `image` it is never cropped to the
+        // canvas: the engine VAE-encodes each reference at its OWN aspect
+        // ratio and positions it with FLUX.2's reference-token RoPE scheme, so
+        // fitting it to the output would throw away the thing that makes it a
+        // reference.
+        //
+        // ⚠ Wiring it WITHOUT `image` is allowed and means "generate fresh,
+        // guided by this" — `native_edit` fires on references alone
+        // (`PipelineDit::generate`). The user's call, 2026-09-20.
+        //
+        // ⚠⚠ FLUX.2 ONLY, and the port is absent elsewhere rather than
+        // present-and-failing: the backend throws "native reference editing is
+        // only supported by FLUX.2 Klein" for Z-Image, and a port that always
+        // errors is worse than no port. Same reasoning that keeps Z-Image out
+        // of the inpaint picker.
+        if (family == Family.FLUX2) Port("reference", "IMAGE") else null,
     )
     override val outputs = listOf(Port("image", "IMAGE"))
     /** ⚠ Inpaint is its OWN palette section (the user's call, 2026-09-16). */
@@ -206,6 +224,23 @@ class SdSampler(
         /** ⚠ The stitched picture's longest edge — a 4096 px photo plus outpaint stays bounded. */
         const val STITCH_MAX_EDGE = 4096f
 
+        /**
+         * ⭐ The reference region's params. Named apart from `x`/`y`/`w`/`h`
+         * so a node can frame its base and crop its reference independently.
+         */
+        const val REF_X = "ref_x"
+        const val REF_Y = "ref_y"
+        const val REF_W = "ref_w"
+        const val REF_H = "ref_h"
+
+        /**
+         * ⭐ The longest edge a reference is sent at. 512 because that is the
+         * size whose VAE encode measured 288 MB against 1024's 1536 MB, and a
+         * reference is read rather than rendered — it does not need the
+         * output's resolution. See [boundReference].
+         */
+        const val REF_MAX_EDGE = 512
+
         /** ⭐ The four registrations. One class; two arguments of difference. */
         val SD15 = SdSampler("sd15.sample", Family.SD15, inpaint = false)
         val SDXL = SdSampler("sdxl.sample", Family.SDXL, inpaint = false)
@@ -213,7 +248,44 @@ class SdSampler(
         val SDXL_INPAINT = SdSampler("sdxl.inpaint", Family.SDXL, inpaint = true)
         val ANIMA = SdSampler("anima.sample", Family.ANIMA, inpaint = false)
         val ANIMA_INPAINT = SdSampler("anima.inpaint", Family.ANIMA, inpaint = true)
-        val ALL = listOf(SD15, SDXL, ANIMA, SD15_INPAINT, SDXL_INPAINT, ANIMA_INPAINT)
+        /**
+         * ⭐⭐ The DiT families. ⚠ **FLUX.2 has an inpaint type since 1.5.507
+         * and Z-Image does not**, and that asymmetry is the engine's, not a
+         * preference: ABI 3 gave `PipelineDit` a `mask_image`, but the clean
+         * reference latent that makes a masked redraw understand the picture
+         * around the hole is gated on `DIT_MODEL_FLUX2_KLEIN`. Z-Image's mask
+         * is NOT gated, so it would render a masked img2img with no reference
+         * — the mechanism without the quality, looking identical in the
+         * picker. It is left out rather than offered as a lesser thing.
+         * `docs/MODELS.md` §9.
+         */
+        val FLUX2 = SdSampler("flux2.sample", Family.FLUX2, inpaint = false)
+        val ZIMAGE = SdSampler("zimage.sample", Family.ZIMAGE, inpaint = false)
+        /**
+         * ⚠⚠⚠ **`flux2.inpaint` is BUILT and NOT REGISTERED, on purpose.**
+         * Everything behind it works — [runDitMasked] sends `mask` on
+         * `/generate`, the backend reports `Mask:1`, `PipelineDit` binds
+         * `mask_image` beside the clean reference, and [finishInpaint]
+         * composites the result. Measured on device 2026-09-20 against the
+         * SAME mask the SD path uses:
+         *
+         *     SD 1.5, denoise 0.65   6303 pixels changed, 1500 strongly
+         *     Klein,  denoise 0.65    821 pixels changed,    1 strongly
+         *     Klein,  denoise 1.0     821 pixels changed,    1 strongly
+         *
+         * ⚠⚠ Identical at both denoise values, and confined to the mask's own
+         * bounding box — so the engine HONOURS the mask (nothing outside it
+         * moves) and then regenerates almost nothing inside it. Denoise having
+         * no effect rules out "the reference out-weighs the redraw". The SD
+         * path proves the mask content and the composite are right, so the
+         * difference is inside `libdit_engine.so`, which we cannot read.
+         *
+         * ⇒ Registering it would put a checkpoint in the inpaint picker that
+         * renders confidently and ignores what the user painted — the same
+         * "it still RENDERED" class as the stale-skel noise bug. It stays out
+         * until the engine's behaviour is understood. `notes/PROGRESS.md`.
+         */
+        val ALL = listOf(SD15, SDXL, ANIMA, FLUX2, ZIMAGE, SD15_INPAINT, SDXL_INPAINT, ANIMA_INPAINT)
 
         /**
          * ⭐⭐ The type a graph should use for [family] and [inpaint] — the one
@@ -224,7 +296,11 @@ class SdSampler(
          * get it wrong once.
          */
         fun typeFor(family: Family, inpaint: Boolean): String =
-            (ALL.firstOrNull { it.family == family && it.inpaint == inpaint } ?: SD15).name
+            (ALL.firstOrNull { it.family == family && it.inpaint == inpaint }
+                // ⚠ A family with no inpaint type (the DiT ones) asked for one:
+                // an SD 1.5 inpaint, not that family's text-to-image — which
+                // would silently drop the mask the caller asked for.
+                ?: if (inpaint) SD15_INPAINT else SD15).name
     }
 
     /**
@@ -248,7 +324,7 @@ class SdSampler(
      * are what the inpaint is, and the user asked for them above Steps
      * (2026-09-17). ⚠ Order only; every widget is the same declaration.
      */
-    override val widgets get() = baseWidgets().let { ws ->
+    override val widgets get() = (if (family.dit) ditWidgets() else baseWidgets()).let { ws ->
         if (!inpaint) ws else {
             val front = listOf("denoise", MaskCropNode.ONLY_MASKED, PasteNode.STITCH)
             front.mapNotNull { n -> ws.firstOrNull { it.name == n } } + ws.filterNot { it.name in front }
@@ -298,6 +374,23 @@ class SdSampler(
         Widget("y", "float", "0.0", 0.0, 1.0),
         Widget("w", "float", "1.0", 0.0, 1.0),
         Widget("h", "float", "1.0", 0.0, 1.0),
+        // ⭐⭐ The REFERENCE's own region, and a different job to the four
+        // above. Those FRAME the picture into the output canvas; these choose
+        // WHICH PART of a reference to send, and the region goes over the wire
+        // at its own aspect ratio — never fitted to the canvas, because that
+        // is the whole point of a reference (`docs/MODELS.md` §9).
+        //
+        // ⚠ Separate names, not a second use of x/y/w/h: one node can carry a
+        // framed base AND a cropped reference at once, and sharing the params
+        // would make moving one move the other.
+        //
+        // ⚠⚠ Hidden from the knob list like x/y/w/h are ([hiddenKnob]) — they
+        // are dragged on the picture, and four more loose sliders under the
+        // size control is the duplicate the 2026-09-18 report named.
+        Widget(REF_X, "float", "0.0", 0.0, 1.0, hint = "drag the region on the reference"),
+        Widget(REF_Y, "float", "0.0", 0.0, 1.0),
+        Widget(REF_W, "float", "1.0", 0.0, 1.0),
+        Widget(REF_H, "float", "1.0", 0.0, 1.0),
         // ⚠ Drawn as the tick/pencil in the Crop title row, never as a checkbox
         // in the knob list ([hiddenKnob]).
         Widget(CropNode.LOCKED, "bool", "false"),
@@ -343,6 +436,40 @@ class SdSampler(
         *aspectWidget(defaultSpec()),
         Widget("width", "int", defaultRes().width.toString(), contextKey = true),
         Widget("height", "int", defaultRes().height.toString(), contextKey = true),
+    )
+
+    /**
+     * ⭐⭐ A DiT family's knobs: the same names as every sampler's, minus what
+     * its engine does not have — no scheduler (it hardcodes euler), no aspect
+     * chip, no mask — and a SIZE that is a request field, not a launch one.
+     * ⚠ Not [Widget.contextKey]: moving them never relaunches the backend
+     * ([backendContextKey] keys a DiT model on its native size).
+     * ⚠⚠ They are also not drawn as sliders any more. The inspector's size
+     * panel owns them for every family now (`NodeInspector`'s `ditPanel`,
+     * [ModelCatalog.DIT_SHAPES]) and `hiddenKnob` keeps them out of the knob
+     * list, so these declarations exist to carry the DEFAULT and the legal
+     * range — which is what a saved workflow and `applyDefaults` read.
+     */
+    private fun ditWidgets(): List<Widget> = baseWidgets()
+        .filterNot { it.name in setOf("scheduler", "aspect", "width", "height", "cfg") } + listOf(
+        // ⭐ The one knob whose meaning DIFFERS here, so the one that gets a
+        // hint the SD nodes have no need of. A guidance-distilled checkpoint
+        // opens at 1.0, and at exactly 1.0 the engine skips the unconditional
+        // pass — which is what makes the negative prompt beside it inert until
+        // this moves. Nothing else in the sheet could tell a person that.
+        Widget(
+            "cfg", "float", defaultSpec().cfg.toString(), 1.0, 20.0, fine = true,
+            hint = "1 is what these models are distilled for. Above 1 the negative prompt " +
+                "starts being read, and each step costs about twice as long",
+        ),
+        Widget(
+            "width", "int", ModelCatalog.DIT_RES.width.toString(),
+            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.DIT_MAX.toDouble(), step = ModelCatalog.DIT_STEP,
+        ),
+        Widget(
+            "height", "int", ModelCatalog.DIT_RES.height.toString(),
+            ModelCatalog.DIT_MIN.toDouble(), ModelCatalog.DIT_MAX.toDouble(), step = ModelCatalog.DIT_STEP,
+        ),
     )
 
     override fun contextKey(node: Node) = backendContextKey(node)
@@ -403,15 +530,36 @@ class SdSampler(
             )
         val w = int("width")
         val h = int("height")
+        // ⭐⭐ A DiT model renders whole, so it leaves here — EXCEPT an inpaint
+        // one, which first needs the mask this function builds below. That
+        // path rejoins at [runDitMasked] and returns before any op endpoint is
+        // touched. `docs/MODELS.md` §9.
+        if (family.dit && !inpaint) {
+            return runDit(
+                ctx, node, p, prompt,
+                inputs["image"] as? Value.Image,
+                inputs["reference"] as? Value.Image,
+                w, h,
+            )
+        }
         val aspect = nodeAspect(node)
             ?.takeIf { ModelCatalog.aspectTarget(it, Res(w, h)) != null }
 
         // ⚠ First, because it is the cheapest thing that can fail: a backend
         // that is not up says so here rather than after a 200 ms VAE encode.
-        ctx.say(ctx.android?.getString(R.string.log_reading_prompt) ?: "reading the prompt")
-        val cond = when (val r = ctx.host.encodeText(prompt.positive, prompt.negative)) {
-            is Ops.Result.Ok -> r.value.handle
-            is Ops.Result.Err -> throw OpFailure("encode_text", r.code, r.body)
+        //
+        // ⚠⚠ Computed ON DEMAND since DiT inpaint joined this function: the DiT
+        // backend answers `/encode_text` with "DiT engine owns text encoding",
+        // so a Klein inpaint that paid this cost up front would fail before it
+        // reached the masking it is here for. Cached, so the three callers
+        // below still encode exactly once between them.
+        var condCache: String? = null
+        suspend fun cond(): String = condCache ?: run {
+            ctx.say(ctx.android?.getString(R.string.log_reading_prompt) ?: "reading the prompt")
+            when (val r = ctx.host.encodeText(prompt.positive, prompt.negative)) {
+                is Ops.Result.Ok -> r.value.handle
+                is Ops.Result.Err -> throw OpFailure("encode_text", r.code, r.body)
+            }.also { condCache = it }
         }
 
         // ⭐ The switch, not the wire, decides. A photo wired with `start_from`
@@ -422,7 +570,7 @@ class SdSampler(
 
         if (photo == null) {
             ctx.say(ctx.android?.getString(R.string.log_rendering) ?: "rendering")
-            val latent = sample(ctx, p, cond, null, w, h, aspect)
+            val latent = sample(ctx, p, cond(), null, w, h, aspect)
             return VaeDecodeNode.decode(ctx, latent, w, h, aspect)
         }
 
@@ -437,23 +585,31 @@ class SdSampler(
             featherFrac = num("feather").toFloat(),
         )
 
-        // ⭐⭐⭐ **A chain through a node a person must act on**
-        // (`docs/ARCHITECTURE.md`, "Chains"). A GENERATED picture is not known
-        // until it is made, so:
-        //  - nothing painted on it yet  -> stop here and say so; upstream is
-        //    rendered and cached, and the next Run carries on;
-        //  - painted on a DIFFERENT one -> stop by name, never repaint the same
-        //    coordinates on a picture they were not drawn on.
-        // ⚠ A photo is fixed, so neither applies: a new photo clears the mask.
-        // ⚠ Padding alone is a legitimate mask — an outpaint needs no painting.
+        // ⭐⭐⭐ **An inpaint ALWAYS needs a mask — no exceptions, no silent
+        // fallback.** Rule changed 2026-09-19, at the user's ask, twice in one
+        // day: a first attempt made an empty mask mean "everything" and ran
+        // unattended; that was reverted because the person still wanted to be
+        // STOPPED and shown the editor. This is the second correction —
+        // *"lets not do the full masking thing for inpaint. instead if user
+        // doesnt mask just show error saying nothing masked, this should be
+        // always true for inpaint nodes"* — dropping the OLD rule too, which
+        // only refused when the picture came from a chain
+        // (`ctx.ancestorTypes.any { isSampler(it) }`) and silently ran a
+        // PHOTO-sourced inpaint with nothing painted as a plain re-render.
+        // ⚠ Padding is still the one exception: an outpaint frame hanging off
+        // the photo IS the mask, and needs no painting.
+        val padded = paddingOf(p) != null
+        if (inpaint && stored.isEmpty && !padded) {
+            throw NeedsInput(
+                ctx.android?.getString(R.string.log_repaint_prompt)
+                    ?: "nothing masked — paint an area, then Run again"
+            )
+        }
+        // ⚠⚠ Still gated to a CHAINED picture, unlike the check above: a plain
+        // photo's mask is cleared the moment the photo changes
+        // ([Graph.withNewPicture]), so this state is only reachable when the
+        // picture is a GENERATED one that re-rendered under a painted mask.
         if (inpaint && ctx.ancestorTypes.any { isSampler(it) }) {
-            val padded = paddingOf(p) != null
-            if (stored.isEmpty && !padded) {
-                throw NeedsInput(
-                    ctx.android?.getString(R.string.log_repaint_prompt)
-                        ?: "frame and paint the area to redo on the new picture, then Run again"
-                )
-            }
             val on = p[MaskNode.PAINTED_ON].orEmpty()
             if (!stored.isEmpty && on.isNotBlank() && on != photo.id) {
                 throw NeedsInput(
@@ -506,8 +662,8 @@ class SdSampler(
 
         if (!masking) {
             ctx.say(ctx.android?.getString(R.string.log_reimagining) ?: "re-imagining the picture")
-            val base = encode(ctx, padToCanvas(frame, w, h), ENCODE_SEED, w, h)
-            val latent = sample(ctx, p, cond, base, w, h, aspect)
+            val base = encode(ctx, ImageStore.encodePng(padToCanvas(frame, w, h)), ENCODE_SEED, w, h)
+            val latent = sample(ctx, p, cond(), base, w, h, aspect)
             return VaeDecodeNode.decode(ctx, latent, w, h, aspect)
         }
 
@@ -544,32 +700,86 @@ class SdSampler(
             if (painted.isEmpty) ctx.android?.getString(R.string.log_filling_padding) ?: "filling the padding"
             else ctx.android?.getString(R.string.log_repainting_marked) ?: "repainting the area you marked"
         )
-        val base = encode(ctx, padToCanvas(cut.image, w, h), ENCODE_SEED, w, h)
-        val repainted = sample(ctx, p, cond, base, w, h, aspect)
+        val imagePng = ImageStore.encodePng(padToCanvas(cut.image, w, h))
+        // ⚠ On the CANVAS, black outside the aspect rectangle: that is the
+        // part the decode cuts away, so it keeps the base.
+        val maskPng = ImageStore.encodePng(padToCanvas(cut.mask, w, h))
+        // ⭐⭐⭐ **Klein's masked redraw — TRUE inpainting, and neither blend is
+        // reachable from here.** The engine takes the mask itself (ABI 3's
+        // `mask_image`: white is regenerated, black keeps the init image) with
+        // the base ALSO bound as a clean reference latent, so it understands
+        // both the hole and the picture around it.
+        //
+        // ⚠⚠ `PipelineDit` names `mask_latent_blend` zero times and DiT refuses
+        // every decomposed op, so the per-step blend and the `/latent_blend`
+        // below are not choices we are declining — they do not exist on this
+        // path. What DOES stay is the pixel composite at the end of this
+        // function: a VAE round trip is not pixel-exact, so without it the
+        // unpainted area drifts in colour and the patch stops joining up
+        // (the seam bug of 2026-09-15).
+        //
+        // ⚠ Klein only. Z-Image reaches `PipelineDit` too and its mask is NOT
+        // gated there, but `native_edit` is Klein-only, so Z-Image would get a
+        // masked img2img with no reference — the mechanism without the quality.
+        // It is kept out of the picker instead of being offered as a lesser
+        // thing that looks the same. `docs/MODELS.md` §9.
+        if (family.dit) {
+            val patchBmp = runDitMasked(ctx, node, p, prompt, imagePng, maskPng, w, h)
+            return finishInpaint(ctx, node, p, src, frame, frameRect, cut, patchBmp)
+        }
+
+        val base = encode(ctx, imagePng, ENCODE_SEED, w, h)
+        // ⭐⭐ The picture and mask go to `sample` as well. A 9-channel inpaint
+        // checkpoint conditions on them and SEES the hole it fills; every other
+        // model's backend drops them (`Ops.sample`), so nothing here branches
+        // on which kind of checkpoint is loaded — the model the node names is
+        // the whole choice (the user's call, 2026-09-19). The blend below then
+        // runs either way: over a 9-channel render it only re-asserts the
+        // unmasked area, which that model already kept.
+        val repainted = sample(ctx, p, cond(), base, w, h, aspect, imagePng, maskPng)
 
         // ⚠⚠ `base` then `repainted`: the mask's WHITE area is where the new
         // pixels show through. The other way round replaces everything EXCEPT
         // what was painted — a plausible picture and a silent mistake.
-        // ⚠ On the CANVAS, black outside the aspect rectangle: that is the
-        // part the decode cuts away, so it keeps the base.
         val blended = when (
-            val r = ctx.host.latentBlend(base, repainted, ImageStore.encodePng(padToCanvas(cut.mask, w, h)))
+            val r = ctx.host.latentBlend(base, repainted, maskPng)
         ) {
             is Ops.Result.Ok -> r.value.handle
             is Ops.Result.Err -> throw OpFailure("latent_blend", r.code, r.body)
         }
         val patch = VaeDecodeNode.decode(ctx, blended, w, h, aspect)
         val patchBmp = ctx.images.get(patch.id)
-            ?: throw IllegalStateException("node \"${node.id}\": 渲染结果已从存储中消失")
+            ?: throw IllegalStateException("node \"${node.id}\": the render vanished from the store")
+        return finishInpaint(ctx, node, p, src, frame, frameRect, cut, patchBmp)
+    }
 
-        // ⭐⭐ The patch goes back where it was cut from, blended along the mask
-        // rather than pasted as a rectangle — the seam is the whole reason the
-        // inpaint output "did not join up with the original" (2026-09-15).
+    /**
+     * ⭐⭐ The patch goes back where it was cut from, blended along the mask
+     * rather than pasted as a rectangle — the seam is the whole reason the
+     * inpaint output "did not join up with the original" (2026-09-15).
+     *
+     * ⚠⚠ **ONE function, two callers**: the SD path above and Klein's masked
+     * redraw. They must agree, and two hand-rolled composites would stop
+     * agreeing — the rule `CLAUDE.md` states and `clipNodes` broke. It is the
+     * only stage of the three that a DiT render still needs, because a VAE
+     * round trip is not pixel-exact and the unpainted area would otherwise
+     * drift.
+     */
+    private fun finishInpaint(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        src: android.graphics.Bitmap,
+        frame: android.graphics.Bitmap,
+        frameRect: Frame,
+        cut: MaskCropNode.Cut,
+        patchBmp: android.graphics.Bitmap,
+    ): Value {
         val dst = android.graphics.RectF(
             cut.rect[0].toFloat(), cut.rect[1].toFloat(),
             (cut.rect[0] + cut.rect[2]).toFloat(), (cut.rect[1] + cut.rect[3]).toFloat(),
         )
-        val out = if (!flag(PasteNode.STITCH)) {
+        val out = if (!p[PasteNode.STITCH].equals("true", ignoreCase = true)) {
             InpaintPixels.composite(frame, patchBmp, dst, cut.mask)
         } else {
             stitch(src, frame, frameRect, patchBmp, dst, cut.mask)
@@ -626,15 +836,181 @@ class SdSampler(
         return InpaintPixels.composite(base, patch, into, mask)
     }
 
+    /**
+     * ⭐⭐ A DiT render: ONE `/generate`, the text and (for image to image) the
+     * framed picture in, the picture out. Their engine owns the text encoder,
+     * the loop and the VAE, so there is no conditioning or latent to hand
+     * between ops ([Family.dit]).
+     *
+     * ⚠ The size snaps to the engine's grid here too: a saved flow or a typed
+     * param off the 256-px grid would otherwise reach the engine as a size it
+     * was never verified at.
+     */
+    /**
+     * ⭐⭐⭐ Klein's masked redraw. Returns the repainted CANVAS, which the
+     * caller composites back exactly as it does an SD one — same
+     * [finishInpaint], same seam.
+     *
+     * ⚠⚠ No `/encode_text`, no `/sample`, no `/vae_decode`, no
+     * `/latent_blend`: the DiT backend answers all four with "DiT engine owns
+     * text encoding", so this is one `/generate` carrying the picture and the
+     * mask. That is not a shortcut — it is the only path the engine offers,
+     * and it is the better one (`docs/MODELS.md` §9).
+     *
+     * ⚠ The image and mask are already the CANVAS-padded cut the SD path
+     * built, so the engine sees exactly the frame the user painted on.
+     */
+    private suspend fun runDitMasked(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        prompt: Value.Prompt,
+        imagePng: ByteArray,
+        maskPng: ByteArray,
+        w: Int,
+        h: Int,
+    ): android.graphics.Bitmap {
+        ctx.say("repainting the area you marked")
+        val r = ctx.host.generate(
+            prompt = prompt.positive,
+            negative = prompt.negative,
+            steps = p["steps"]?.toIntOrNull() ?: 4,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: 1.0,
+            seed = p["seed"]?.toIntOrNull() ?: 0,
+            width = w,
+            height = h,
+            imagePng = imagePng,
+            maskPng = maskPng,
+            denoise = p["denoise"]?.toDoubleOrNull() ?: 0.65,
+            onProgress = ctx.onProgress,
+        )
+        val out = when (r) {
+            is Ops.Result.Ok -> r.value
+            is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
+        }
+        return android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
+            ?: throw IllegalStateException("node \"${node.id}\": the engine's picture would not decode")
+    }
+
+    private suspend fun runDit(
+        ctx: NodeCtx,
+        node: Node,
+        p: Map<String, String>,
+        prompt: Value.Prompt,
+        photo: Value.Image?,
+        reference: Value.Image?,
+        w0: Int,
+        h0: Int,
+    ): Value {
+        // ⚠ [ModelCatalog.ditSnap], not a local copy: the size control offers
+        // only grid values and this must agree with it (see DIT_SHAPES).
+        val w = ModelCatalog.ditSnap(w0)
+        val h = ModelCatalog.ditSnap(h0)
+        val png = photo?.let {
+            val src = ctx.images.get(it.id)
+                ?: throw IllegalStateException("node \"${node.id}\": image ${it.id} is no longer in the store")
+            val (frame, _) = CropNode.render(
+                src,
+                p["x"]?.toFloatOrNull() ?: 0f, p["y"]?.toFloatOrNull() ?: 0f,
+                p["w"]?.toFloatOrNull() ?: 1f, p["h"]?.toFloatOrNull() ?: 1f,
+                w, h, p[CropNode.PAD] ?: CropNode.PAD_BLACK,
+            )
+            ImageStore.encodePng(frame)
+        }
+        // ⭐⭐ The reference goes over the wire at its OWN size — no
+        // [CropNode.render], deliberately. `image` above is fitted to the
+        // canvas because it becomes the init latent; a reference is VAE-encoded
+        // separately and positioned by FLUX.2's reference-token RoPE, so
+        // cropping it to the output would discard its framing for nothing.
+        val referencePng = reference?.let {
+            val bmp = ctx.images.get(it.id)
+                ?: throw IllegalStateException(
+                    "node \"${node.id}\": reference image ${it.id} is no longer in the store"
+                )
+            // ⚠⚠ Target size **0, 0** — the region at its OWN pixels, the same
+            // way an inpaint keeps the photo's own resolution. Passing `w, h`
+            // here would fit the reference to the output canvas, which is
+            // exactly what a reference must not be.
+            val (region, _) = CropNode.render(
+                bmp,
+                p[REF_X]?.toFloatOrNull() ?: 0f, p[REF_Y]?.toFloatOrNull() ?: 0f,
+                p[REF_W]?.toFloatOrNull() ?: 1f, p[REF_H]?.toFloatOrNull() ?: 1f,
+                0, 0, CropNode.PAD_BLACK,
+            )
+            ImageStore.encodePng(boundReference(region))
+        }
+        ctx.say(
+            when {
+                referencePng != null && png == null -> "rendering from your reference"
+                referencePng != null -> "re-imagining the picture with your reference"
+                png == null -> "rendering"
+                else -> "re-imagining the picture"
+            }
+        )
+        val r = ctx.host.generate(
+            prompt = prompt.positive,
+            negative = prompt.negative,
+            steps = p["steps"]?.toIntOrNull() ?: 4,
+            cfg = p["cfg"]?.toDoubleOrNull() ?: 1.0,
+            seed = p["seed"]?.toIntOrNull() ?: 0,
+            width = w,
+            height = h,
+            imagePng = png,
+            denoise = p["denoise"]?.toDoubleOrNull() ?: 0.65,
+            referencePngs = listOfNotNull(referencePng),
+            onProgress = ctx.onProgress,
+        )
+        val out = when (r) {
+            is Ops.Result.Ok -> r.value
+            is Ops.Result.Err -> throw OpFailure("generate", r.code, r.body)
+        }
+        val bmp = android.graphics.BitmapFactory.decodeByteArray(out.png, 0, out.png.size)
+            ?: throw IllegalStateException("node \"${node.id}\": the engine's picture would not decode")
+        return Value.Image(ctx.images.put(bmp), bmp.width, bmp.height)
+    }
+
+    /**
+     * ⭐⭐⭐ A reference small enough to VAE-encode. **Aspect preserved, area
+     * bounded** — the two are different promises and only the first one was
+     * ever made.
+     *
+     * ⚠⚠⚠ Measured on device 2026-09-20, and it is not a precaution. Every
+     * VAE ENCODE takes a full-frame buffer sized by the picture's area, and
+     * `vae_tile_size` does NOT help: the engine logged
+     * `passes=4 ... tile_size=64 -> TILED` and still allocated **1536 MB of
+     * VRAM and 524 MB of RAM per encode** at 1024x1024. Tiling governs the
+     * DECODE only. At 512x512 the same buffer is 288 MB.
+     *
+     * A Klein edit encodes the base twice (init latent + clean reference) and
+     * every reference once, so a 1024x1024 edit with one reference asked for
+     * three of those and the app was reaped as foreground TOP, three times.
+     *
+     * ⇒ The one input this app can shrink without changing what is rendered
+     * is the REFERENCE: it is context the model reads, never the output, so
+     * [REF_MAX_EDGE] pixels is ample. The base cannot shrink — it IS the
+     * canvas.
+     *
+     * ⚠ Untouched when it is already small, so a modest reference costs
+     * nothing and keeps its exact pixels.
+     */
+    private fun boundReference(src: android.graphics.Bitmap): android.graphics.Bitmap {
+        val longest = maxOf(src.width, src.height)
+        if (longest <= REF_MAX_EDGE) return src
+        val scale = REF_MAX_EDGE.toFloat() / longest
+        val w = (src.width * scale).toInt().coerceAtLeast(1)
+        val h = (src.height * scale).toInt().coerceAtLeast(1)
+        return android.graphics.Bitmap.createScaledBitmap(src, w, h, true)
+    }
+
     /** ⚠ Never put in the store: [ImageStore.encodePng] says why. */
     private suspend fun encode(
         ctx: NodeCtx,
-        bmp: android.graphics.Bitmap,
+        png: ByteArray,
         seed: Int,
         w: Int,
         h: Int,
     ): String = when (
-        val r = ctx.host.vaeEncode(ImageStore.encodePng(bmp), seed, w, h)
+        val r = ctx.host.vaeEncode(png, seed, w, h)
     ) {
         is Ops.Result.Ok -> r.value.handle
         is Ops.Result.Err -> throw OpFailure("vae_encode", r.code, r.body)
@@ -648,6 +1024,8 @@ class SdSampler(
         w: Int,
         h: Int,
         aspect: String?,
+        inpaintImage: ByteArray? = null,
+        inpaintMask: ByteArray? = null,
     ): String {
         val r = ctx.host.sample(
             steps = p["steps"]?.toIntOrNull() ?: 20,
@@ -660,6 +1038,8 @@ class SdSampler(
             scheduler = p["scheduler"].orEmpty(),
             condHandle = cond,
             aspect = aspect,
+            inpaintImage = inpaintImage,
+            inpaintMask = inpaintMask,
             onProgress = ctx.onProgress,
         )
         return when (r) {

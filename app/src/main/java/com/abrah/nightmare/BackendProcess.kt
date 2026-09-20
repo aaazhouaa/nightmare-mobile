@@ -29,10 +29,24 @@ object BackendProcess {
     private const val TAG = "BackendProcess"
     /** ⚠ Internal, not private: [DeviceProbe] runs the same binary with `--device_info`. */
     const val EXECUTABLE = "libstable_diffusion_core.so"
+
+    /** ⭐ The DiT engine the backend dlopens for FLUX.2 / Z-Image (upstream local-dream 3.0). */
+    const val DIT_ENGINE = "libdit_engine.so"
+    /** ⭐ Where its Hexagon skels ride in the APK — copied into the runtime dir. */
+    const val DIT_ASSETS = "ditlibs"
     private const val RUNTIME_DIR = "qnnruntime"
 
     @Volatile
     private var process: Process? = null
+
+    /**
+     * ⚠ Set from [start]'s `context`, read by [stop] and the monitor thread —
+     * both need one to drive [BackendKeepAliveService] and neither is handed
+     * one directly. `applicationContext`, so it outlives whichever Activity
+     * happened to call [start].
+     */
+    @Volatile
+    private var appContext: Context? = null
 
     /** Newest-first, same convention as the harness log. */
     val output = ArrayDeque<String>()
@@ -104,10 +118,19 @@ object BackendProcess {
     @Volatile
     private var runtimeUnpacked: File? = null
 
+    /**
+     * ⭐ Where the QNN runtime, the DiT skels and the downloaded DiT engine all
+     * live: INTERNAL storage, which is the only writable place a `.so` can be
+     * mapped `PROT_EXEC` from. ⚠ Separate from [prepareRuntime] because
+     * [DitEngine] writes here before any backend has launched, and unpacking
+     * 33 MB of QNN libraries is not what an installer wants.
+     */
+    fun runtimeDir(context: Context): File = File(context.filesDir, RUNTIME_DIR)
+
     @Synchronized
     fun prepareRuntime(context: Context): File {
         runtimeUnpacked?.let { return it }
-        val dir = File(context.filesDir, RUNTIME_DIR).apply { mkdirs() }
+        val dir = runtimeDir(context).apply { mkdirs() }
         val all = context.assets.list("qnnlibs").orEmpty().toList()
         check(all.isNotEmpty()) {
             "no qnnlibs in assets — run tools/stage_backend.ps1 before building"
@@ -132,6 +155,21 @@ object BackendProcess {
             // filesystem -- so it is atomic and never truncates `dst`.
             check(tmp.renameTo(dst)) { "cannot replace ${dst.absolutePath}" }
         }
+        // ⭐ The DiT engine's Hexagon skels (`libggml-htp-v79/v81.so`), beside
+        // the QNN ones on the DSP search path — upstream's `ditlibs`. FastRPC
+        // hands them to the DSP by bare name; nothing on the CPU loads them.
+        // ⚠ Absent from assets is not an error: a build staged without the
+        // engine simply cannot run a DiT model, and says so at launch.
+        for (n in context.assets.list(DIT_ASSETS).orEmpty()) {
+            val dst = File(dir, n)
+            val tmp = File(dir, "$n.tmp")
+            context.assets.open("$DIT_ASSETS/$n").use { input ->
+                tmp.outputStream().use { input.copyTo(it) }
+            }
+            tmp.setReadable(true, false)
+            tmp.setExecutable(true, false)
+            check(tmp.renameTo(dst)) { "cannot replace ${dst.absolutePath}" }
+        }
         Log.i(TAG, "runtime: ${names.size}/${all.size} libs (${DeviceProbe.caps()}) in ${dir.absolutePath}")
         runtimeUnpacked = dir
         return dir
@@ -140,6 +178,30 @@ object BackendProcess {
     /** Where a model must live for the app to reach it. */
     fun modelsDir(context: Context): File =
         File(context.getExternalFilesDir(null), "models")
+
+    /**
+     * ⭐ The diagnostic override in `Download/nightmare-spillfill.txt` — a
+     * plain integer (bytes), or null when the file is absent or unreadable
+     * as one. See the note where it is read, in [start]'s `env`.
+     */
+    private fun readSpillFillOverride(context: Context): String? = runCatching {
+        File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOWNLOADS,
+            ),
+            "nightmare-spillfill.txt",
+        ).takeIf { it.isFile }?.readText()?.trim()?.takeIf { it.toLongOrNull() != null }
+    }.getOrNull()
+
+    /**
+     * ⭐ Where a textual-inversion embedding must live for the backend to
+     * find it. `main.cpp` computes this itself as `parent_path().parent_path()`
+     * of `--model_dir`, i.e. two directories above `modelsDir/<modelId>/` —
+     * which lands here, a sibling of [modelsDir] rather than inside it. One
+     * embeddings directory serves every model, loaded fresh at every launch.
+     */
+    fun embeddingsDir(context: Context): File =
+        File(context.getExternalFilesDir(null), "embeddings")
 
     sealed interface Start {
         data object Ok : Start
@@ -211,6 +273,19 @@ object BackendProcess {
                 // client sends, so the mismatch renders the wrong size and
                 // reports success.
                 val spec = ModelCatalog.byId(modelId)
+                val dit = !upscalerOnly && spec?.isDit == true
+                // ⚠⚠ The engine is DOWNLOADED, not shipped (`DitEngine`), so
+                // "missing" is an ordinary state and not a broken build: an
+                // app update replaces the native dir, and before 1.5.502 this
+                // file lived there. ⭐ The callers ask `DitEngine.isInstalled`
+                // first and offer the download (`modelsPresentOrAsk`); this is
+                // the backstop for a path that did not, and it names the fix.
+                if (dit && !DitEngine.isInstalled(context)) {
+                    return@withContext Start.Failed(
+                        "the DiT engine ($DIT_ENGINE) is not installed — " +
+                            "download it from the model this flow names"
+                    )
+                }
 
                 // ⚠⚠ **A missing patch is FATAL here, and that is a deliberate
                 // departure from both upstreams.** `local-dream`'s
@@ -244,6 +319,15 @@ object BackendProcess {
                         add("--type"); add(ModelCatalog.backendTypeOf(modelId))
                         add("--model_dir"); add(model.absolutePath)
                     }
+                    // ⭐ Always the runtime dir. ⚠ It used to be the NATIVE
+                    // dir for DiT types (upstream BackendService's shape),
+                    // because that is where `libdit_engine.so` shipped; since
+                    // 1.5.502 the engine is downloaded into the runtime dir
+                    // instead, so one path serves both. ⭐ That also means
+                    // `qnn_runtime::init` now finds `libQnnHtp.so` by path in a
+                    // DiT process rather than falling back to the bare soname
+                    // (`backend-patches/008`) — the fallback stays as a
+                    // backstop, but nothing routine depends on it any more.
                     add("--lib_dir"); add(runtime.absolutePath)
                     add("--port"); add(port.toString())
                     // ⚠⚠ Not a tuning knob. `--lowram` loads and releases each
@@ -261,17 +345,52 @@ object BackendProcess {
                     // above.
                     if (!upscalerOnly && patch != null) { add("--patch"); add(patch.absolutePath) }
                 }
-                val env = mapOf(
-                    "LD_LIBRARY_PATH" to listOf(
-                        runtime.absolutePath,
-                        "/system/lib64",
-                        "/vendor/lib64",
-                        "/vendor/lib64/egl",
-                    ).joinToString(":"),
-                    "DSP_LIBRARY_PATH" to runtime.absolutePath,
-                )
+                val env = buildMap {
+                    put(
+                        "LD_LIBRARY_PATH",
+                        listOf(
+                            runtime.absolutePath,
+                            "/system/lib64",
+                            "/vendor/lib64",
+                            "/vendor/lib64/egl",
+                        ).joinToString(":"),
+                    )
+                    put("DSP_LIBRARY_PATH", runtime.absolutePath)
+                    // ⭐⭐ ggml-hexagon asks FastRPC for its skel by bare name, so
+                    // the runtime dir holding the skels AND the platform
+                    // defaults must both be on the DSP search path — dropping
+                    // the defaults leaves the skel unable to resolve what it
+                    // links against. Upstream's exact list.
+                    if (dit) {
+                        val dsp = listOf(
+                            runtime.absolutePath, "/vendor/lib/rfsa/adsp", "/vendor/dsp/cdsp", "/dsp",
+                        ).joinToString(";")
+                        put("ADSP_LIBRARY_PATH", dsp)
+                        put("DSP_LIBRARY_PATH", dsp)
+                    }
+                    // ⭐ A device-side diagnostic knob, reachable over adb with
+                    // no rebuild: `PipelineAnima.hpp`'s lowram path
+                    // (`loadUnetPartsIfNeeded`, the ONLY path this app ever
+                    // takes for Anima) shares a spill-fill buffer between
+                    // `unet_part1`/`unet_part2` sized from a HARDCODED constant
+                    // tuned on this project's own v79 device — `spillFillGroupBytes()`
+                    // already reads `LOCALDREAM_ANIMA_SPILL_FILL_BYTES` as an
+                    // override, unconditionally, but nothing ever SET it.
+                    // Reported 2026-09-18 (GitHub #2): `unet_part2` fails to
+                    // init on a v75 (SM8650) device -- plausibly because that
+                    // arch needs a different size. `adb shell "echo
+                    // <bytes> > /sdcard/Download/nightmare-spillfill.txt"`
+                    // lets someone try a different value with no APK change;
+                    // absent, this is a no-op and nothing here changes.
+                    readSpillFillOverride(context)?.let {
+                        put("LOCALDREAM_ANIMA_SPILL_FILL_BYTES", it)
+                    }
+                }
 
                 say("exec: ${cmd.joinToString(" ")}")
+                env["LOCALDREAM_ANIMA_SPILL_FILL_BYTES"]?.let {
+                    say("spill-fill override from Download/nightmare-spillfill.txt: $it bytes")
+                }
                 val p = ProcessBuilder(cmd).apply {
                     directory(File(nativeDir))
                     redirectErrorStream(true)
@@ -288,6 +407,11 @@ object BackendProcess {
                     ModelCatalog.backendTypeOf(modelId), modelId, res.width, res.height,
                 )
                 upscalerServer = upscalerOnly
+                appContext = context.applicationContext
+                // ⭐⭐ Hold the process priority up for as long as this backend
+                // is resident — not just while a render is in flight. See
+                // [BackendKeepAliveService].
+                BackendKeepAliveService.start(context.applicationContext)
                 monitor(p)
                 Start.Ok
             } catch (e: Exception) {
@@ -340,6 +464,12 @@ object BackendProcess {
                     process = null
                     launchedKey = null
                     upscalerServer = false
+                    // ⚠ Same guard as the rest of this block: only when THIS
+                    // is still the live process. A relaunch already replaced
+                    // it and already re-started the keep-alive service for
+                    // the new one -- stopping it here would drop the priority
+                    // out from under a process that is still running.
+                    appContext?.let { BackendKeepAliveService.stop(it) }
                 }
             }
             say("[exited $code]")
@@ -354,6 +484,7 @@ object BackendProcess {
             upscalerServer = false
             was
         }
+        appContext?.let { BackendKeepAliveService.stop(it) }
         p?.let {
             say("[stopping]")
             it.destroy()

@@ -72,6 +72,19 @@ data class ToolRow(
     val progress: ModelInstaller.Progress? = null,
 )
 
+/**
+ * ⭐ One textual-inversion embedding, on the Tools tab beside the segmenter.
+ *
+ * ⚠ Upstream `local-dream` has an Embedding Manager (import/list/delete a
+ * `.safetensors` by name); DreamUI dropped it along with `config.json` and
+ * the rest of its Kotlin-layer simplifications. The BACKEND never lost the
+ * feature — `text_encoder->loadTextualInversions()` already loads whatever is
+ * in `embeddings/` (two directories above `--model_dir`) at launch and
+ * matches a prompt TOKEN against a file's name — so this is purely the app
+ * half growing back. `docs/ARCHITECTURE.md`.
+ */
+data class EmbeddingRow(val name: String, val bytes: Long)
+
 data class UpscalerRow(
     val spec: UpscalerSpec,
     /** ⚠ Null when no published tier loads on this HTP — the card must say so. */
@@ -188,6 +201,8 @@ fun ModelsScreen(
     upscalers: List<UpscalerRow> = emptyList(),
     onInstallUpscaler: (UpscalerSpec) -> Unit = {},
     onDeleteUpscaler: (UpscalerSpec) -> Unit = {},
+    /** ⭐ Bring your own upscaler `.bin`. Null hides the button. */
+    onImportUpscaler: (() -> Unit)? = null,
     /**
      * ⭐⭐ The video models. Null renders no tab at all — which is what a
      * preview, a golden, and a phone whose chip cannot run them all want.
@@ -205,6 +220,14 @@ fun ModelsScreen(
     segmenter: ToolRow? = null,
     onInstallSegmenter: () -> Unit = {},
     onDeleteSegmenter: () -> Unit = {},
+    /**
+     * ⭐ The installed embeddings, on the Tools tab. Null hides the whole
+     * section — same convention as [segmenter] and [video] — which is what a
+     * preview and a golden with no picker want.
+     */
+    embeddings: List<EmbeddingRow>? = null,
+    onImportEmbedding: (() -> Unit)? = null,
+    onDeleteEmbedding: ((String) -> Unit)? = null,
 ) {
     // ⚠⚠ The confirm is intercepted HERE rather than inside the card, so the
     // card stays a dumb row and there is exactly one place that can delete a
@@ -295,6 +318,7 @@ fun ModelsScreen(
     // 8.6 GB on a single tap. Reported from the phone, 2026-09-13.
     var deletingVideo by remember { mutableStateOf(false) }
     var deletingSegmenter by remember { mutableStateOf(false) }
+    var deletingEmbedding by remember { mutableStateOf<String?>(null) }
 
     // ⚠ No header and no `statusBarsPadding` any more: [LibraryScreen] owns
     // both, because this screen is now a TAB rather than a whole screen. A
@@ -361,11 +385,11 @@ fun ModelsScreen(
             labels = families.map { it.label } +
                 (if (hasUpscalers) listOf(stringResource(R.string.upscalers)) else emptyList()) +
                 (if (video != null) listOf(stringResource(R.string.video)) else emptyList()) +
-                (if (segmenter != null) listOf(stringResource(R.string.tools)) else emptyList()),
+                (if (segmenter != null || embeddings != null) listOf(stringResource(R.string.tools)) else emptyList()),
             modifier = Modifier.padding(top = 8.dp).fillMaxSize(),
         ) { page ->
             // ⚠ LAST again, after Video, so adding it moved no existing index.
-            if (segmenter != null &&
+            if ((segmenter != null || embeddings != null) &&
                 page == families.size + (if (hasUpscalers) 1 else 0) + (if (video != null) 1 else 0)
             ) {
                 LazyColumn(
@@ -379,7 +403,38 @@ fun ModelsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    item { ToolCard(segmenter, busy, onInstallSegmenter, onCancel) { deletingSegmenter = true } }
+                    if (segmenter != null) {
+                        item { ToolCard(segmenter, busy, onInstallSegmenter, onCancel) { deletingSegmenter = true } }
+                    }
+                    // ⭐ Embeddings, on the same tab as the segmenter — both are
+                    // auxiliary to a checkpoint rather than one, and neither has
+                    // a Use button.
+                    if (onImportEmbedding != null) {
+                        item {
+                            ImportCallout(
+                                title = stringResource(R.string.embeddings_title),
+                                body = stringResource(R.string.embeddings_body),
+                                enabled = !busy,
+                                onImport = onImportEmbedding,
+                            )
+                        }
+                    }
+                    if (embeddings != null) {
+                        items(embeddings, key = { it.name }) { row ->
+                            DownloadCard(
+                                title = row.name,
+                                emphasised = false,
+                                status = stringResource(R.string.installed_mb, mb(row.bytes)),
+                                detail = "",
+                                progress = null,
+                            ) {
+                                OutlinedButton(
+                                    onClick = { deletingEmbedding = row.name },
+                                    enabled = !busy,
+                                ) { Text(stringResource(R.string.delete)) }
+                            }
+                        }
+                    }
                 }
                 return@SwipeTabs
             }
@@ -407,6 +462,18 @@ fun ModelsScreen(
                             style = LogTextStyle,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    // ⭐ Bring your own — a bare `.bin`, same shape as
+                    // checkpoint import. Reported 2026-09-18.
+                    if (onImportUpscaler != null) {
+                        item {
+                            ImportCallout(
+                                title = stringResource(R.string.import_upscaler_title),
+                                body = stringResource(R.string.import_upscaler_body),
+                                enabled = !busy,
+                                onImport = onImportUpscaler,
+                            )
+                        }
                     }
                     items(upscalers, key = { it.spec.id }) { row ->
                         UpscalerCard(row, busy, onInstallUpscaler, onCancel) {
@@ -460,6 +527,15 @@ fun ModelsScreen(
                             // step, and killed by Android while other apps were
                             // in use. Said here, before 4 GB is downloaded.
                             Family.ANIMA -> stringResource(R.string.r2_models_hint_anima)
+                            // ⚠ Plain files straight into place, so no unpack
+                            // headroom — but only an 8 Elite or newer runs them.
+                            Family.FLUX2 -> "About 6.7 GB. 8 Elite or newer only. Any size " +
+                                "from 512 to 2048. Use Wi-Fi."
+                            // ⚠⚠ Said before 8.8 GB is downloaded: upstream's own
+                            // build crashes on the dev phone (8 Elite), and works
+                            // on some 8 Elite Gen 5 phones (the user, 2026-09-19).
+                            Family.ZIMAGE -> "About 8.8 GB. 8 Elite or newer only. Still " +
+                                "maturing: it crashes on some 8 Elite phones. Use Wi-Fi."
                             // ⚠ The free-space figure is the one that surprises:
                             // the archive and its unpacked copy are both on disk
                             // at once, so a 3.5 GB download needs ~7.5 GB free.
@@ -499,6 +575,16 @@ fun ModelsScreen(
                 stringResource(R.string.r2_models_segmenter_restore, mb(segmenter.bytes)),
             onConfirm = onDeleteSegmenter,
             onDismiss = { deletingSegmenter = false },
+        )
+    }
+
+    deletingEmbedding?.let { name ->
+        ConfirmDelete(
+            title = "Delete $name?",
+            body = "Any prompt naming it renders without that embedding — no error, " +
+                "just the ordinary tokens instead.",
+            onConfirm = { onDeleteEmbedding?.invoke(name) },
+            onDismiss = { deletingEmbedding = null },
         )
     }
 

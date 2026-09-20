@@ -482,6 +482,10 @@
     <string name="r2_recipe_inpaint_about">Paint over part of a photo and only that part is re-imagined. Tap the Mask node to paint.</string>
     <string name="r2_recipe_upscale_label">Upscale a photo</string>
     <string name="r2_recipe_upscale_about">A picture from the gallery, enlarged 4x. No checkpoint involved — the upscaler is its own small model, installed under Models.</string>
+    <string name="r2_recipe_t2v_label">Text to video</string>
+    <string name="r2_recipe_t2v_about">A prompt in, a 2 second clip out — 49 frames at 1024x640, on the NPU. Needs the video models installed; it does not use your checkpoint.</string>
+    <string name="r2_recipe_i2v_label">Image to video</string>
+    <string name="r2_recipe_i2v_about">A photo from the gallery, brought to life — 49 frames at 1024x640. Faster than text to video, and it needs three fewer models.</string>
     <string name="err_nothing_to_sweep">nothing to sweep — check the values</string>
     <string name="err_nothing_to_collect">nothing to collect — this graph makes no final picture</string>
     <string name="err_two_endings">two endings (%1$s) — a sweep needs one</string>
@@ -690,4 +694,21 @@
     <string name="node_sd_inpaint">Inpaint</string>
     <string name="embeddings_title">Embeddings</string>
     <string name="embeddings_body">A trained concept as a file, not a checkpoint — a .safetensors from Civitai or similar. Name it in a prompt to use it.</string>
+    <string name="delete_embedding_title">Delete %1$s?</string>
+    <string name="delete_embedding_body">Any prompt naming it renders without that embedding — no error, just the ordinary tokens instead.</string>
+    <string name="r2_models_hint_flux2">About 6.7 GB. 8 Elite or newer only. Any size from 512 to 2048. Use Wi-Fi.</string>
+    <string name="r2_models_hint_zimage">About 8.8 GB. 8 Elite or newer only. Still maturing: it crashes on some 8 Elite phones. Use Wi-Fi.</string>
+    <string name="err_only_safetensors">only .safetensors files are supported</string>
+    <string name="err_only_bin">only .bin files are supported</string>
+    <string name="log_imported_embedding">imported embedding %1$s</string>
+    <string name="log_deleted_embedding">deleted embedding %1$s</string>
+    <string name="log_imported_upscaler">imported upscaler %1$s</string>
+    <string name="toast_downloaded">%1$s downloaded</string>
+    <string name="service_model_loaded">Model loaded</string>
+    <string name="service_model_loaded_desc">keeping a loaded model in memory</string>
+    <string name="hint_drag_reference_region">drag the region on the reference</string>
+    <string name="inspector_dit_size_desc">a DiT model renders any of these directly — no reload, and a wider picture is a bigger one</string>
+    <string name="inspector_reference_region_desc">the part of this picture the model reads. It is not redrawn, and it keeps its own shape — it is never fitted to your output size.</string>
+    <string name="log_rendering_reference">rendering from your reference</string>
+    <string name="log_reimagining_reference">re-imagining the picture with your reference</string>
 </resources>

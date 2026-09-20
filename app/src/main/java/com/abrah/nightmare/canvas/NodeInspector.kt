@@ -787,7 +787,7 @@ internal fun NodeInspectorBody(
                 // ⚠ Says the one thing a person cannot see: this is free here,
                 // where on SDXL the same-looking control costs nothing either but
                 // on SD 1.5 the size below it costs a reload.
-                hint = "a DiT model renders any of these directly — no reload, and a wider picture is a bigger one",
+                hint = stringResource(R.string.inspector_dit_size_desc),
                 options = com.abrah.nightmare.ModelCatalog.DIT_SHAPES.keys.toList(),
                 // ⚠ Empty, not a guess, when a saved flow names a pair no shape
                 // offers — [ditShapeOf] returns null and nothing is highlighted.
@@ -865,8 +865,7 @@ internal fun NodeInspectorBody(
                 )
             }
             Text(
-                "the part of this picture the model reads. It is not redrawn, " +
-                    "and it keeps its own shape — it is never fitted to your output size.",
+                stringResource(R.string.inspector_reference_region_desc),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

@@ -917,12 +917,12 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
      */
     private fun downloadSucceeded(label: String) {
         DownloadNotice.done(getApplication(), label, ok = true)
-        toast("$label downloaded")
+        toast(str(R.string.toast_downloaded, label))
     }
 
     private fun downloadFailed(label: String, why: String) {
         DownloadNotice.done(getApplication(), label, ok = false, detail = why)
-        toast("$label failed — $why")
+        toast(str(R.string.toast_failed, label, why))
     }
 
     /** ⚠ Stopped by the user: no outcome to report, so the row simply goes. */
@@ -1641,19 +1641,19 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                     isCancelled = { cancelInstall },
                 )
                 viewModelScope.launch {
-                    say("installed ${com.abrah.nightmare.DitEngine.LABEL}")
+                    say(str(R.string.log_installed, com.abrah.nightmare.DitEngine.LABEL))
                     downloadSucceeded(com.abrah.nightmare.DitEngine.LABEL)
                 }
             } catch (e: ModelInstaller.Cancelled) {
                 viewModelScope.launch {
                     downloadCancelled()
-                    say("download cancelled", bad = true)
+                    say(str(R.string.log_download_cancelled), bad = true)
                 }
             } catch (e: Exception) {
                 viewModelScope.launch {
                     modelError = e.message ?: e.javaClass.simpleName
                     downloadFailed(com.abrah.nightmare.DitEngine.LABEL, modelError!!)
-                    say("install failed — $modelError", bad = true)
+                    say(str(R.string.log_install_failed, modelError ?: ""), bad = true)
                 }
             } finally {
                 viewModelScope.launch {
@@ -1708,7 +1708,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // should not.
                 val displayName = uriDisplayName(uri).orEmpty()
                 require(displayName.endsWith(".safetensors", ignoreCase = true)) {
-                    "only .safetensors files are supported"
+                    str(R.string.err_only_safetensors)
                 }
                 val dir = BackendProcess.embeddingsDir(ctx).apply { mkdirs() }
                 // ⚠⚠ `.name`, never the raw display name: a content provider's
@@ -1726,11 +1726,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 result.fold(
                     onSuccess = { name ->
-                        say("imported embedding $name")
+                        say(str(R.string.log_imported_embedding, name))
                         refreshEmbeddings()
                     },
                     onFailure = {
-                        modelError = "could not import that embedding — ${it.message}"
+                        modelError = str(R.string.err_import_failed, it.message ?: "")
                     },
                 )
             }
@@ -1742,7 +1742,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
         // this function into a raw `File(dir, name)` without stripping it to
         // its last segment first.
         val f = java.io.File(BackendProcess.embeddingsDir(getApplication()), java.io.File(name).name)
-        if (f.delete()) say("deleted embedding $name")
+        if (f.delete()) say(str(R.string.log_deleted_embedding, name))
         refreshEmbeddings()
     }
 
@@ -1779,7 +1779,7 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
                 // name that implies it is something it is not.
                 val displayName = uriDisplayName(uri).orEmpty()
                 require(displayName.endsWith(".bin", ignoreCase = true)) {
-                    "only .bin files are supported"
+                    str(R.string.err_only_bin)
                 }
                 val proposed = displayName.dropLast(4)
                 val name = java.io.File(proposed).name.let {
@@ -1793,11 +1793,11 @@ class HarnessViewModel(app: Application) : AndroidViewModel(app) {
             withContext(kotlinx.coroutines.Dispatchers.Main) {
                 result.fold(
                     onSuccess = { spec ->
-                        say("imported upscaler ${spec.label}")
+                        say(str(R.string.log_imported_upscaler, spec.label))
                         refreshUpscalers()
                     },
                     onFailure = {
-                        modelError = "could not import that upscaler — ${it.message}"
+                        modelError = str(R.string.err_import_failed, it.message ?: "")
                     },
                 )
             }

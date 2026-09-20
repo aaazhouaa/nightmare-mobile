@@ -452,6 +452,10 @@
     <string name="r2_recipe_inpaint_about">涂抹照片的一部分，仅该部分会被重新生成。点按蒙版节点开始涂抹。</string>
     <string name="r2_recipe_upscale_label">放大照片</string>
     <string name="r2_recipe_upscale_about">从相册选一张图，放大 4 倍。不需要 checkpoint——放大器是独立的小模型，在模型页安装。</string>
+    <string name="r2_recipe_t2v_label">文生视频</string>
+    <string name="r2_recipe_t2v_about">输入提示词，输出 2 秒视频短片——在 NPU 上生成 49 帧 1024x640 视频。需要安装视频模型；不使用你的 checkpoint。</string>
+    <string name="r2_recipe_i2v_label">图生视频</string>
+    <string name="r2_recipe_i2v_about">从相册选一张照片赋予其动态——生成 49 帧 1024x640 视频。比文生视频更快，且少需要 3 个模型。</string>
     <string name="err_nothing_to_sweep">没有可扫描的值——请检查填写</string>
     <string name="err_nothing_to_collect">没有可收集的结果——此流程不会产出最终图片</string>
     <string name="err_two_endings">有两个终点（%1$s）——扫描需要唯一终点</string>
@@ -659,4 +663,26 @@
     <string name="node_sd_inpaint">重绘</string>
     <string name="embeddings_title">嵌入（Embeddings）</string>
     <string name="embeddings_body">以文件形式训练的概念，而非完整模型权重（如来自 Civitai 等平台的 .safetensors 文件）。在提示词中直接引用其文件名即可使用。</string>
+    <string name="battery_title">保持后台渲染</string>
+    <string name="battery_body">此手机的电池管理可能会在应用处于后台时终止进程，导致渲染中断或已加载的模型被卸载。允许不受限制地在后台运行可防止此类情况发生。</string>
+    <string name="battery_allow">允许后台运行</string>
+    <string name="import_upscaler_title">导入放大模型</string>
+    <string name="import_upscaler_body">转换后的放大模型权重文件（.bin）。不检查架构——能加载就能用。</string>
+    <string name="delete_embedding_title">删除 %1$s？</string>
+    <string name="delete_embedding_body">任何包含该名称的提示词将在不使用该嵌入的情况下进行渲染——不会报错，仅作为普通词元处理。</string>
+    <string name="r2_models_hint_flux2">约 6.7 GB。仅限骁龙 8 至尊版（8 Elite）或更新芯片。支持 512 到 2048 任意尺寸。请使用 Wi-Fi。</string>
+    <string name="r2_models_hint_zimage">约 8.8 GB。仅限骁龙 8 至尊版或更新芯片。尚在适配中：在部分 8 Elite 手机上可能崩溃。请使用 Wi-Fi。</string>
+    <string name="err_only_safetensors">仅支持 .safetensors 文件</string>
+    <string name="err_only_bin">仅支持 .bin 文件</string>
+    <string name="log_imported_embedding">已导入嵌入 %1$s</string>
+    <string name="log_deleted_embedding">已删除嵌入 %1$s</string>
+    <string name="log_imported_upscaler">已导入放大模型 %1$s</string>
+    <string name="toast_downloaded">%1$s 下载完成</string>
+    <string name="service_model_loaded">模型已加载</string>
+    <string name="service_model_loaded_desc">正在后台保持已加载的模型常驻内存</string>
+    <string name="hint_drag_reference_region">在参考图上拖动选取区域</string>
+    <string name="inspector_dit_size_desc">DiT 模型可直接以这些尺寸渲染——无需重载，图像越宽尺寸越大</string>
+    <string name="inspector_reference_region_desc">模型读取的局部区域。该区域不会被重绘，且保持自身原始比例——绝不会被拉伸以适应输出尺寸。</string>
+    <string name="log_rendering_reference">正在依据参考图进行渲染</string>
+    <string name="log_reimagining_reference">正在结合参考图重新创作</string>
 </resources>

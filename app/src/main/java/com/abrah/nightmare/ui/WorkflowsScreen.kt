@@ -304,6 +304,8 @@ private fun recipeLabel(id: String, fallback: String): String = when (id) {
     "img2img" -> stringResource(R.string.r2_recipe_img2img_label)
     "inpaint" -> stringResource(R.string.r2_recipe_inpaint_label)
     "upscale" -> stringResource(R.string.r2_recipe_upscale_label)
+    "t2v" -> stringResource(R.string.r2_recipe_t2v_label)
+    "i2v" -> stringResource(R.string.r2_recipe_i2v_label)
     else -> fallback
 }
 
@@ -313,5 +315,7 @@ private fun recipeAbout(id: String, fallback: String): String = when (id) {
     "img2img" -> stringResource(R.string.r2_recipe_img2img_about)
     "inpaint" -> stringResource(R.string.r2_recipe_inpaint_about)
     "upscale" -> stringResource(R.string.r2_recipe_upscale_about)
+    "t2v" -> stringResource(R.string.r2_recipe_t2v_about)
+    "i2v" -> stringResource(R.string.r2_recipe_i2v_about)
     else -> fallback
 }

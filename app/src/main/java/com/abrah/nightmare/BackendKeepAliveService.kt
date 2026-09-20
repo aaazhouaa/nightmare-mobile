@@ -65,12 +65,16 @@ class BackendKeepAliveService : Service() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             nm.createNotificationChannel(
-                NotificationChannel(CHANNEL, "Model loaded", NotificationManager.IMPORTANCE_LOW)
+                NotificationChannel(
+                    CHANNEL,
+                    getString(R.string.service_model_loaded),
+                    NotificationManager.IMPORTANCE_LOW,
+                )
             )
         }
         return Notification.Builder(this, CHANNEL)
             .setContentTitle("Nightmare")
-            .setContentText("keeping a loaded model in memory")
+            .setContentText(getString(R.string.service_model_loaded_desc))
             .setSmallIcon(android.R.drawable.stat_notify_sync)
             .setOngoing(true)
             .build()

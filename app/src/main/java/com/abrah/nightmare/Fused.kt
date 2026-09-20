@@ -387,7 +387,7 @@ class SdSampler(
         // ⚠⚠ Hidden from the knob list like x/y/w/h are ([hiddenKnob]) — they
         // are dragged on the picture, and four more loose sliders under the
         // size control is the duplicate the 2026-09-18 report named.
-        Widget(REF_X, "float", "0.0", 0.0, 1.0, hint = "drag the region on the reference"),
+        Widget(REF_X, "float", "0.0", 0.0, 1.0, hint = "在参考图上拖动选取区域"),
         Widget(REF_Y, "float", "0.0", 0.0, 1.0),
         Widget(REF_W, "float", "1.0", 0.0, 1.0),
         Widget(REF_H, "float", "1.0", 0.0, 1.0),
@@ -941,10 +941,14 @@ class SdSampler(
         }
         ctx.say(
             when {
-                referencePng != null && png == null -> "rendering from your reference"
-                referencePng != null -> "re-imagining the picture with your reference"
-                png == null -> "rendering"
-                else -> "re-imagining the picture"
+                referencePng != null && png == null ->
+                    ctx.android?.getString(R.string.log_rendering_reference) ?: "rendering from your reference"
+                referencePng != null ->
+                    ctx.android?.getString(R.string.log_reimagining_reference) ?: "re-imagining the picture with your reference"
+                png == null ->
+                    ctx.android?.getString(R.string.log_rendering) ?: "rendering"
+                else ->
+                    ctx.android?.getString(R.string.log_reimagining) ?: "re-imagining the picture"
             }
         )
         val r = ctx.host.generate(

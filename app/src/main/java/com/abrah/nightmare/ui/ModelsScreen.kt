@@ -529,13 +529,11 @@ fun ModelsScreen(
                             Family.ANIMA -> stringResource(R.string.r2_models_hint_anima)
                             // ⚠ Plain files straight into place, so no unpack
                             // headroom — but only an 8 Elite or newer runs them.
-                            Family.FLUX2 -> "About 6.7 GB. 8 Elite or newer only. Any size " +
-                                "from 512 to 2048. Use Wi-Fi."
+                            Family.FLUX2 -> stringResource(R.string.r2_models_hint_flux2)
                             // ⚠⚠ Said before 8.8 GB is downloaded: upstream's own
                             // build crashes on the dev phone (8 Elite), and works
                             // on some 8 Elite Gen 5 phones (the user, 2026-09-19).
-                            Family.ZIMAGE -> "About 8.8 GB. 8 Elite or newer only. Still " +
-                                "maturing: it crashes on some 8 Elite phones. Use Wi-Fi."
+                            Family.ZIMAGE -> stringResource(R.string.r2_models_hint_zimage)
                             // ⚠ The free-space figure is the one that surprises:
                             // the archive and its unpacked copy are both on disk
                             // at once, so a 3.5 GB download needs ~7.5 GB free.
@@ -580,9 +578,8 @@ fun ModelsScreen(
 
     deletingEmbedding?.let { name ->
         ConfirmDelete(
-            title = "Delete $name?",
-            body = "Any prompt naming it renders without that embedding — no error, " +
-                "just the ordinary tokens instead.",
+            title = stringResource(R.string.delete_embedding_title, name),
+            body = stringResource(R.string.delete_embedding_body),
             onConfirm = { onDeleteEmbedding?.invoke(name) },
             onDismiss = { deletingEmbedding = null },
         )

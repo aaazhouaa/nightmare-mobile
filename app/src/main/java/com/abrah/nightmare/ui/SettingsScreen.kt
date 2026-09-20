@@ -205,9 +205,8 @@ fun SettingsScreen(
     }
     deletingEmbedding?.let { name ->
         ConfirmDelete(
-            title = "Delete $name?",
-            body = "Any prompt naming it renders without that embedding — no error, " +
-                "just the ordinary tokens instead.",
+            title = stringResource(R.string.delete_embedding_title, name),
+            body = stringResource(R.string.delete_embedding_body),
             onConfirm = { onDeleteEmbedding?.invoke(name) },
             onDismiss = { deletingEmbedding = null },
         )
